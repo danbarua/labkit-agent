@@ -6,7 +6,7 @@ import { context } from "./test-support.ts";
 function conversation() {
   const { agent, steps } = context();
   return new Actor<ConversationState, ConversationEvent, ConversationCommand>(initialConversation(agent, steps), decideConversation,
-    () => undefined, ({ turnId, command }) => ({ type: "child", turnId, event: { type: "failed", child: command.child, error: { message: "failed" } } }));
+    () => undefined, command => ({ type: "dispatch_failed", command, error: { message: "failed" } }));
 }
 test("recording and replacement commit before the next queued user event", async () => {
   const parent = conversation();
@@ -30,4 +30,15 @@ test("failed preparation records an outcome and restores the turn allowance", as
   expect(parent.snapshot.log[0]?.outcome).toEqual({ kind: "failed", error: { message: "offline" } });
   expect<unknown>(parent.snapshot.turn).toMatchObject({ status: "idle", id: parent.snapshot.turnId, agent: "writer", steps: 6 });
   expect(Object.isFrozen(parent.snapshot.log[0]?.messages)).toBe(true);
+});
+
+test("a rejected fork identity preserves the active state and cannot poison later outcomes", async () => {
+  const parent = conversation();
+  await parent.send({ type: "user", text: "work" });
+  const before = parent.snapshot;
+  await expect(parent.send({ type: "request", request: { kind: "fork", id: before.turnId, sessionId: before.sessionId } })).rejects.toThrow("new session identity");
+  expect(parent.snapshot).toBe(before);
+  expect(parent.snapshot.pending).toHaveLength(0);
+  await parent.send({ type: "abort" });
+  expect(parent.snapshot.log[0]?.outcome.kind).toBe("aborted");
 });

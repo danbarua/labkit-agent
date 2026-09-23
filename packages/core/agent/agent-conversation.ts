@@ -1,88 +1,93 @@
-import { type AgentContext, type AgentEvent, type AgentMachine } from "./agent-fsm.ts";
-import type { CompletionStatus } from "./types.ts";
+import { defineMachine, stay, type Decision } from "../fsm/fsm.ts";
+import { decideTurn, type TurnCommand, type TurnEvent, type TurnState } from "./agent-fsm.ts";
+import { parseSessionContext, type SessionContext } from "./prompt.ts";
+import { ActorIdSchema, SessionIdSchema, type SessionId, type ActorId, type AgentId, type Steps, type TurnRecord, type Failure, type UserEvent } from "./types.ts";
 
-export type ConversationEvent =
-  | { type: "user"; text: string }
-  | { type: "abort" }
-  | { type: "agent"; turnId: number; operationId?: number; event: AgentEvent };
-
-export type TurnRecord = Readonly<{
-  agent: string;
-  messages: ReadonlyArray<Readonly<AgentContext["messages"][number]>>;
-  completion: CompletionStatus;
-  error?: string;
+export type SessionRequest =
+  | Readonly<{ kind: "fork"; id: ActorId; sessionId: SessionId }>
+  | Readonly<{ kind: "compact"; id: ActorId; sessionId: SessionId; context: SessionContext }>;
+export type ConversationState = Readonly<{
+  status: "open";
+  sessionId: SessionId;
+  origin: Readonly<{ kind: "root" }> | Readonly<{ kind: "fork" | "compaction"; parent: SessionId; sequence: number }>;
+  context: SessionContext;
+  turnId: ActorId;
+  turn: Exclude<TurnState, { status: "done" }>;
+  log: readonly TurnRecord[];
+  allowance: Steps;
+  sequence: number;
+  pending: readonly SessionRequest[];
 }>;
-
-export type ConversationSnapshot = Readonly<{
-  turnId: number;
-  child: AgentMachine;
-  agentContext: AgentContext;
-  log: ReadonlyArray<TurnRecord>;
+export type ForkSnapshot = Omit<ConversationState, "turn" | "pending"> & Readonly<{
+  turn: Extract<TurnState, { status: "idle" }>;
+  pending: readonly [];
 }>;
+export type SessionReply = Readonly<{ kind: "forked"; state: ForkSnapshot }>;
+export type ConversationEvent = UserEvent
+  | { type: "request"; request: SessionRequest }
+  | { type: "child"; turnId: ActorId; event: TurnEvent }
+  | { type: "dispatch_failed"; command: ConversationCommand; error: Failure };
+export type ConversationCommand =
+  | Readonly<{ type: "turn"; turnId: ActorId; command: TurnCommand }>
+  | Readonly<{ type: "reply"; requestId: ActorId; result: SessionReply }>;
+type D = Decision<ConversationState, ConversationCommand>;
+const turnIdentity = (session: SessionId, sequence: number) => ActorIdSchema.parse(`${session}/turn/${sequence}`);
 
-export type ConversationMachine = {
-  readonly snapshot: ConversationSnapshot;
-  fire(event: ConversationEvent): Promise<ConversationSnapshot>;
-};
-
-export type ConversationActions = {
-  createAgentMachine: (context: AgentContext, turnId: number) => AgentMachine;
-};
-
-function freezeDeep<T>(value: T): T {
-  if (value && typeof value === "object") {
-    for (const item of Object.values(value)) freezeDeep(item);
-    Object.freeze(value);
-  }
-  return value;
+export function initialConversation(agent: AgentId, allowance: Steps, sessionId: SessionId = SessionIdSchema.parse(crypto.randomUUID())): ConversationState {
+  const id = turnIdentity(sessionId, 1);
+  return { status: "open", sessionId, origin: { kind: "root" }, context: parseSessionContext([]), turnId: id,
+    turn: { status: "idle", id, agent, steps: allowance }, log: [], allowance, sequence: 1, pending: [] };
 }
 
-export function createConversationMachine(
-  initialContext: AgentContext,
-  actions: ConversationActions,
-): ConversationMachine {
-  const budget = { ...initialContext.budget };
-  let turnId = 1;
-  const fresh = (agent: string): AgentContext => ({
-    agent, messages: [], pendingTools: [], budget: { ...budget },
-  });
-  let child = actions.createAgentMachine({
-    ...fresh(initialContext.agent), messages: structuredClone(initialContext.messages),
-  }, turnId);
-  let log: ReadonlyArray<TurnRecord> = Object.freeze([]);
-  let tail: Promise<unknown> = Promise.resolve();
-  const snapshot = (): ConversationSnapshot => ({ turnId, child, agentContext: child.snapshot.ctx, log });
-
-  async function dispatch(event: ConversationEvent) {
-    if (event.type === "agent") {
-      // Check at dequeue time, after any preceding cancellation or child replacement.
-      if (event.turnId !== turnId || (event.operationId !== undefined &&
-          event.operationId !== child.snapshot.ctx.operation?.id)) return snapshot();
-      const childEvent = event.event;
-      if (childEvent.type === "tool_done" &&
-          !child.snapshot.ctx.pendingTools.some(call => call.id === childEvent.id)) return snapshot();
-      await child.fire(event.event.type, event.event);
-    } else {
-      await child.fire(event.type, event);
-    }
-    if (child.snapshot.state === "done") {
-      const ctx = child.snapshot.ctx;
-      if (!ctx.completion) throw new Error("Terminal turn has no completion reason");
-      const record: TurnRecord = freezeDeep({
-        agent: ctx.agent, messages: structuredClone(ctx.messages), completion: ctx.completion,
-        ...(ctx.error === undefined ? {} : { error: ctx.error }),
-      });
-      log = Object.freeze([...log, record]);
-      child = actions.createAgentMachine(fresh(ctx.agent), ++turnId);
-    }
-    return snapshot();
+function advance(state: ConversationState, event: TurnEvent): D {
+  if (event.type === "user" && (state.turn.status === "executing_tools" || state.turn.status === "cancelling_tools")) {
+    throw new Error("Cannot accept user input while tools are active; abort the turn first");
   }
-  return {
-    get snapshot() { return snapshot(); },
-    fire(event) {
-      const result = tail.then(() => dispatch(event));
-      tail = result.catch(() => {});
-      return result;
+  const decision = decideTurn(state.turn, event);
+  const commands: ConversationCommand[] = decision.commands.map(command => ({ type: "turn", turnId: state.turnId, command }));
+  if (decision.state.status !== "done") return { state: { ...state, turn: decision.state }, commands };
+  const record = decision.state.record;
+  const sequence = state.sequence + 1;
+  const id = turnIdentity(state.sessionId, sequence);
+  return { state: { ...state, sequence, turnId: id, log: [...state.log, record],
+    turn: { status: "idle", id, agent: record.agent, steps: state.allowance },
+  }, commands };
+}
+
+/** Publish forks only between turns, without changing user input or abort semantics. */
+function drain(initial: D): D {
+  let state = initial.state;
+  const commands = [...initial.commands];
+  while (state.turn.status === "idle" && state.pending.length) {
+    const idle = state.turn;
+    const [branch, ...pending] = state.pending;
+    if (!branch) break;
+    state = { ...state, pending };
+    const sequence = branch.kind === "compact" ? 1 : state.sequence;
+    const id = turnIdentity(branch.sessionId, sequence);
+    const fork: ForkSnapshot = {
+      ...state, sessionId: branch.sessionId, sequence, turnId: id, pending: [],
+      origin: { kind: branch.kind === "compact" ? "compaction" : "fork", parent: state.sessionId, sequence: state.sequence },
+      context: branch.kind === "compact" ? branch.context : state.context,
+      log: branch.kind === "compact" ? [] : state.log,
+      turn: { ...idle, id },
+    };
+    commands.push({ type: "reply", requestId: branch.id, result: { kind: "forked", state: fork } });
+  }
+  return { state, commands };
+}
+
+/** Turn events continue normally while fork/compaction requests wait for Done. */
+export const decideConversation = defineMachine<ConversationState, ConversationEvent, ConversationCommand>({
+  open: {
+    user: (state, event) => drain(advance(state, event)),
+    abort: (state, event) => drain(advance(state, event)),
+    request: (state, event) => {
+      if (event.request.sessionId === state.sessionId) throw new Error("A fork requires a new session identity");
+      return drain({ state: { ...state, pending: [...state.pending, event.request] }, commands: [] });
     },
-  };
-}
+    child: (state, event) => event.turnId === state.turnId ? drain(advance(state, event.event)) : stay(state),
+    dispatch_failed: (state, event) => event.command.type === "turn" && event.command.turnId === state.turnId
+      ? drain(advance(state, { type: "failed", child: event.command.command.child, error: event.error })) : stay(state),
+  },
+});

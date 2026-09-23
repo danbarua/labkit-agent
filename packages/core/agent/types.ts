@@ -4,6 +4,8 @@ import { freeze } from "../fsm/fsm.ts";
 export const AgentIdSchema = z.string().min(1).brand<"AgentId">();
 export const ToolNameSchema = z.string().min(1).brand<"ToolName">();
 export const ToolCallIdSchema = z.string().min(1).brand<"ToolCallId">();
+export const SessionIdSchema = z.string().uuid().brand<"SessionId">();
+export type SessionId = z.infer<typeof SessionIdSchema>;
 export const ActorIdSchema = z.string().min(1).brand<"ActorId">();
 export const StepsSchema = z.number().int().nonnegative().brand<"Steps">();
 export const PositiveStepsSchema = StepsSchema.refine(steps => steps > 0, "A model preparation requires remaining steps").brand<"PositiveSteps">();

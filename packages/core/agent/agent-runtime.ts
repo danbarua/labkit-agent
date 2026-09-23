@@ -2,11 +2,11 @@ import { z } from "zod";
 import { Actor, freeze } from "../fsm/fsm.ts";
 import { createChatCompletion, PreparedModelSchema, type ChatCompletionRequest } from "./agent.ts";
 import { admittedCompletionSchema, type TurnEvent } from "./agent-fsm.ts";
-import { decideConversation, initialConversation, type ConversationCommand, type ConversationEvent, type ConversationState } from "./agent-conversation.ts";
+import { decideConversation, initialConversation, type ConversationCommand, type ConversationEvent, type ConversationState, type SessionRequest, type SessionReply } from "./agent-conversation.ts";
 import { createOperationActor, type Operation, type OperationState } from "./operation-actor.ts";
-import { projectConversationPrompt, type PromptInput } from "./prompt.ts";
+import { projectConversationPrompt, parseSessionContext, type PromptInput } from "./prompt.ts";
 import { toolBatchMachine, type BatchCommand, type BatchEvent, type BatchState } from "./tool-batch.ts";
-import { AgentIdSchema, MessagesSchema, StepsSchema, ToolNameSchema, UserEventSchema, failure,
+import { ActorIdSchema, SessionIdSchema, AgentIdSchema, MessagesSchema, StepsSchema, ToolNameSchema, UserEventSchema, failure,
   type ActorId, type ChildRef, type Result, type TurnData } from "./types.ts";
 export { projectConversationPrompt } from "./prompt.ts";
 export type { PromptInput } from "./prompt.ts";
@@ -50,6 +50,10 @@ export type RuntimeSnapshot = Readonly<{ conversation: ConversationState; childr
 export type AgentRuntime = {
   readonly snapshot: RuntimeSnapshot;
   fire(event: unknown): Promise<RuntimeSnapshot>;
+  /** Resolve at the next completed-turn boundary with an independent runtime. */
+  fork(): Promise<AgentRuntime>;
+  /** Fork with validated replacement messages, clearing inherited transcript/context. */
+  compact(context: unknown): Promise<AgentRuntime>;
 };
 type Child = { readonly snapshot: OperationState<unknown> | BatchState; cancel(): Promise<unknown> };
 
@@ -64,106 +68,137 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
   for (const definition of agents.values()) {
     for (const name of definition.tools) if (!tools.has(name)) throw new Error(`Unknown tool: ${name}`);
   }
-  const complete = options.complete ?? ((request: ChatCompletionRequest) => createChatCompletion(request, options.fetch));
+  const apiKey = options.apiKey;
+  const fetcher = options.fetch;
+  const projectHandoff = options.projectHandoff;
+  const complete = options.complete ?? ((request: ChatCompletionRequest) => createChatCompletion(request, fetcher));
   const project = options.projectPrompt ?? projectConversationPrompt;
-  const children = new Map<ActorId, { ref: ChildRef; actor: Child }>();
-  let conversation: Actor<ConversationState, ConversationEvent, ConversationCommand>;
-  const input = (turn: TurnData): PromptInput => ({ log: conversation.snapshot.log, turn, agent: agents.get(turn.agent)! });
-  const post = (turnId: ActorId, event: TurnEvent) => {
-    // Only validated, typed child outcomes enter this private mailbox.
-    void conversation.send({ type: "child", turnId, event });
-  };
-  function spawn<I, O>(child: ChildRef, operation: Operation<I, O>, settled: (result: Result<O>) => void) {
-    const actor = createOperationActor(child, operation, result => {
-      children.delete(child.id);
-      settled(result);
-    });
-    children.set(child.id, { ref: child, actor });
-    void actor.start();
-  }
-  const cancel = (child: ChildRef) => { void children.get(child.id)?.actor.cancel(); };
-  const execute = ({ turnId, command }: ConversationCommand): undefined => {
-    switch (command.type) {
-      case "cancel": cancel(command.child); break;
-      case "prepare_model": {
-        const agent = agents.get(command.turn.agent)!;
-        spawn(command.child, {
-          input: null, parseInput: z.null().parse,
-          run: async (_, signal) => ({ baseUrl, apiKey: options.apiKey, model: agent.model,
-            messages: await project(input(command.turn), signal),
-            tools: agent.tools.map(name => ({ type: "function", function: {
-              name, description: tools.get(name)!.description, parameters: tools.get(name)!.parameters,
-            } })),
-          }),
-          parseOutput: PreparedModelSchema.parseAsync,
-        }, result => post(turnId, { type: "prepared", child: command.child, result }));
-        break;
-      }
-      case "complete": {
-        const admitted = admittedCompletionSchema(new Set(agents.keys()), new Set(agents.get(command.turn.agent)!.tools));
-        spawn(command.child, {
-          input: command.request, parseInput: PreparedModelSchema.parseAsync,
-          run: (request, signal) => complete({ ...request, signal }), parseOutput: admitted.parseAsync,
-        }, result => post(turnId, { type: "model_settled", child: command.child, result }));
-        break;
-      }
-      case "prepare_handoff": {
-        spawn(command.child, {
-          input: null, parseInput: z.null().parse,
-          run: (_, signal) => options.projectHandoff
-            ? options.projectHandoff({ ...input(command.turn), from: command.from, to: command.turn.agent }, signal)
-            : [command.turn.messages.findLast(message => message.role === "user"), command.turn.messages.at(-1)].filter(message => message !== undefined),
-          parseOutput: MessagesSchema.parseAsync,
-        }, result => post(turnId, { type: "handoff_prepared", child: command.child, result }));
-        break;
-      }
-      case "run_tools": {
-        let batch: Actor<BatchState, BatchEvent, BatchCommand>;
-        const runBatchCommand = (batchCommand: BatchCommand): undefined => {
-          switch (batchCommand.type) {
-            case "spawn_tool": {
-              const tool = tools.get(batchCommand.call.name)!;
-              spawn(batchCommand.child, {
-                input: batchCommand.call.args, parseInput: tool.parseInput,
-                run: tool.run,
-                parseOutput: value => {
-                  const json = z.json().parse(value);
-                  return typeof json === "string" ? json : JSON.stringify(json);
-                },
-              }, result => { void batch.send({ type: "tool_settled", callId: batchCommand.call.id, result }); });
-              break;
-            }
-            case "cancel_tool": cancel(batchCommand.child); break;
-            case "notify":
-              children.delete(command.child.id);
-              post(turnId, { type: "batch_settled", child: command.child, outcome: batchCommand.outcome });
-              break;
-          }
-          return undefined;
-        };
-        batch = new Actor<BatchState, BatchEvent, BatchCommand>(
-          { status: "ready", calls: command.completion.calls }, toolBatchMachine(command.child), runBatchCommand,
-          (_, error) => ({ type: "failed", error: failure(error) }),
-        );
-        children.set(command.child.id, { ref: command.child, actor: {
-          get snapshot() { return batch.snapshot; }, cancel: () => batch.send({ type: "cancel" }),
-        } });
-        void batch.send({ type: "start" });
-        break;
-      }
+  function build(initial: ConversationState): AgentRuntime {
+    const replies = new Map<ActorId, (reply: SessionReply) => void>();
+    const children = new Map<ActorId, { ref: ChildRef; actor: Child }>();
+    let conversation: Actor<ConversationState, ConversationEvent, ConversationCommand>;
+    const input = (turn: TurnData): PromptInput => ({ context: conversation.snapshot.context, log: conversation.snapshot.log, turn, agent: agents.get(turn.agent)! });
+    const post = (turnId: ActorId, event: TurnEvent) => {
+      // Only validated, typed child outcomes enter this private mailbox.
+      void conversation.send({ type: "child", turnId, event });
+    };
+    function spawn<I, O>(child: ChildRef, operation: Operation<I, O>, settled: (result: Result<O>) => void) {
+      const actor = createOperationActor(child, operation, result => {
+        children.delete(child.id);
+        settled(result);
+      });
+      children.set(child.id, { ref: child, actor });
+      void actor.start();
     }
-    return undefined;
-  };
-  conversation = new Actor<ConversationState, ConversationEvent, ConversationCommand>(initialConversation(agentId, steps), decideConversation, execute,
-    ({ turnId, command }, error) => ({ type: "child", turnId, event: { type: "failed", child: command.child, error: failure(error) } }));
-  const snapshot = (): RuntimeSnapshot => freeze({ conversation: conversation.snapshot,
-    children: [...children.values()].map(({ ref, actor }) => ({ ref, state: actor.snapshot })),
-  });
-  return {
-    get snapshot() { return snapshot(); },
-    async fire(raw) {
-      await conversation.send(UserEventSchema.parse(raw));
-      return snapshot();
-    },
-  };
+    const cancel = (child: ChildRef) => { void children.get(child.id)?.actor.cancel(); };
+    const execute = (effect: ConversationCommand): undefined => {
+      if (effect.type === "reply") {
+        const reply = replies.get(effect.requestId);
+        replies.delete(effect.requestId);
+        reply?.(effect.result);
+        return undefined;
+      }
+      const { turnId, command } = effect;
+      switch (command.type) {
+        case "cancel": cancel(command.child); break;
+        case "prepare_model": {
+          const agent = agents.get(command.turn.agent)!;
+          spawn(command.child, {
+            input: null, parseInput: z.null().parse,
+            run: async (_, signal) => ({ baseUrl, apiKey, model: agent.model,
+              messages: await project(input(command.turn), signal),
+              tools: agent.tools.map(name => ({ type: "function", function: {
+                name, description: tools.get(name)!.description, parameters: tools.get(name)!.parameters,
+              } })),
+            }),
+            parseOutput: PreparedModelSchema.parseAsync,
+          }, result => post(turnId, { type: "prepared", child: command.child, result }));
+          break;
+        }
+        case "complete": {
+          const admitted = admittedCompletionSchema(new Set(agents.keys()), new Set(agents.get(command.turn.agent)!.tools));
+          spawn(command.child, {
+            input: command.request, parseInput: PreparedModelSchema.parseAsync,
+            run: (request, signal) => complete({ ...request, signal }), parseOutput: admitted.parseAsync,
+          }, result => post(turnId, { type: "model_settled", child: command.child, result }));
+          break;
+        }
+        case "prepare_handoff": {
+          spawn(command.child, {
+            input: null, parseInput: z.null().parse,
+            run: (_, signal) => projectHandoff
+              ? projectHandoff({ ...input(command.turn), from: command.from, to: command.turn.agent }, signal)
+              : [command.turn.messages.findLast(message => message.role === "user"), command.turn.messages.at(-1)].filter(message => message !== undefined),
+            parseOutput: MessagesSchema.parseAsync,
+          }, result => post(turnId, { type: "handoff_prepared", child: command.child, result }));
+          break;
+        }
+        case "run_tools": {
+          let batch: Actor<BatchState, BatchEvent, BatchCommand>;
+          const runBatchCommand = (batchCommand: BatchCommand): undefined => {
+            switch (batchCommand.type) {
+              case "spawn_tool": {
+                const tool = tools.get(batchCommand.call.name)!;
+                spawn(batchCommand.child, {
+                  input: batchCommand.call.args, parseInput: tool.parseInput,
+                  run: tool.run,
+                  parseOutput: value => {
+                    const json = z.json().parse(value);
+                    return typeof json === "string" ? json : JSON.stringify(json);
+                  },
+                }, result => { void batch.send({ type: "tool_settled", callId: batchCommand.call.id, result }); });
+                break;
+              }
+              case "cancel_tool": cancel(batchCommand.child); break;
+              case "notify":
+                children.delete(command.child.id);
+                post(turnId, { type: "batch_settled", child: command.child, outcome: batchCommand.outcome });
+                break;
+            }
+            return undefined;
+          };
+          batch = new Actor<BatchState, BatchEvent, BatchCommand>(
+            { status: "ready", calls: command.completion.calls }, toolBatchMachine(command.child), runBatchCommand,
+            (_, error) => ({ type: "failed", error: failure(error) }),
+          );
+          children.set(command.child.id, { ref: command.child, actor: {
+            get snapshot() { return batch.snapshot; }, cancel: () => batch.send({ type: "cancel" }),
+          } });
+          void batch.send({ type: "start" });
+          break;
+        }
+      }
+      return undefined;
+    };
+    conversation = new Actor<ConversationState, ConversationEvent, ConversationCommand>(initial, decideConversation, execute,
+      (command, error) => ({ type: "dispatch_failed", command, error: failure(error) }));
+    const snapshot = (): RuntimeSnapshot => freeze({ conversation: conversation.snapshot,
+      children: [...children.values()].map(({ ref, actor }) => ({ ref, state: actor.snapshot })),
+    });
+    const enqueue = (request: SessionRequest): Promise<SessionReply> => new Promise((resolve, reject) => {
+      replies.set(request.id, resolve);
+      void conversation.send({ type: "request", request }).catch(error => {
+        replies.delete(request.id);
+        reject(error);
+      });
+    });
+    const requestId = () => ActorIdSchema.parse(`${initial.sessionId}/request/${crypto.randomUUID()}`);
+    const branch = async (request: SessionRequest): Promise<AgentRuntime> => {
+      const reply = await enqueue(request);
+      return build(reply.state);
+    };
+    return {
+      get snapshot() { return snapshot(); },
+      async fire(raw) {
+        await conversation.send(UserEventSchema.parse(raw));
+        return snapshot();
+      },
+      fork: () => branch({ kind: "fork", id: requestId(), sessionId: SessionIdSchema.parse(crypto.randomUUID()) }),
+      async compact(raw) {
+        const context = parseSessionContext(raw);
+        return branch({ kind: "compact", id: requestId(), sessionId: SessionIdSchema.parse(crypto.randomUUID()), context });
+      },
+    };
+  }
+  return build(initialConversation(agentId, steps));
 }

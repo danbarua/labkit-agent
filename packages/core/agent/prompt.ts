@@ -1,7 +1,8 @@
 import type { ChatMessage } from "./agent.ts";
-import { ToolCallsSchema, type AgentMessage, type TurnData, type TurnRecord } from "./types.ts";
+import { MessagesSchema, ToolCallsSchema, type AgentMessage, type TurnData, type TurnRecord } from "./types.ts";
 
 export type PromptInput = Readonly<{
+  context?: readonly AgentMessage[];
   log: readonly TurnRecord[];
   turn: TurnData;
   agent: Readonly<{ model: string; systemPrompt?: string; tools: readonly string[] }>;
@@ -34,10 +35,19 @@ function completedExchanges(messages: readonly AgentMessage[], source: string, i
   return output;
 }
 
-export function projectConversationPrompt({ log, turn, agent }: PromptInput): ChatMessage[] {
+/** Replacement context must contain complete, correlated exchanges. */
+const SessionContextSchema = MessagesSchema.transform(messages => {
+  completedExchanges(messages, "session context");
+  return messages;
+}).brand<"SessionContext">();
+export type SessionContext = ReturnType<typeof SessionContextSchema.parse>;
+export const parseSessionContext = (raw: unknown): SessionContext => SessionContextSchema.parse(raw);
+
+export function projectConversationPrompt({ context = [], log, turn, agent }: PromptInput): ChatMessage[] {
+  const base = completedExchanges(context, "session context");
   const history = log.flatMap((record, index) => completedExchanges(record.messages, `logged turn ${index + 1}`, record.outcome.kind !== "completed"));
   const current = completedExchanges(turn.messages, "current turn");
-  const messages = turn.view.kind === "handoff" ? completedExchanges(turn.view.messages, "handoff packet") : [...history, ...current];
+  const messages = turn.view.kind === "handoff" ? completedExchanges(turn.view.messages, "handoff packet") : [...base, ...history, ...current];
   return [
     ...(agent.systemPrompt ? [{ role: "system" as const, content: agent.systemPrompt }] : []),
     ...messages.map((message): ChatMessage => {

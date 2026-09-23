@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
+import type { ForkSnapshot, SessionRequest } from "./agent-conversation.ts";
 import type { TurnState } from "./agent-fsm.ts";
 import type { BatchState } from "./tool-batch.ts";
 import type { OperationState } from "./operation-actor.ts";
 import { context } from "./test-support.ts";
-import { ref, type Ref } from "./types.ts";
+import { ref, SessionIdSchema, type Ref } from "./types.ts";
 
 // Typechecked by tsc, never executed: each directive must correspond to a compiler error.
 function invalidStates() {
@@ -26,7 +27,14 @@ function invalidStates() {
   const completed: OperationState<string> = { status: "succeeded" };
   // @ts-expect-error actor references cannot cross operation kinds
   const reference: Ref<"completion"> = ref("tool", "request");
-  void [idle, preparing, done, executing, batch, success, ready, completed, reference];
+  const sessionId = SessionIdSchema.parse(crypto.randomUUID());
+  // @ts-expect-error compaction messages must pass the context constructor
+  const compact: SessionRequest = { kind: "compact", id: turn.id, sessionId, context: [] };
+  // @ts-expect-error a published fork cannot carry an active child
+  const activeFork: ForkSnapshot["turn"] = { status: "awaiting_model", turn, child: ref("completion", "request") };
+  // @ts-expect-error a fork never inherits its parent's queued requests
+  const queuedFork: ForkSnapshot["pending"] = [{ kind: "fork", id: turn.id, sessionId }];
+  void [idle, preparing, done, executing, batch, success, ready, completed, reference, compact, activeFork, queuedFork];
 }
 test("domain invariant type assertions are included in the TypeScript check", () => {
   expect(typeof invalidStates).toBe("function");

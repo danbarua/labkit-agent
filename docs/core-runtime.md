@@ -97,10 +97,34 @@ If a pure decision throws, the previous state remains committed and no commands 
 
 A terminal record contains the full turn transcript, final agent and an outcome tagged completed, aborted, exhausted or failed. Failed outcomes require an error message. Snapshots and nested records are frozen; earlier snapshots remain unchanged after later turns. The next idle turn retains the last active agent.
 
-The default projector combines logged turns with the current transcript and the active system prompt. Only an incomplete final tool exchange in an interrupted logged turn may omit unmatched calls from provider messages. It preserves matched results and never edits the stored transcript. Missing results in completed turns, earlier exchanges, the current turn or a handoff packet raise errors. Orphan, duplicate and unmatched results also raise errors. These failures become preparation-child failures before HTTP starts.
+The default projector combines validated session context, logged turns and the current transcript, prefixed by the active system prompt. Only an incomplete final tool exchange in an interrupted logged turn may omit unmatched calls from provider messages. It preserves matched results and never edits the stored transcript. Missing results in completed turns, earlier exchanges, the current turn or a handoff packet raise errors. Orphan, duplicate and unmatched results also raise errors. These failures become preparation-child failures before HTTP starts.
 
 The default handoff packet contains the latest user instruction and assistant handoff message. Subsequent messages append to both the packet and the full transcript. A new turn returns to normal history projection. Override `projectPrompt` or `projectHandoff` for a different policy; both run as cancellable operations and their outputs are validated.
 
+## Session forks and context compaction
+
+Each conversation has a branded UUID session identity. Turn and child identities are namespaced under it. A fork inherits configuration, the final active agent, the configured per-turn allowance, context and immutable turn records, but gets a fresh identity and independent mailbox and adapters. Frozen history can be shared safely; live requests, cancellation signals and queued fork requests are never inherited.
+
+```ts
+const fork = await runtime.fork();
+await fork.fire({ type: "user", text: "Explore another approach." });
+
+const compacted = await runtime.compact([
+  { role: "user", text: "Summary: the experiment uses dataset A; next compare B." },
+]);
+await compacted.fire({ type: "user", text: "Continue from this summary." });
+```
+
+`fork()` and `compact(messages)` return promises for new runtimes. If the source turn is active, the requests wait in its session mailbox until the turn reaches Done, including any tool results and subsequent model continuation. Child outcomes continue to be processed while these requests wait. Completed, failed, exhausted and explicitly aborted turns all release pending forks. An idle source can fork immediately. Neither operation starts I/O; the new runtime is ready for its next user message.
+
+Existing barge-in and abort behavior is unchanged. A barge-in can replace model work while a fork waits; the fork includes the eventual terminal record. Explicit abort can terminate that turn and release the fork. User input during tool execution remains rejected under the existing policy. Forking itself neither aborts the source nor repeats its tools.
+
+The pure conversation decision records the terminal turn, creates the next idle turn, and captures all waiting fork snapshots atomically. Reply commands publish those snapshots only after commit. They use the captured snapshot, not a later read of the source, so a subsequent queued user event cannot leak into a fork. `ForkSnapshot` requires an idle turn and an empty request queue. `origin` records the parent identity, kind of fork and source sequence at the boundary. Ordinary forks retain the sequence; compacted forks restart at one.
+
+Compaction replaces the new session's prior context and transcript with the supplied messages and an empty log. It retains the final active agent and configured allowance. The source and earlier ancestors keep their original histories. Replacement messages pass Zod structural validation and complete tool-result correlation checks, then are frozen; invalid replacements reject before queueing a fork or changing source state. Empty replacement context is allowed as an explicit reset.
+
+The caller supplies the replacement context; this operation does not generate a model summary automatically. If requested during an active turn, that supplied replacement is still what the new session receives at the terminal boundary. Custom prompt projectors receive the replacement in `PromptInput.context` and must incorporate it according to their policy. The default slim handoff packet policy remains unchanged.
+
 ## Verification
 
-Run `bun test packages/core` and `bunx tsc --noEmit`. Tests cover pure decisions, commit ordering, cancellation races, stale messages, tool correlation, validation failures, history and handoff. Compile-time assertions verify that invalid state payloads and mismatched actor-reference kinds are rejected.
+Run `bun test packages/core` and `bunx tsc --noEmit`. Tests cover pure decisions, commit ordering, cancellation races, stale messages, tool correlation, validation failures, history, handoff, fork isolation, boundary races and context replacement. Compile-time assertions verify that invalid state payloads and mismatched actor-reference kinds are rejected.
