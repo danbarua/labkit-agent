@@ -1,189 +1,169 @@
-import { createChatCompletion, type ChatCompletionRequest, type ChatMessage, type ChatTool } from "./agent.ts";
-import { createAgentMachine } from "./agent-fsm.ts";
-import { createConversationMachine, type ConversationMachine, type TurnRecord } from "./agent-conversation.ts";
-import { appendMessage, type AgentContext, type AgentEvent, type AgentMessage, type Completion, type Operation } from "./types.ts";
+import { z } from "zod";
+import { Actor, freeze } from "../fsm/fsm.ts";
+import { createChatCompletion, PreparedModelSchema, type ChatCompletionRequest } from "./agent.ts";
+import { admittedCompletionSchema, type TurnEvent } from "./agent-fsm.ts";
+import { decideConversation, initialConversation, type ConversationCommand, type ConversationEvent, type ConversationState } from "./agent-conversation.ts";
+import { createOperationActor, type Operation, type OperationState } from "./operation-actor.ts";
+import { projectConversationPrompt, type PromptInput } from "./prompt.ts";
+import { toolBatchMachine, type BatchCommand, type BatchEvent, type BatchState } from "./tool-batch.ts";
+import { AgentIdSchema, MessagesSchema, StepsSchema, ToolNameSchema, UserEventSchema, failure,
+  type ActorId, type ChildRef, type Result, type TurnData } from "./types.ts";
+export { projectConversationPrompt } from "./prompt.ts";
+export type { PromptInput } from "./prompt.ts";
 
-export type Tool = {
+/** Existential tool adapter: defineTool retains schema inference at the authoring boundary. */
+export type Tool = Readonly<{
   description?: string;
   parameters: Record<string, unknown>;
-  run: (args: unknown, signal: AbortSignal) => unknown | Promise<unknown>;
-};
-export type AgentDefinition = {
-  model: string;
-  systemPrompt?: string;
-  tools?: readonly string[];
-};
-export type PromptInput = {
-  log: readonly TurnRecord[];
-  context: AgentContext;
-  agent: AgentDefinition;
-};
+  parseInput: (raw: unknown) => Promise<unknown>;
+  run: (input: unknown, signal: AbortSignal) => unknown | Promise<unknown>;
+}>;
+export function defineTool<S extends z.ZodType>(definition: {
+  input: S;
+  description?: string;
+  run: (input: z.output<S>, signal: AbortSignal) => unknown | Promise<unknown>;
+}): Tool {
+  return Object.freeze({
+    description: definition.description,
+    parameters: z.toJSONSchema(definition.input, { io: "input" }),
+    parseInput: raw => definition.input.parseAsync(raw),
+    run: (input, signal) => definition.run(input as z.output<S>, signal),
+  });
+}
+const AgentDefinitionSchema = z.strictObject({ model: z.string().min(1), systemPrompt: z.string().optional(), tools: z.array(ToolNameSchema).default([]).readonly() }).readonly();
+export type AgentDefinition = z.input<typeof AgentDefinitionSchema>;
 export type RuntimeOptions = {
   agent: string;
   agents: ReadonlyMap<string, AgentDefinition>;
   tools?: ReadonlyMap<string, Tool>;
-  budget: { steps: number; usd: number };
+  steps: number;
   baseUrl: string;
   apiKey?: string;
   fetch?: typeof fetch;
-  complete?: (request: ChatCompletionRequest) => Promise<Completion>;
-  projectPrompt?: (input: PromptInput) => ChatMessage[];
-  projectHandoff?: (input: PromptInput & { from: string; to: string }) => AgentMessage[];
+  /** Adapters return untrusted data; the completion actor parses and admits it. */
+  complete?: (request: ChatCompletionRequest) => unknown | Promise<unknown>;
+  projectPrompt?: (input: PromptInput, signal: AbortSignal) => unknown | Promise<unknown>;
+  projectHandoff?: (input: PromptInput & { from: string; to: string }, signal: AbortSignal) => unknown | Promise<unknown>;
 };
+export type ChildSnapshot = Readonly<{ ref: ChildRef; state: OperationState<unknown> | BatchState }>;
+export type RuntimeSnapshot = Readonly<{ conversation: ConversationState; children: readonly ChildSnapshot[] }>;
+export type AgentRuntime = {
+  readonly snapshot: RuntimeSnapshot;
+  fire(event: unknown): Promise<RuntimeSnapshot>;
+};
+type Child = { readonly snapshot: OperationState<unknown> | BatchState; cancel(): Promise<unknown> };
 
-/** Only an interrupted turn's final exchange may legitimately lack results. */
-function completedExchanges(
-  messages: readonly Readonly<AgentMessage>[],
-  source: string,
-  allowIncompleteTail = false,
-): AgentMessage[] {
-  const result: AgentMessage[] = [];
-  for (let index = 0; index < messages.length; index++) {
-    const message = messages[index]!;
-    if (message.role === "tool") throw new Error(`Invalid tool history in ${source}: orphan result ${message.toolCallId}`);
-    if (!message.toolCalls?.length) { result.push(structuredClone(message)); continue; }
-    const results: AgentMessage[] = [];
-    while (messages[index + 1]?.role === "tool") results.push(structuredClone(messages[++index]!));
-    const callIds = new Set(message.toolCalls.map(call => call.id));
-    const resultIds = new Set(results.map(item => item.toolCallId));
-    if (callIds.size !== message.toolCalls.length || resultIds.size !== results.length ||
-        results.some(item => !item.toolCallId || !callIds.has(item.toolCallId))) {
-      throw new Error(`Invalid tool history in ${source}: duplicate or unmatched tool IDs`);
-    }
-    const missing = message.toolCalls.filter(call => !resultIds.has(call.id));
-    if (missing.length && !(allowIncompleteTail && index === messages.length - 1)) {
-      throw new Error(`Invalid tool history in ${source}: missing results for ${missing.map(call => call.id).join(", ")}`);
-    }
-    const calls = message.toolCalls.filter(call => resultIds.has(call.id));
-    result.push({ ...structuredClone(message), toolCalls: calls.length ? calls : undefined });
-    result.push(...results.filter(item => calls.some(call => call.id === item.toolCallId)));
+export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
+  const agentId = AgentIdSchema.parse(options.agent);
+  const steps = StepsSchema.parse(options.steps);
+  const baseUrl = z.url({ protocol: /^https?$/ }).parse(options.baseUrl);
+  // Copy registries so caller mutation cannot invalidate an admitted actor message.
+  const agents = new Map([...options.agents].map(([id, definition]) => [AgentIdSchema.parse(id), AgentDefinitionSchema.parse(definition)]));
+  if (!agents.has(agentId)) throw new Error(`Unknown agent: ${agentId}`);
+  const tools = new Map([...options.tools ?? []].map(([name, tool]) => [ToolNameSchema.parse(name), Object.freeze({ ...tool, parameters: freeze(structuredClone(tool.parameters)) })]));
+  for (const definition of agents.values()) {
+    for (const name of definition.tools) if (!tools.has(name)) throw new Error(`Unknown tool: ${name}`);
   }
-  return result;
-}
-
-export function projectConversationPrompt({ log, context, agent }: PromptInput): ChatMessage[] {
-  // Validate the source transcript even when a handoff packet replaces its prompt view.
-  const history = log.flatMap((turn, index) => completedExchanges(
-    turn.messages, `logged turn ${index + 1}`, turn.completion !== "completed",
-  ));
-  const current = completedExchanges(context.messages, "current turn");
-  const messages = context.promptMessages
-    ? completedExchanges(context.promptMessages, "handoff packet")
-    : [...history, ...current];
-  return [
-    ...(agent.systemPrompt ? [{ role: "system" as const, content: agent.systemPrompt }] : []),
-    ...messages.map(message => ({
-      role: message.role, content: message.text,
-      ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
-      ...(message.toolCalls?.length ? { tool_calls: message.toolCalls.map(call => ({
-        id: call.id, type: "function" as const,
-        function: { name: call.name, arguments: JSON.stringify(call.args) },
-      })) } : {}),
-    })),
-  ];
-}
-
-export function createAgentRuntime(options: RuntimeOptions): ConversationMachine {
-  if (!options.agents.has(options.agent)) throw new Error(`Unknown agent: ${options.agent}`);
-  if (!Number.isInteger(options.budget.steps) || options.budget.steps < 0) {
-    throw new Error("Step budget must be a nonnegative integer");
-  }
-  const registry = options.tools ?? new Map<string, Tool>();
-  for (const agent of options.agents.values()) {
-    for (const name of agent.tools ?? []) {
-      if (!registry.has(name)) throw new Error(`Unknown tool: ${name}`);
-    }
-  }
-  const complete = options.complete ?? (request => createChatCompletion(request, options.fetch));
+  const complete = options.complete ?? ((request: ChatCompletionRequest) => createChatCompletion(request, options.fetch));
   const project = options.projectPrompt ?? projectConversationPrompt;
-  let sequence = 0;
-  let conversation: ConversationMachine;
-  const definition = (ctx: AgentContext) => options.agents.get(ctx.agent)!;
-  const allowed = (ctx: AgentContext) => {
-    const names = definition(ctx).tools ?? [];
-    return new Set(ctx.pendingTools.map(call => call.id)).size === ctx.pendingTools.length &&
-      ctx.pendingTools.every(call => Boolean(call.id) && names.includes(call.name) && registry.has(call.name));
+  const children = new Map<ActorId, { ref: ChildRef; actor: Child }>();
+  let conversation: Actor<ConversationState, ConversationEvent, ConversationCommand>;
+  const input = (turn: TurnData): PromptInput => ({ log: conversation.snapshot.log, turn, agent: agents.get(turn.agent)! });
+  const post = (turnId: ActorId, event: TurnEvent) => {
+    // Only validated, typed child outcomes enter this private mailbox.
+    void conversation.send({ type: "child", turnId, event });
   };
-  const cancel = (ctx: AgentContext): AgentContext => {
-    ctx.operation?.controller.abort();
-    return { ...ctx, operation: undefined };
+  function spawn<I, O>(child: ChildRef, operation: Operation<I, O>, settled: (result: Result<O>) => void) {
+    const actor = createOperationActor(child, operation, result => {
+      children.delete(child.id);
+      settled(result);
+    });
+    children.set(child.id, { ref: child, actor });
+    void actor.start();
+  }
+  const cancel = (child: ChildRef) => { void children.get(child.id)?.actor.cancel(); };
+  const execute = ({ turnId, command }: ConversationCommand): undefined => {
+    switch (command.type) {
+      case "cancel": cancel(command.child); break;
+      case "prepare_model": {
+        const agent = agents.get(command.turn.agent)!;
+        spawn(command.child, {
+          input: null, parseInput: z.null().parse,
+          run: async (_, signal) => ({ baseUrl, apiKey: options.apiKey, model: agent.model,
+            messages: await project(input(command.turn), signal),
+            tools: agent.tools.map(name => ({ type: "function", function: {
+              name, description: tools.get(name)!.description, parameters: tools.get(name)!.parameters,
+            } })),
+          }),
+          parseOutput: PreparedModelSchema.parseAsync,
+        }, result => post(turnId, { type: "prepared", child: command.child, result }));
+        break;
+      }
+      case "complete": {
+        const admitted = admittedCompletionSchema(new Set(agents.keys()), new Set(agents.get(command.turn.agent)!.tools));
+        spawn(command.child, {
+          input: command.request, parseInput: PreparedModelSchema.parseAsync,
+          run: (request, signal) => complete({ ...request, signal }), parseOutput: admitted.parseAsync,
+        }, result => post(turnId, { type: "model_settled", child: command.child, result }));
+        break;
+      }
+      case "prepare_handoff": {
+        spawn(command.child, {
+          input: null, parseInput: z.null().parse,
+          run: (_, signal) => options.projectHandoff
+            ? options.projectHandoff({ ...input(command.turn), from: command.from, to: command.turn.agent }, signal)
+            : [command.turn.messages.findLast(message => message.role === "user"), command.turn.messages.at(-1)].filter(message => message !== undefined),
+          parseOutput: MessagesSchema.parseAsync,
+        }, result => post(turnId, { type: "handoff_prepared", child: command.child, result }));
+        break;
+      }
+      case "run_tools": {
+        let batch: Actor<BatchState, BatchEvent, BatchCommand>;
+        const runBatchCommand = (batchCommand: BatchCommand): undefined => {
+          switch (batchCommand.type) {
+            case "spawn_tool": {
+              const tool = tools.get(batchCommand.call.name)!;
+              spawn(batchCommand.child, {
+                input: batchCommand.call.args, parseInput: tool.parseInput,
+                run: tool.run,
+                parseOutput: value => {
+                  const json = z.json().parse(value);
+                  return typeof json === "string" ? json : JSON.stringify(json);
+                },
+              }, result => { void batch.send({ type: "tool_settled", callId: batchCommand.call.id, result }); });
+              break;
+            }
+            case "cancel_tool": cancel(batchCommand.child); break;
+            case "notify":
+              children.delete(command.child.id);
+              post(turnId, { type: "batch_settled", child: command.child, outcome: batchCommand.outcome });
+              break;
+          }
+          return undefined;
+        };
+        batch = new Actor<BatchState, BatchEvent, BatchCommand>(
+          { status: "ready", calls: command.completion.calls }, toolBatchMachine(command.child), runBatchCommand,
+          (_, error) => ({ type: "failed", error: failure(error) }),
+        );
+        children.set(command.child.id, { ref: command.child, actor: {
+          get snapshot() { return batch.snapshot; }, cancel: () => batch.send({ type: "cancel" }),
+        } });
+        void batch.send({ type: "start" });
+        break;
+      }
+    }
+    return undefined;
   };
-  const newOperation = (kind: Operation["kind"]): Operation => ({ id: ++sequence, kind, controller: new AbortController() });
-  const input = (ctx: AgentContext): PromptInput => ({
-    log: conversation.snapshot.log, context: ctx, agent: definition(ctx),
+  conversation = new Actor<ConversationState, ConversationEvent, ConversationCommand>(initialConversation(agentId, steps), decideConversation, execute,
+    ({ turnId, command }, error) => ({ type: "child", turnId, event: { type: "failed", child: command.child, error: failure(error) } }));
+  const snapshot = (): RuntimeSnapshot => freeze({ conversation: conversation.snapshot,
+    children: [...children.values()].map(({ ref, actor }) => ({ ref, state: actor.snapshot })),
   });
-
-  conversation = createConversationMachine({
-    agent: options.agent, messages: [], pendingTools: [], budget: { ...options.budget },
-  }, {
-    createAgentMachine: (ctx, turnId) => {
-      const post = (operation: Operation, event: AgentEvent) => {
-        // Never await the parent mailbox from a lifecycle action.
-        void conversation.fire({ type: "agent", turnId, operationId: operation.id, event });
-      };
-      const failed = (operation: Operation, error: unknown) => post(operation, {
-        type: "failed", error: error instanceof Error ? error.message : String(error),
-      });
-      return createAgentMachine(ctx, {
-        cancel,
-        canHandoff: agent => options.agents.has(agent),
-        canRunTools: allowed,
-        swapAgent: (current, to) => ({ ...current, agent: to }),
-        startCompletion: current => {
-          const operation = newOperation("model");
-          const next = { ...current, operation };
-          if (current.budget.steps === 0) {
-            post(operation, { type: "exhausted" });
-            return next;
-          }
-          next.budget = { ...current.budget, steps: current.budget.steps - 1 };
-          // Defer invocation so synchronous adapter exceptions also become failure events.
-          void Promise.resolve().then(() => {
-            operation.controller.signal.throwIfAborted();
-            const agent = definition(next);
-            const tools: ChatTool[] = (agent.tools ?? []).map(name => {
-              const tool = registry.get(name)!;
-              return { type: "function", function: { name, description: tool.description, parameters: tool.parameters } };
-            });
-            return complete({ baseUrl: options.baseUrl, apiKey: options.apiKey, model: agent.model,
-              messages: project(input(next)), tools, signal: operation.controller.signal });
-          }).then(value => {
-            if (operation.controller.signal.aborted) return;
-            const result = structuredClone(value);
-            if (result.handoff && result.toolCalls?.length) throw new Error("Completion cannot both hand off and call tools");
-            if (result.handoff && !options.agents.has(result.handoff)) throw new Error(`Unknown agent: ${result.handoff}`);
-            if (result.toolCalls?.length && !allowed({ ...next, pendingTools: result.toolCalls })) {
-              throw new Error("Completion requested an unpermitted tool or duplicate call ID");
-            }
-            let handoffMessages: AgentMessage[] | undefined;
-            if (result.handoff) {
-              const handoffContext = { ...appendMessage(next, { role: "assistant", text: result.text }), agent: result.handoff };
-              // Keep the most recent instruction and handoff response by default.
-              // A custom projector can supply a domain-specific summary instead.
-              const packet = options.projectHandoff?.({ ...input(handoffContext), from: next.agent, to: result.handoff }) ??
-                [handoffContext.messages.findLast(message => message.role === "user"), handoffContext.messages.at(-1)]
-                  .filter((message): message is AgentMessage => Boolean(message));
-              handoffMessages = structuredClone(packet);
-            }
-            post(operation, { ...result, type: "model_done", handoffMessages });
-          }).catch(error => failed(operation, error));
-          return next;
-        },
-        runTools: current => {
-          const operation = newOperation("tools");
-          for (const call of current.pendingTools) {
-            void Promise.resolve().then(() => {
-              operation.controller.signal.throwIfAborted();
-              return registry.get(call.name)!.run(call.args, operation.controller.signal);
-            })
-              .then(result => post(operation, { type: "tool_done", id: call.id,
-                result: typeof result === "string" ? result : JSON.stringify(result) ?? "null" }))
-              .catch(error => failed(operation, error));
-          }
-          return { ...current, operation };
-        },
-      });
+  return {
+    get snapshot() { return snapshot(); },
+    async fire(raw) {
+      await conversation.send(UserEventSchema.parse(raw));
+      return snapshot();
     },
-  });
-  return conversation;
+  };
 }

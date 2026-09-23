@@ -1,3 +1,4 @@
+import { CompletionSchema } from "./types.ts";
 import { expect, test } from "bun:test";
 import { createChatCompletion } from "./agent.ts";
 
@@ -39,7 +40,7 @@ test("sends a chat completion request and returns the assistant message", async 
     ],
     temperature: 0.2,
   });
-  expect(result).toEqual({ text: "Hi there." });
+  expect(result).toEqual({ kind: "answer", text: "Hi there." });
 });
 
 test("includes the API error body when the completion request fails", async () => {
@@ -68,7 +69,7 @@ test("passes the signal to fetch and decodes tool-only responses", async () => {
     ] } }] });
   }) as typeof fetch);
   expect(receivedSignal).toBe(controller.signal);
-  expect(result).toEqual({ text: "", toolCalls: [{ id: "call-1", name: "search", args: { query: "science" } }] });
+  expect(result).toMatchObject({ kind: "tools", text: "", calls: [{ id: "call-1", name: "search", args: { query: "science" } }] });
 });
 
 test("rejects malformed responses instead of completing an empty turn", async () => {

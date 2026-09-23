@@ -1,56 +1,33 @@
 import { expect, test } from "bun:test";
-import { createAgentMachine } from "./agent-fsm.ts";
-import { createConversationMachine } from "./agent-conversation.ts";
-import { actions, context } from "./test-support.ts";
+import { Actor } from "../fsm/fsm.ts";
+import { decideConversation, initialConversation, type ConversationState, type ConversationEvent, type ConversationCommand } from "./agent-conversation.ts";
+import { context } from "./test-support.ts";
 
 function conversation() {
-  return createConversationMachine(context(), { createAgentMachine: ctx => createAgentMachine(ctx, actions()) });
+  const { agent, steps } = context();
+  return new Actor<ConversationState, ConversationEvent, ConversationCommand>(initialConversation(agent, steps), decideConversation,
+    () => undefined, ({ turnId, command }) => ({ type: "child", turnId, event: { type: "failed", child: command.child, error: { message: "failed" } } }));
 }
-
-test("serializes completion, recording and replacement before the next user event", async () => {
+test("recording and replacement commit before the next queued user event", async () => {
   const parent = conversation();
-  await parent.fire({ type: "user", text: "first" });
+  await parent.send({ type: "user", text: "first" });
   const first = parent.snapshot;
-  await Promise.all([
-    parent.fire({ type: "agent", turnId: first.turnId, event: { type: "model_done", text: "answer" } }),
-    parent.fire({ type: "user", text: "second" }),
-  ]);
-  expect(parent.snapshot.log).toEqual([{ agent: "writer", completion: "completed", messages: [
-    { role: "user", text: "first" }, { role: "assistant", text: "answer" },
-  ] }]);
-  expect(parent.snapshot.child).not.toBe(first.child);
-  expect(parent.snapshot.agentContext.messages).toEqual([{ role: "user", text: "second" }]);
-  await parent.fire({ type: "agent", turnId: first.turnId, event: { type: "abort" } });
-  expect(parent.snapshot.child.snapshot.state).toBe("awaiting_model");
+  await Promise.all([parent.send({ type: "abort" }), parent.send({ type: "user", text: "second" })]);
+  expect<unknown>(parent.snapshot.log).toMatchObject([{ agent: "writer", outcome: { kind: "aborted" }, messages: [{ role: "user", text: "first" }] }]);
+  expect(parent.snapshot.turnId).not.toBe(first.turnId);
+  const current = parent.snapshot;
+  await parent.send({ type: "child", turnId: first.turnId, event: { type: "abort" } });
+  expect(parent.snapshot).toBe(current);
+  expect(first.log).toEqual([]);
 });
-
-test("records terminal reason, clears transient context and restores the per-turn budget", async () => {
-  const parent = createConversationMachine(context(), { createAgentMachine: ctx => createAgentMachine(ctx, actions({
-    startCompletion: current => ({ ...current, budget: { ...current.budget, steps: 0 },
-      operation: { id: 1, kind: "model", controller: new AbortController() } }),
-  })) });
-  await parent.fire({ type: "user", text: "first" });
-  await parent.fire({ type: "agent", turnId: 1, event: { type: "failed", error: "offline" } });
-  expect(parent.snapshot.log[0]?.completion).toBe("failed");
-  expect(parent.snapshot.log[0]?.error).toBe("offline");
-  expect(parent.snapshot.agentContext).toEqual(context());
-});
-
-test("deeply freezes recorded tool arguments and preserves earlier snapshots", async () => {
+test("failed preparation records an outcome and restores the turn allowance", async () => {
   const parent = conversation();
-  await parent.fire({ type: "user", text: "first" });
-  await parent.fire({ type: "agent", turnId: 1, event: { type: "model_done", text: "", toolCalls: [
-    { id: "1", name: "search", args: { nested: { value: 1 } } },
-  ] } });
-  await parent.fire({ type: "abort" });
-  const snapshot = parent.snapshot;
-  const call = snapshot.log[0]!.messages[1]!.toolCalls![0]!;
-  expect(Object.isFrozen(call.args)).toBe(true);
-  expect(Object.isFrozen((call.args as { nested: unknown }).nested)).toBe(true);
-  expect(snapshot.log[0]?.completion).toBe("aborted");
-  expect(parent.snapshot.agentContext.pendingTools).toEqual([]);
-  await parent.fire({ type: "user", text: "second" });
-  await parent.fire({ type: "abort" });
-  expect(snapshot.log).toHaveLength(1);
-  expect(parent.snapshot.log[0]).toBe(snapshot.log[0]!);
+  await parent.send({ type: "user", text: "first" });
+  const state = parent.snapshot;
+  if (state.turn.status !== "preparing_model") throw new Error();
+  await parent.send({ type: "child", turnId: state.turnId, event: { type: "prepared", child: state.turn.child,
+    result: { kind: "failed", error: { message: "offline" } } } });
+  expect(parent.snapshot.log[0]?.outcome).toEqual({ kind: "failed", error: { message: "offline" } });
+  expect<unknown>(parent.snapshot.turn).toMatchObject({ status: "idle", id: parent.snapshot.turnId, agent: "writer", steps: 6 });
+  expect(Object.isFrozen(parent.snapshot.log[0]?.messages)).toBe(true);
 });
