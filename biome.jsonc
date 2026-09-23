@@ -3,6 +3,13 @@
   "formatter": {
     "enabled": false
   },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "off"
+      }
+    }
+  },
   "linter": {
     "rules": {
       "preset": "recommended",
