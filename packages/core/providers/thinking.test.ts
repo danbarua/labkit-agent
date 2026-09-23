@@ -10,6 +10,7 @@ import {
   googleGenerate,
   openaiChat,
   openaiResponses,
+  parseRequest,
 } from "./index.ts";
 
 const response = (content: unknown[]) => ({
@@ -126,7 +127,129 @@ test("capability intersection rejects before HTTP and chat maps effort", async (
     expect(calls).toBe(0);
   }
   for (const thinking of ["low", "medium", "high"] as const)
-    expect(openaiChat.encode({ ...request, thinking }).body).toMatchObject({
+    expect(
+      openaiChat.encode({
+        model: "openai-chat-test-model",
+        messages: [{ role: "user", text: "Go" }],
+        tools: [],
+        successors: [],
+        thinking,
+      }).body,
+    ).toMatchObject({
       reasoning_effort: thinking,
     });
+});
+
+test("parseRequest rejects orphan and foreign-provider continuations", () => {
+  const continuation = ContinuationSchema.parse({
+    provider: anthropicMessagesV2.id,
+    owner: { turnId: "turn", generation: 2 },
+    payload: { blocks: [thinking("sig")] },
+  });
+  const input = CompletionRequestSchema.parse({
+    ...request,
+    provider: anthropicMessagesV2.id,
+    messages: [{ role: "assistant", owner: continuation.owner, text: "answer" }],
+    continuations: [continuation],
+  });
+  expect(parseRequest(input).continuations).toEqual([continuation]);
+  expect(() => parseRequest({ ...input, messages: request.messages })).toThrow("no assistant");
+  expect(() =>
+    parseRequest({
+      ...input,
+      continuations: [{ ...continuation, owner: { ...continuation.owner, generation: 3 } }],
+    }),
+  ).toThrow("no assistant");
+  expect(() => parseRequest({ ...input, provider: googleGenerate.id })).toThrow("provider");
+  expect(() => parseRequest({ ...input, provider: undefined })).toThrow("provider");
+  expect(() => anthropicMessagesV2.encode({ ...input, provider: googleGenerate.id })).toThrow(
+    "provider",
+  );
+  expect(() => googleGenerate.encode({ ...input, provider: undefined, thinking: "off" })).toThrow(
+    "provider",
+  );
+});
+
+test("Anthropic refuses adjacent assistant merges involving thinking and preserves plain merges", () => {
+  const continuations = [2, 5].map((generation) =>
+    ContinuationSchema.parse({
+      provider: anthropicMessagesV2.id,
+      owner: { turnId: "turn", generation },
+      payload: { blocks: [thinking(String(generation))] },
+    }),
+  );
+  const input = CompletionRequestSchema.parse({
+    ...request,
+    messages: continuations.map((entry, i) => ({
+      role: "assistant",
+      owner: entry.owner,
+      text: `answer ${i}`,
+    })),
+    continuations: continuations.toReversed(),
+  });
+  for (const entries of [
+    input.continuations,
+    continuations.slice(0, 1),
+    continuations.slice(1),
+    [
+      {
+        ...continuations[0]!,
+        payload: { blocks: [{ type: "redacted_thinking", data: "opaque" }] },
+      },
+    ],
+  ])
+    expect(() => anthropicMessagesV2.encode({ ...input, continuations: entries })).toThrow(
+      "Cannot merge adjacent assistant",
+    );
+  expect(anthropicMessagesV2.encode({ ...input, continuations: [] }).body).toMatchObject({
+    messages: [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "answer 0" },
+          { type: "text", text: "answer 1" },
+        ],
+      },
+    ],
+  });
+});
+
+test("orphan and foreign continuations fail before fetch at the transport boundary", async () => {
+  let calls = 0;
+  const port = bindProviders(
+    new Map([
+      [
+        anthropicMessagesV2.id,
+        {
+          profile: anthropicMessagesV2,
+          transport: {
+            baseUrl: "https://example.invalid",
+            fetch: (async () => {
+              calls++;
+              return Response.json({});
+            }) as unknown as typeof fetch,
+          },
+        },
+      ],
+    ]),
+  );
+  const continuation = ContinuationSchema.parse({
+    provider: anthropicMessagesV2.id,
+    owner: { turnId: "turn", generation: 2 },
+    payload: { blocks: [thinking("sig")] },
+  });
+  for (const patch of [
+    { messages: [{ role: "user", content: "Go" }], continuations: [continuation] },
+    {
+      messages: [{ role: "assistant", owner: continuation.owner, content: "answer" }],
+      continuations: [{ ...continuation, provider: googleGenerate.id }],
+    },
+  ])
+    await expect(
+      port.complete(
+        PreparedModelSchema.parse({ model: "test", provider: anthropicMessagesV2.id, ...patch }),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("Continuation");
+  expect(calls).toBe(0);
 });

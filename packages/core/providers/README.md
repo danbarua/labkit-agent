@@ -115,8 +115,9 @@ permission to hand off to any registered agent, including when upgrading an old 
 Successors are registry capabilities; changing them requires a compatible new session,
 not mutating an existing registry.
 
-Provider-aware sessions write v3 records. Existing v1/v2 streams retain their original
-bytes. A first provider policy patch appends the explicit v3 policy boundary; a v1 stream
+Provider-aware sessions start at v3, or v4 for non-off thinking or continuations, and remain
+at v4 once upgraded. Existing v1/v2 streams retain their original bytes. A first provider
+policy patch appends the explicit v3/v4 policy boundary; a v1 stream
 first includes its existing v2 policy upgrade in the same atomic append. Prepared events
 capture effective model, provider/settings, successors, and policy version. Replay checks
 these against the captured policy and registry. Commit-before-dispatch, recovery without
@@ -148,6 +149,9 @@ The host admits only completion and stamps the opaque payload with the profile I
 active completion child's `{ turnId, generation }`. Signed thinking and redacted blocks are
 preserved, limited to 65,536 JSON characters, and inserted before text/tool-use blocks on
 that owner's assistant message. Unsigned or oversized payloads fail the completion.
+Request parsing rejects envelopes without a matching assistant owner or with another provider ID.
+Adjacent assistant messages with any thinking continuation cannot be merged and fail
+encoding; thinking blocks are never lifted across another assistant's content.
 
 One model_settled event commits the completion and envelope in the same append. No sidecar,
 extra turn phase, server conversation ID, Responses replay, or Google signatures are involved.

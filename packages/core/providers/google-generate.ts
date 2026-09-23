@@ -23,7 +23,7 @@ export const googleGenerate: CompletionProfile = {
   id: "google-generate@1",
   capabilities: { thinking: { mode: "off" }, stream: false },
   encode(raw) {
-    const request = parseRequest(raw);
+    const request = parseRequest(raw, "google-generate@1");
     validateThinking(request.thinking, this.capabilities.thinking);
     const split = systemAndMessages(request);
     const contents: { role: string; parts: unknown[] }[] = [];

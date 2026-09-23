@@ -17,7 +17,7 @@ export const anthropicMessages: CompletionProfile = {
   id: "anthropic-messages@1",
   capabilities: { thinking: { mode: "off" }, stream: false },
   encode(raw) {
-    const request = parseRequest(raw);
+    const request = parseRequest(raw, "anthropic-messages@1");
     validateThinking(request.thinking, this.capabilities.thinking);
     const split = systemAndMessages(request);
     const messages: { role: string; content: unknown[] }[] = [];

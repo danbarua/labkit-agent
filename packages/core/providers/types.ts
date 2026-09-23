@@ -69,6 +69,7 @@ export const ToolAdvertisementSchema = z
   .readonly();
 export const CompletionRequestSchema = z
   .strictObject({
+    provider: ProviderSettingsSchema.unwrap().shape.provider.optional(),
     model: z.string().min(1),
     messages: MessagesSchema,
     continuations: z.array(ContinuationSchema).readonly().optional(),
@@ -95,7 +96,7 @@ export type CompletionProfile = Readonly<{
   encode(request: CompletionRequest): HttpRequest;
   decode(response: HttpResponse): DecodedCompletion;
 }>;
-export function parseRequest(raw: unknown): CompletionRequest {
+export function parseRequest(raw: unknown, profileId?: string): CompletionRequest {
   const request = freeze(CompletionRequestSchema.parse(raw));
   const owners = request.messages.flatMap((message) =>
     message.role === "assistant" && message.owner ? [JSON.stringify(message.owner)] : [],
@@ -106,6 +107,16 @@ export function parseRequest(raw: unknown): CompletionRequest {
   );
   if (new Set(continuationOwners).size !== continuationOwners.length)
     throw new Error("Duplicate continuation owner");
+  if (profileId !== undefined && request.provider !== undefined && request.provider !== profileId)
+    throw new Error("Request provider does not match profile");
+  const provider = profileId ?? request.provider;
+  if ((request.continuations ?? []).some((entry) => entry.provider !== provider))
+    throw new Error("Continuation provider does not match request provider");
+  if (
+    matchingContinuations(request.messages, request.continuations ?? [], provider).length !==
+    continuationOwners.length
+  )
+    throw new Error("Continuation owner has no assistant message");
   const pending = new Set<string>();
   let conversationStarted = false;
   for (const message of request.messages) {

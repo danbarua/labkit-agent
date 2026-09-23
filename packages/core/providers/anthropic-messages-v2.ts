@@ -33,7 +33,7 @@ export const anthropicMessagesV2: CompletionProfile = {
   id: "anthropic-messages@2",
   capabilities: { thinking: { mode: "adaptive" }, stream: false },
   encode(raw) {
-    const request = parseRequest(raw);
+    const request = parseRequest(raw, "anthropic-messages@2");
     validateThinking(request.thinking, this.capabilities.thinking);
     if (
       request.thinking === "adaptive" &&
@@ -65,11 +65,13 @@ export const anthropicMessagesV2: CompletionProfile = {
             ];
       const previous = messages.at(-1);
       if (previous?.role === role) {
-        const merged = [...previous.content, ...content];
-        previous.content = [
-          ...merged.filter((part) => thinkingBlock.safeParse(part).success),
-          ...merged.filter((part) => !thinkingBlock.safeParse(part).success),
-        ];
+        const hasThinking = (parts: unknown[]) =>
+          parts.some((part) => thinkingBlock.safeParse(part).success);
+        if (role === "assistant" && (hasThinking(previous.content) || hasThinking(content)))
+          throw new Error(
+            "Cannot merge adjacent assistant messages carrying thinking continuations",
+          );
+        previous.content.push(...content);
       } else messages.push({ role, content });
     }
     return {

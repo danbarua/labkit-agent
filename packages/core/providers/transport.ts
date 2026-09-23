@@ -67,6 +67,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
 }
 export function canonicalRequest(prepared: PreparedModel) {
   return parseRequest({
+    provider: prepared.provider,
     model: prepared.model,
     messages: prepared.messages.map((message) => {
       if (message.role === "tool")

@@ -36,7 +36,7 @@ export const openaiChat: CompletionProfile = {
     stream: false,
   },
   encode(raw) {
-    const request = parseRequest(raw);
+    const request = parseRequest(raw, "openai-chat@1");
     validateThinking(request.thinking, this.capabilities.thinking);
     const tools = advertisements(request);
     return {

@@ -23,7 +23,7 @@ export const openaiResponses: CompletionProfile = {
   id: "openai-responses@1",
   capabilities: { thinking: { mode: "effort", values: ["none"] }, stream: false },
   encode(raw) {
-    const request = parseRequest(raw);
+    const request = parseRequest(raw, "openai-responses@1");
     validateThinking(request.thinking, this.capabilities.thinking);
     const input: unknown[] = [];
     for (const message of request.messages) {
