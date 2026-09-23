@@ -1,7 +1,9 @@
 import { z } from "zod";
-import { MessagesSchema } from "../agent/types.ts";
+
 import { parseSessionContext } from "../agent/prompt.ts";
+import { MessagesSchema } from "../agent/types.ts";
 import { PolicyPatchSchema } from "../policy/policy.ts";
+
 export const EnvEventSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("user"), text: z.string() }),
   z.strictObject({ type: z.literal("abort") }),

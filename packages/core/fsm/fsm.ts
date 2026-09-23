@@ -4,15 +4,22 @@ export const stay = <S, C = never>(state: S): Decision<S, C> => ({ state, comman
 
 export type Rules<S extends { status: string }, E extends { type: string }, C> = {
   [P in S["status"]]: {
-    [T in E["type"]]?: (state: Extract<S, { status: P }>, event: Extract<E, { type: T }>) => Decision<S, C>;
+    [T in E["type"]]?: (
+      state: Extract<S, { status: P }>,
+      event: Extract<E, { type: T }>,
+    ) => Decision<S, C>;
   };
 };
 
 /** Missing edges ignore irrelevant or late messages, including messages to terminal actors. */
-export function defineMachine<S extends { status: string }, E extends { type: string }, C>(rules: Rules<S, E, C>) {
+export function defineMachine<S extends { status: string }, E extends { type: string }, C>(
+  rules: Rules<S, E, C>,
+) {
   return (state: S, event: E): Decision<S, C> => {
     // The table indexes both discriminants; the public rule type enforces each handler's inputs.
-    const row = rules[state.status as S["status"]] as Partial<Record<E["type"], (s: S, e: E) => Decision<S, C>>>;
+    const row = rules[state.status as S["status"]] as Partial<
+      Record<E["type"], (s: S, e: E) => Decision<S, C>>
+    >;
     return row[event.type as E["type"]]?.(state, event) ?? stay(state);
   };
 }
@@ -40,7 +47,9 @@ export class Actor<S, E, C> {
     this.state = freeze(initial);
   }
 
-  get snapshot(): S { return this.state; }
+  get snapshot(): S {
+    return this.state;
+  }
 
   /** Pure reduction commits once. Commands cannot run until the entire decision succeeds. */
   send(event: E): Promise<S> {
@@ -48,8 +57,9 @@ export class Actor<S, E, C> {
       const decision = this.decide(this.state, event);
       this.state = freeze(decision.state);
       for (const command of decision.commands) {
-        try { this.execute(command); }
-        catch (error) {
+        try {
+          this.execute(command);
+        } catch (error) {
           // This is a new domain event, not rollback of already dispatched commands.
           void this.send(this.commandFailed(command, error));
         }

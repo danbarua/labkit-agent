@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
-import { AppendIdSchema, INITIAL_REVISION } from "./persistence.ts";
+
 import { SessionIdSchema } from "../agent/types.ts";
+import { AppendIdSchema, INITIAL_REVISION } from "./persistence.ts";
 import { appendOperation, loadOperation } from "./session-operation.ts";
-import { createMemoryPersistence } from "./testing/memory-persistence.ts";
 import { deferred, until } from "./test-support.ts";
+import { createMemoryPersistence } from "./testing/memory-persistence.ts";
+
 const sessionId = SessionIdSchema.parse("00000000-0000-4000-8000-000000000001");
 const request = {
   sessionId,

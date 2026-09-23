@@ -1,46 +1,48 @@
-import { EnvEventSchema, type EnvEvent } from "./events.ts";
-import {
-  initialPolicy as resolveInitialPolicy,
-  validatePolicy,
-  projectPolicy,
-  copyResolvers,
-  type PolicyPatch,
-  type PolicyResolvers,
-} from "../policy/policy.ts";
-import type { CompletionPort } from "../host/ports.ts";
-import { createHost } from "../host/host.ts";
-import { copyRegistries } from "../host/ports.ts";
 import { z } from "zod";
-import { Actor, freeze } from "../fsm/fsm.ts";
+
+import type { ConversationCommand, SessionRequest } from "../agent/agent-conversation.ts";
+import type { TurnEvent } from "../agent/agent-fsm.ts";
+import type { AgentDefinition, RuntimeOptions, Tool } from "../agent/agent-runtime.ts";
 import {
   createChatCompletion,
   PreparedModelSchema,
   type ChatCompletionRequest,
 } from "../agent/agent.ts";
-import type { TurnEvent } from "../agent/agent-fsm.ts";
-import type { ConversationCommand, SessionRequest } from "../agent/agent-conversation.ts";
 import { parseSessionContext, type PromptInput } from "../agent/prompt.ts";
 import {
   ActorIdSchema,
-  SessionIdSchema,
   AgentIdSchema,
-  StepsSchema,
   failure,
+  SessionIdSchema,
+  StepsSchema,
   type ActorId,
   type TurnData,
   type TurnRecord,
 } from "../agent/types.ts";
-import type { RuntimeOptions, Tool, AgentDefinition } from "../agent/agent-runtime.ts";
+import { Actor, freeze } from "../fsm/fsm.ts";
+import { createHost } from "../host/host.ts";
+import type { CompletionPort } from "../host/ports.ts";
+import { copyRegistries } from "../host/ports.ts";
+import {
+  copyResolvers,
+  projectPolicy,
+  initialPolicy as resolveInitialPolicy,
+  validatePolicy,
+  type PolicyPatch,
+  type PolicyResolvers,
+} from "../policy/policy.ts";
+import { EnvEventSchema, type EnvEvent } from "./events.ts";
 import { AppendIdSchema, type AppendId, type SessionPersistence } from "./persistence.ts";
-import { appendOperation, loadOperation, loadSession } from "./session-operation.ts";
 import {
   decideSession,
-  type SessionState,
-  type SessionEvent,
-  type SessionCommand,
   type CommandReceipt,
+  type SessionCommand,
+  type SessionEvent,
+  type SessionState,
 } from "./session-fsm.ts";
 import { replay, seedConversation, toSeed, wireEvent, type JournalState } from "./session-log.ts";
+import { appendOperation, loadOperation, loadSession } from "./session-operation.ts";
+import { projectSessionPrompt } from "./session-prompt.ts";
 import {
   ConfigurationSchema,
   SeedSchema,
@@ -48,7 +50,6 @@ import {
   type Seed,
   type SessionInput,
 } from "./types.ts";
-import { projectSessionPrompt } from "./session-prompt.ts";
 
 export { defineTool } from "../host/ports.ts";
 export type { Tool, AgentDefinition };

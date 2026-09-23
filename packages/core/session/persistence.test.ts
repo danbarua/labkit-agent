@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
-import { persistenceContract } from "./testing/persistence-contract.ts";
-import { createMemoryBacking, createMemoryPersistence } from "./testing/memory-persistence.ts";
-import { lostAcknowledgement, testOptions } from "./test-support.ts";
+
 import { createSession } from "./session-runtime.ts";
+import { lostAcknowledgement, testOptions } from "./test-support.ts";
+import { createMemoryBacking, createMemoryPersistence } from "./testing/memory-persistence.ts";
+import { persistenceContract } from "./testing/persistence-contract.ts";
+
 persistenceContract("process-local reference", () => {
   const backing = createMemoryBacking();
   return {

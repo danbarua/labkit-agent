@@ -1,6 +1,8 @@
-import { PolicyPatchSchema } from "../policy/policy.ts";
-import type { LegacySessionOptions, SessionOptions } from "./session-runtime.ts";
 import { z } from "zod";
+
+import { PolicyPatchSchema } from "../policy/policy.ts";
+import { journalJSONL, journalMarkdown } from "./session-log.ts";
+import type { LegacySessionOptions, SessionOptions } from "./session-runtime.ts";
 import {
   createSession,
   defineTool,
@@ -8,10 +10,9 @@ import {
   type SessionRuntime,
   type TerminalResult,
 } from "./session-runtime.ts";
-import { journalJSONL, journalMarkdown } from "./session-log.ts";
 import {
-  deterministicIds,
   deferred,
+  deterministicIds,
   lostAcknowledgement,
   testOptions,
   until,

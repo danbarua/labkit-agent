@@ -1,36 +1,39 @@
 import { z } from "zod";
+
 import { Actor, freeze } from "../fsm/fsm.ts";
-import { createChatCompletion, type ChatCompletionRequest } from "./agent.ts";
-import type { TurnEvent } from "./agent-fsm.ts";
+import { createHost } from "../host/host.ts";
+import { copyRegistries, type AgentDefinition, type Tool } from "../host/ports.ts";
 import {
   decideConversation,
   initialConversation,
   type ConversationCommand,
   type ConversationEvent,
   type ConversationState,
-  type SessionRequest,
   type SessionReply,
+  type SessionRequest,
 } from "./agent-conversation.ts";
+import type { TurnEvent } from "./agent-fsm.ts";
+import { createChatCompletion, type ChatCompletionRequest } from "./agent.ts";
 import type { OperationState } from "./operation-actor.ts";
-import { projectConversationPrompt, parseSessionContext, type PromptInput } from "./prompt.ts";
+import { parseSessionContext, projectConversationPrompt, type PromptInput } from "./prompt.ts";
 import type { BatchState } from "./tool-batch.ts";
 import {
   ActorIdSchema,
-  SessionIdSchema,
   AgentIdSchema,
+  failure,
+  SessionIdSchema,
   StepsSchema,
   UserEventSchema,
-  failure,
   type ActorId,
   type ChildRef,
   type TurnData,
 } from "./types.ts";
+
 export { projectConversationPrompt } from "./prompt.ts";
 export type { PromptInput } from "./prompt.ts";
 
 export { defineTool } from "../host/ports.ts";
-import { copyRegistries, type Tool, type AgentDefinition } from "../host/ports.ts";
-import { createHost } from "../host/host.ts";
+
 export type { Tool, AgentDefinition };
 export type RuntimeOptions = {
   agent: string;

@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import { SessionIdSchema } from "../agent/types.ts";
 
 export const RevisionSchema = z.number().int().nonnegative().brand<"JournalRevision">();

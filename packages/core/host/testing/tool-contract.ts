@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+
 import { z } from "zod";
+
 import { createOperationActor } from "../../agent/operation-actor.ts";
-import { ref, type Result } from "../../agent/types.ts";
 import { deferred, until } from "../../agent/test-support.ts";
+import { ref, type Result } from "../../agent/types.ts";
 import type { Tool } from "../ports.ts";
 
 /** Factory supplies a tool accepting {text:string}; execution is always behind input validation. */

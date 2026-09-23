@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
+
 import { PreparedModelSchema } from "../../agent/agent.ts";
-import { CompletionSchema, ref, type Result } from "../../agent/types.ts";
 import { createOperationActor } from "../../agent/operation-actor.ts";
 import { deferred, until } from "../../agent/test-support.ts";
+import { CompletionSchema, ref, type Result } from "../../agent/types.ts";
 import type { CompletionPort } from "../ports.ts";
 
 /** Factory binds a scripted completion source. Validation and cancellation are host guarantees. */

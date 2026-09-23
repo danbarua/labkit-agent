@@ -1,12 +1,13 @@
 import { z } from "zod";
-import { freeze } from "../fsm/fsm.ts";
-import { StepsSchema, ToolNameSchema, type AgentMessage, type Result } from "../agent/types.ts";
+
+import { ChatMessageSchema, type ChatMessage } from "../agent/agent.ts";
 import {
-  projectConversationPrompt,
   parseSessionContext,
+  projectConversationPrompt,
   type PromptInput,
 } from "../agent/prompt.ts";
-import { ChatMessageSchema, type ChatMessage } from "../agent/agent.ts";
+import { StepsSchema, ToolNameSchema, type AgentMessage, type Result } from "../agent/types.ts";
+import { freeze } from "../fsm/fsm.ts";
 
 export const PolicyVersionSchema = z.number().int().nonnegative().brand<"PolicyVersion">();
 const PolicyObjectSchema = z.strictObject({

@@ -1,18 +1,21 @@
 import { expect, test } from "bun:test";
+
 import { z } from "zod";
-import { completionContract } from "./testing/completion-contract.ts";
-import { toolContract } from "./testing/tool-contract.ts";
-import { defineTool, completionTransport } from "./ports.ts";
-import { createHost, type HostToolOutcome } from "./host.ts";
+
+import { PreparedModelSchema } from "../agent/agent.ts";
+import { until } from "../agent/test-support.ts";
 import {
   ActorIdSchema,
   AgentIdSchema,
-  StepsSchema,
   CompletionSchema,
   ref,
+  StepsSchema,
 } from "../agent/types.ts";
-import { PreparedModelSchema } from "../agent/agent.ts";
-import { until } from "../agent/test-support.ts";
+import { createHost, type HostToolOutcome } from "./host.ts";
+import { completionTransport, defineTool } from "./ports.ts";
+import { completionContract } from "./testing/completion-contract.ts";
+import { toolContract } from "./testing/tool-contract.ts";
+
 completionContract("completion port through operation host", (source) => source);
 toolContract("defineTool through operation host", (run) =>
   defineTool({ input: z.object({ text: z.string() }), run }),

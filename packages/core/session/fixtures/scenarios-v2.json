@@ -1,10 +1,128 @@
 [
-  {"format":2,"name":"policy-permissions-allowance","completions":[{"kind":"answer","text":"Restricted"}],"steps":[{"op":"policy","patch":{"steps":1,"tools":{"a":[]}}},{"op":"input","text":"Go"},{"op":"policy","patch":{"steps":0}},{"op":"input","text":"No allowance"},{"op":"restore","target":"restored"}]},
-  {"format":2,"name":"queue-user","policy":{"id":"queued@1"},"completions":[{"defer":"first","value":{"kind":"answer","text":"First"}},{"kind":"answer","text":"Second"}],"steps":[{"op":"input","text":"First","wait":false},{"op":"requests","count":1},{"op":"input","text":"Second","wait":false},{"op":"policy","patch":{"steps":9},"expected":"busy"},{"op":"release","name":"first"},{"op":"settle"},{"op":"restore","target":"restored"}]},
-  {"format":2,"name":"queue-recovery","policy":{"id":"queued@1"},"completions":[{"defer":"first","value":{"kind":"answer","text":"Unobserved"}}],"steps":[{"op":"input","text":"First","wait":false},{"op":"requests","count":1},{"op":"input","text":"Queued","wait":false},{"op":"close"},{"op":"restore","target":"restored"}]},
-  {"format":2,"name":"tool-error-continue","policy":{"id":"tolerant@1"},"completions":[{"kind":"tools","text":"Work","calls":[{"id":"bad","name":"echo","args":{"text":"error:broken"}},{"id":"ok","name":"echo","args":{"text":"ok"}}]},{"kind":"answer","text":"Recovered"}],"steps":[{"op":"input","text":"Go"},{"op":"restore","target":"restored"}]},
-  {"format":2,"name":"abort-tools-on-user","policy":{"admission":"abort-tools-on-user"},"completions":[{"kind":"tools","text":"Work","calls":[{"id":"fast","name":"echo","args":{"text":"fast"}},{"id":"slow","name":"echo","args":{"text":"defer:slow"}}]},{"kind":"answer","text":"New turn"}],"steps":[{"op":"input","text":"Old","wait":false},{"op":"partial","count":1},{"op":"input","text":"New"},{"op":"release","name":"slow","value":"late"},{"op":"restore","target":"restored"}]},
-  {"format":2,"name":"context-policy-fork","completions":[{"kind":"answer","text":"Ancestor"},{"kind":"handoff","agent":"b","text":"Delegate"},{"kind":"answer","text":"Child answer"}],"steps":[{"op":"input","text":"Earlier"},{"op":"policy","patch":{"project":"context-only@1"}},{"op":"system","inputs":["Shared instruction"]},{"op":"compact","target":"child","context":[{"role":"user","text":"Summary"}]},{"op":"input","session":"child","text":"Continue"},{"op":"restore","session":"child","target":"restored"}]},
-  {"name":"legacy-upgrade","completions":[{"kind":"answer","text":"Legacy"},{"kind":"answer","text":"Version two"}],"steps":[{"op":"input","text":"Before"},{"op":"policy","patch":{"id":"strict@1","steps":2}},{"op":"input","text":"After"},{"op":"restore","target":"restored"}]},
-  {"format":2,"name":"lost-acknowledgement","fault":"lose-input","completions":[{"kind":"answer","text":"Once"}],"steps":[{"op":"input","text":"Go"},{"op":"restore","target":"restored"}]}
+  {
+    "format": 2,
+    "name": "policy-permissions-allowance",
+    "completions": [{ "kind": "answer", "text": "Restricted" }],
+    "steps": [
+      { "op": "policy", "patch": { "steps": 1, "tools": { "a": [] } } },
+      { "op": "input", "text": "Go" },
+      { "op": "policy", "patch": { "steps": 0 } },
+      { "op": "input", "text": "No allowance" },
+      { "op": "restore", "target": "restored" }
+    ]
+  },
+  {
+    "format": 2,
+    "name": "queue-user",
+    "policy": { "id": "queued@1" },
+    "completions": [
+      { "defer": "first", "value": { "kind": "answer", "text": "First" } },
+      { "kind": "answer", "text": "Second" }
+    ],
+    "steps": [
+      { "op": "input", "text": "First", "wait": false },
+      { "op": "requests", "count": 1 },
+      { "op": "input", "text": "Second", "wait": false },
+      { "op": "policy", "patch": { "steps": 9 }, "expected": "busy" },
+      { "op": "release", "name": "first" },
+      { "op": "settle" },
+      { "op": "restore", "target": "restored" }
+    ]
+  },
+  {
+    "format": 2,
+    "name": "queue-recovery",
+    "policy": { "id": "queued@1" },
+    "completions": [{ "defer": "first", "value": { "kind": "answer", "text": "Unobserved" } }],
+    "steps": [
+      { "op": "input", "text": "First", "wait": false },
+      { "op": "requests", "count": 1 },
+      { "op": "input", "text": "Queued", "wait": false },
+      { "op": "close" },
+      { "op": "restore", "target": "restored" }
+    ]
+  },
+  {
+    "format": 2,
+    "name": "tool-error-continue",
+    "policy": { "id": "tolerant@1" },
+    "completions": [
+      {
+        "kind": "tools",
+        "text": "Work",
+        "calls": [
+          { "id": "bad", "name": "echo", "args": { "text": "error:broken" } },
+          { "id": "ok", "name": "echo", "args": { "text": "ok" } }
+        ]
+      },
+      { "kind": "answer", "text": "Recovered" }
+    ],
+    "steps": [
+      { "op": "input", "text": "Go" },
+      { "op": "restore", "target": "restored" }
+    ]
+  },
+  {
+    "format": 2,
+    "name": "abort-tools-on-user",
+    "policy": { "admission": "abort-tools-on-user" },
+    "completions": [
+      {
+        "kind": "tools",
+        "text": "Work",
+        "calls": [
+          { "id": "fast", "name": "echo", "args": { "text": "fast" } },
+          { "id": "slow", "name": "echo", "args": { "text": "defer:slow" } }
+        ]
+      },
+      { "kind": "answer", "text": "New turn" }
+    ],
+    "steps": [
+      { "op": "input", "text": "Old", "wait": false },
+      { "op": "partial", "count": 1 },
+      { "op": "input", "text": "New" },
+      { "op": "release", "name": "slow", "value": "late" },
+      { "op": "restore", "target": "restored" }
+    ]
+  },
+  {
+    "format": 2,
+    "name": "context-policy-fork",
+    "completions": [
+      { "kind": "answer", "text": "Ancestor" },
+      { "kind": "handoff", "agent": "b", "text": "Delegate" },
+      { "kind": "answer", "text": "Child answer" }
+    ],
+    "steps": [
+      { "op": "input", "text": "Earlier" },
+      { "op": "policy", "patch": { "project": "context-only@1" } },
+      { "op": "system", "inputs": ["Shared instruction"] },
+      { "op": "compact", "target": "child", "context": [{ "role": "user", "text": "Summary" }] },
+      { "op": "input", "session": "child", "text": "Continue" },
+      { "op": "restore", "session": "child", "target": "restored" }
+    ]
+  },
+  {
+    "name": "legacy-upgrade",
+    "completions": [
+      { "kind": "answer", "text": "Legacy" },
+      { "kind": "answer", "text": "Version two" }
+    ],
+    "steps": [
+      { "op": "input", "text": "Before" },
+      { "op": "policy", "patch": { "id": "strict@1", "steps": 2 } },
+      { "op": "input", "text": "After" },
+      { "op": "restore", "target": "restored" }
+    ]
+  },
+  {
+    "format": 2,
+    "name": "lost-acknowledgement",
+    "fault": "lose-input",
+    "completions": [{ "kind": "answer", "text": "Once" }],
+    "steps": [
+      { "op": "input", "text": "Go" },
+      { "op": "restore", "target": "restored" }
+    ]
+  }
 ]

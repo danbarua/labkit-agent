@@ -1,26 +1,26 @@
 import {
-  PolicyPatchSchema,
-  defaultPolicy,
-  validatePolicy,
-  patchPolicy,
-  projectPolicy,
-  effectiveToolResult,
-  builtinResolvers,
-  type Policy,
-  type PolicyResolvers,
-} from "../policy/policy.ts";
-import { PreparedModelSchema } from "../agent/agent.ts";
-import {
   decideConversation,
   initialConversation,
   type ConversationCommand,
   type ConversationEvent,
   type ConversationState,
 } from "../agent/agent-conversation.ts";
+import { PreparedModelSchema } from "../agent/agent.ts";
+import { projectConversationPrompt } from "../agent/prompt.ts";
 import { completeResults } from "../agent/tool-batch.ts";
 import { ActorIdSchema, MessagesSchema, type TurnRecord } from "../agent/types.ts";
-import { projectConversationPrompt } from "../agent/prompt.ts";
 import { freeze } from "../fsm/fsm.ts";
+import {
+  builtinResolvers,
+  defaultPolicy,
+  effectiveToolResult,
+  patchPolicy,
+  PolicyPatchSchema,
+  projectPolicy,
+  validatePolicy,
+  type Policy,
+  type PolicyResolvers,
+} from "../policy/policy.ts";
 import {
   INITIAL_REVISION,
   RevisionSchema,
@@ -28,20 +28,19 @@ import {
   type CommittedBatch,
   type Revision,
 } from "./persistence.ts";
+import { projectSessionPrompt } from "./session-prompt.ts";
 import {
   JournalRecordSchema,
   SeedSchema,
-  type SystemVersionSchema,
   WireEventSchema,
   type Configuration,
   type JournalBody,
   type JournalRecord,
   type Seed,
   type SessionInput,
+  type SystemVersionSchema,
   type WireEvent,
 } from "./types.ts";
-
-import { projectSessionPrompt } from "./session-prompt.ts";
 
 export type ToolEntry = Extract<JournalBody, { kind: "tool" }>;
 export type JournalState = Readonly<{

@@ -61,9 +61,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -102,9 +100,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -244,9 +240,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -254,9 +248,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -271,9 +263,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -310,9 +300,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -320,9 +308,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -337,9 +323,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -406,9 +390,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -543,9 +525,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -675,9 +655,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -685,9 +663,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -702,9 +678,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -741,9 +715,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -751,9 +723,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -768,9 +738,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -837,9 +805,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -974,9 +940,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -1063,10 +1027,7 @@
         {
           "op": "system",
           "session": "root",
-          "inputs": [
-            "First",
-            "Second"
-          ],
+          "inputs": ["First", "Second"],
           "wait": true
         },
         {
@@ -1117,9 +1078,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -1220,9 +1179,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -1230,9 +1187,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -1247,17 +1202,12 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
         },
-        "systemInputs": [
-          "First",
-          "Second"
-        ],
+        "systemInputs": ["First", "Second"],
         "systemVersion": 1,
         "partial": [],
         "revision": 6,
@@ -1289,9 +1239,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -1299,9 +1247,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -1316,9 +1262,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -1334,10 +1278,7 @@
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
             "body": {
               "kind": "system",
-              "inputs": [
-                "First",
-                "Second"
-              ],
+              "inputs": ["First", "Second"],
               "version": 1
             }
           },
@@ -1408,9 +1349,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -1524,9 +1463,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -1534,9 +1471,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -1551,17 +1486,12 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
         },
-        "systemInputs": [
-          "First",
-          "Second"
-        ],
+        "systemInputs": ["First", "Second"],
         "systemVersion": 1,
         "partial": [],
         "revision": 6,
@@ -1593,9 +1523,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -1603,9 +1531,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -1620,9 +1546,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -1638,10 +1562,7 @@
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
             "body": {
               "kind": "system",
-              "inputs": [
-                "First",
-                "Second"
-              ],
+              "inputs": ["First", "Second"],
               "version": 1
             }
           },
@@ -1712,9 +1633,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -1852,9 +1771,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -1917,9 +1834,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -2068,9 +1983,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -2078,9 +1991,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -2095,9 +2006,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -2134,9 +2043,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -2144,9 +2051,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -2161,9 +2066,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -2230,9 +2133,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -2434,9 +2335,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -2624,9 +2523,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -2757,9 +2654,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -2767,9 +2662,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -2784,9 +2677,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -2823,9 +2714,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -2833,9 +2722,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -2850,9 +2737,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -2919,9 +2804,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -3155,9 +3038,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -3165,9 +3046,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -3182,9 +3061,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -3221,9 +3098,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -3231,9 +3106,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -3248,9 +3121,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -3317,9 +3188,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -3521,9 +3390,7 @@
         {
           "op": "system",
           "session": "child",
-          "inputs": [
-            "Independent"
-          ],
+          "inputs": ["Independent"],
           "wait": true
         },
         {
@@ -3566,9 +3433,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -3611,9 +3476,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -3749,9 +3612,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -3759,9 +3620,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -3776,9 +3635,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -3815,9 +3672,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -3825,9 +3680,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -3842,9 +3695,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -3911,9 +3762,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -4064,9 +3913,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -4074,9 +3921,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -4091,16 +3936,12 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
         },
-        "systemInputs": [
-          "Independent"
-        ],
+        "systemInputs": ["Independent"],
         "systemVersion": 1,
         "partial": [],
         "revision": 6,
@@ -4151,9 +3992,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -4161,9 +4000,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -4178,9 +4015,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -4196,9 +4031,7 @@
             "appendId": "00000000-0000-4000-8000-000000000006/append/00000000-0000-4000-8000-000000000008",
             "body": {
               "kind": "system",
-              "inputs": [
-                "Independent"
-              ],
+              "inputs": ["Independent"],
               "version": 1
             }
           },
@@ -4273,9 +4106,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -4407,9 +4238,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -4417,9 +4246,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -4434,16 +4261,12 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
         },
-        "systemInputs": [
-          "Independent"
-        ],
+        "systemInputs": ["Independent"],
         "systemVersion": 1,
         "partial": [],
         "revision": 6,
@@ -4494,9 +4317,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -4504,9 +4325,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -4521,9 +4340,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -4539,9 +4356,7 @@
             "appendId": "00000000-0000-4000-8000-000000000006/append/00000000-0000-4000-8000-000000000008",
             "body": {
               "kind": "system",
-              "inputs": [
-                "Independent"
-              ],
+              "inputs": ["Independent"],
               "version": 1
             }
           },
@@ -4616,9 +4431,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -4730,9 +4543,7 @@
         {
           "op": "system",
           "session": "root",
-          "inputs": [
-            "Busy"
-          ],
+          "inputs": ["Busy"],
           "wait": true,
           "expected": "busy"
         },
@@ -4786,9 +4597,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -4827,9 +4636,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -4976,9 +4783,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -4986,9 +4791,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -5003,9 +4806,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -5042,9 +4843,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -5052,9 +4851,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -5069,9 +4866,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -5138,9 +4933,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -5294,9 +5087,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -5412,9 +5203,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -5422,9 +5211,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -5439,9 +5226,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -5497,9 +5282,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -5507,9 +5290,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -5524,9 +5305,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -5631,9 +5410,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -5668,9 +5445,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -5794,9 +5569,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -5804,9 +5577,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -5821,9 +5592,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -5860,9 +5629,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -5870,9 +5637,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -5887,9 +5652,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -5956,9 +5719,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -6104,9 +5865,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -6114,9 +5873,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -6131,9 +5888,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -6177,9 +5932,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -6187,9 +5940,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -6204,9 +5955,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -6277,9 +6026,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -6408,9 +6155,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -6418,9 +6163,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -6435,9 +6178,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -6481,9 +6222,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -6491,9 +6230,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -6508,9 +6245,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -6569,9 +6304,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -6579,9 +6312,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -6596,9 +6327,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -6637,9 +6366,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -6647,9 +6374,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -6664,9 +6389,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -6705,9 +6428,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -6715,9 +6436,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -6732,9 +6451,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -6773,9 +6490,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -6783,9 +6498,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -6800,9 +6513,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -6834,9 +6545,7 @@
         {
           "op": "system",
           "session": "root",
-          "inputs": [
-            "Shared instruction"
-          ],
+          "inputs": ["Shared instruction"],
           "wait": true
         },
         {
@@ -6883,9 +6592,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -6924,9 +6631,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -7035,9 +6740,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -7045,9 +6748,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -7062,16 +6763,12 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
         },
-        "systemInputs": [
-          "Shared instruction"
-        ],
+        "systemInputs": ["Shared instruction"],
         "systemVersion": 1,
         "partial": [],
         "revision": 9,
@@ -7103,9 +6800,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -7113,9 +6808,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -7130,9 +6823,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -7148,9 +6839,7 @@
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
             "body": {
               "kind": "system",
-              "inputs": [
-                "Shared instruction"
-              ],
+              "inputs": ["Shared instruction"],
               "version": 1
             }
           },
@@ -7217,9 +6906,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -7348,9 +7035,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -7472,9 +7157,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -7482,9 +7165,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -7499,16 +7180,12 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
         },
-        "systemInputs": [
-          "Shared instruction"
-        ],
+        "systemInputs": ["Shared instruction"],
         "systemVersion": 1,
         "partial": [],
         "revision": 9,
@@ -7540,9 +7217,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -7550,9 +7225,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -7567,9 +7240,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -7585,9 +7256,7 @@
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
             "body": {
               "kind": "system",
-              "inputs": [
-                "Shared instruction"
-              ],
+              "inputs": ["Shared instruction"],
               "version": 1
             }
           },
@@ -7654,9 +7323,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -7785,9 +7452,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -7910,9 +7575,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -8001,9 +7664,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -8011,9 +7672,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -8028,9 +7687,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -8067,9 +7724,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -8077,9 +7732,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -8094,9 +7747,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -8163,9 +7814,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -8324,9 +7973,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -8413,9 +8060,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -8423,9 +8068,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -8440,9 +8083,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -8479,9 +8120,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -8489,9 +8128,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -8506,9 +8143,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -8575,9 +8210,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -8688,9 +8321,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -8698,9 +8329,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -8715,9 +8344,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -8754,9 +8381,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -8764,9 +8389,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -8781,9 +8404,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -8850,9 +8471,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -8978,9 +8597,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -8988,9 +8605,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -9005,9 +8620,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -9044,9 +8657,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -9054,9 +8665,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -9071,9 +8680,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -9170,9 +8777,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -9257,9 +8862,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -9267,9 +8870,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -9284,9 +8885,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -9334,9 +8933,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -9344,9 +8941,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -9361,9 +8956,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -9430,9 +9023,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -9576,9 +9167,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -9586,9 +9175,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -9603,9 +9190,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -9642,9 +9227,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -9652,9 +9235,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -9669,9 +9250,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -9738,9 +9317,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -9947,9 +9524,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -9957,9 +9532,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -9974,9 +9547,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -10013,9 +9584,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -10023,9 +9592,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -10040,9 +9607,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -10109,9 +9674,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -10318,9 +9881,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -10385,9 +9946,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -10395,9 +9954,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -10412,9 +9969,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -10451,9 +10006,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -10461,9 +10014,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -10478,9 +10029,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -10547,9 +10096,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -10606,9 +10153,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -10616,9 +10161,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -10633,9 +10176,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -10672,9 +10213,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -10682,9 +10221,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -10699,9 +10236,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -10768,9 +10303,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -10886,9 +10419,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -10896,9 +10427,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -10913,9 +10442,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -10952,9 +10479,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -10962,9 +10487,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -10979,9 +10502,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -11046,9 +10567,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -11137,9 +10656,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -11147,9 +10664,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -11164,9 +10679,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -11203,9 +10716,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -11213,9 +10724,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -11230,9 +10739,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -11299,9 +10806,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -11415,9 +10920,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -11425,9 +10928,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -11442,9 +10943,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -11481,9 +10980,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -11491,9 +10988,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -11508,9 +11003,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -11577,9 +11070,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -11718,9 +11209,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -11785,9 +11274,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -11795,9 +11282,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -11812,9 +11297,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -11851,9 +11334,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -11861,9 +11342,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -11878,9 +11357,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -11947,9 +11424,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -12006,9 +11481,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -12016,9 +11489,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -12033,9 +11504,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -12072,9 +11541,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -12082,9 +11549,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -12099,9 +11564,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -12168,9 +11631,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -12295,9 +11756,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -12332,9 +11791,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             }
           }
@@ -12443,9 +11900,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent A",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ],
             [
@@ -12453,9 +11908,7 @@
               {
                 "model": "test-model",
                 "systemPrompt": "Agent B",
-                "tools": [
-                  "echo"
-                ]
+                "tools": ["echo"]
               }
             ]
           ],
@@ -12470,9 +11923,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "text"
-                ]
+                "required": ["text"]
               }
             ]
           ]
@@ -12509,9 +11960,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent A",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ],
                     [
@@ -12519,9 +11968,7 @@
                       {
                         "model": "test-model",
                         "systemPrompt": "Agent B",
-                        "tools": [
-                          "echo"
-                        ]
+                        "tools": ["echo"]
                       }
                     ]
                   ],
@@ -12536,9 +11983,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "text"
-                        ]
+                        "required": ["text"]
                       }
                     ]
                   ]
@@ -12605,9 +12050,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }
@@ -12682,9 +12125,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "text"
-                              ]
+                              "required": ["text"]
                             }
                           }
                         }

@@ -7,8 +7,8 @@ process-local. Both the session and nonjournaled agent runtime use the shared ex
 ## Public API
 
 ```ts
-import { createSession, restoreSession, defineTool } from "./index.ts";
 import { completionTransport } from "../host/ports.ts";
+import { createSession, defineTool, restoreSession } from "./index.ts";
 import { createMemoryPersistence } from "./testing/memory-persistence.ts";
 
 const persistence = createMemoryPersistence(); // tests / process-local experiments only
@@ -28,7 +28,7 @@ const options = {
 const session = await createSession(options);
 const turn = session.input("Describe the experiment.");
 const receipt = await turn.accepted; // accepted only after the input batch commits
-const outcome = await turn.settled;  // correlated terminal record, storage failure, or close
+const outcome = await turn.settled; // correlated terminal record, storage failure, or close
 
 const child = await session.fork();
 const compacted = await child.compact([{ role: "user", text: "Validated replacement context" }]);

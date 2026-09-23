@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
-import { createSession } from "./session-runtime.ts";
-import { testOptions, scriptedCompletion } from "./test-support.ts";
-import { decodeRecord, encodeRecord, replay } from "./session-log.ts";
+
 import { RevisionSchema, type CommittedBatch } from "./persistence.ts";
+import { decodeRecord, encodeRecord, replay } from "./session-log.ts";
+import { createSession } from "./session-runtime.ts";
+import { scriptedCompletion, testOptions } from "./test-support.ts";
+
 async function fixture() {
   const options = testOptions({
     complete: scriptedCompletion([

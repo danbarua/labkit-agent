@@ -1,10 +1,10 @@
-import { builtinResolvers, type PolicyResolvers } from "../policy/policy.ts";
-import { ActorIdSchema } from "../agent/types.ts";
-import { AppendIdSchema } from "./persistence.ts";
 import type { ConversationCommand } from "../agent/agent-conversation.ts";
+import { ActorIdSchema } from "../agent/types.ts";
 import type { Decision } from "../fsm/fsm.ts";
-import { accepts, replay, stage, type JournalState } from "./session-log.ts";
+import { builtinResolvers, type PolicyResolvers } from "../policy/policy.ts";
+import { AppendIdSchema } from "./persistence.ts";
 import type { AppendId, AppendRequest, AppendResult, LoadResult, Receipt } from "./persistence.ts";
+import { accepts, replay, stage, type JournalState } from "./session-log.ts";
 import { SystemVersionSchema, type SessionInput } from "./types.ts";
 
 export type CommandReceipt =

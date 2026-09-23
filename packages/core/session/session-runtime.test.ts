@@ -1,16 +1,18 @@
-import * as sessionLog from "./session-log.ts";
-import { expect, test, spyOn } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+
 import { z } from "zod";
-import { createSession, restoreSession, defineTool } from "./session-runtime.ts";
+
+import * as sessionLog from "./session-log.ts";
+import { journalJSONL } from "./session-log.ts";
+import { createSession, defineTool, restoreSession } from "./session-runtime.ts";
 import {
-  testOptions,
-  scriptedCompletion,
   deferred,
-  until,
   lostAcknowledgement,
+  scriptedCompletion,
+  testOptions,
+  until,
 } from "./test-support.ts";
 import { createMemoryBacking, createMemoryPersistence } from "./testing/memory-persistence.ts";
-import { journalJSONL } from "./session-log.ts";
 
 test("answers, immutable snapshots, system updates and idle restoration without effects", async () => {
   const requests: unknown[] = [];

@@ -1,9 +1,8 @@
-import { effectiveToolResult, type Policy } from "../policy/policy.ts";
 import { z } from "zod";
-import { Actor, freeze } from "../fsm/fsm.ts";
-import { PreparedModelSchema } from "../agent/agent.ts";
-import { admittedCompletionSchema, type TurnEvent } from "../agent/agent-fsm.ts";
+
 import type { ConversationCommand } from "../agent/agent-conversation.ts";
+import { admittedCompletionSchema, type TurnEvent } from "../agent/agent-fsm.ts";
+import { PreparedModelSchema } from "../agent/agent.ts";
 import {
   createOperationActor,
   type Operation,
@@ -17,15 +16,18 @@ import {
   type BatchState,
 } from "../agent/tool-batch.ts";
 import {
+  failure,
   MessagesSchema,
   ToolNameSchema,
-  failure,
   type ActorId,
   type ChildRef,
   type Result,
   type ToolCall,
 } from "../agent/types.ts";
+import { Actor, freeze } from "../fsm/fsm.ts";
+import { effectiveToolResult, type Policy } from "../policy/policy.ts";
 import { copyRegistries, type ExecutionBindings } from "./ports.ts";
+
 export type HostToolOutcome = Readonly<{
   turnId: ActorId;
   batchId: ActorId;

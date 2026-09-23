@@ -1,6 +1,8 @@
-import { PolicySchema, PolicyPatchSchema, PolicyVersionSchema } from "../policy/policy.ts";
 import { z } from "zod";
+
 import { ChatMessageSchema, ChatToolSchema } from "../agent/agent.ts";
+import { parseSessionContext } from "../agent/prompt.ts";
+import { ToolResultSchema } from "../agent/tool-batch.ts";
 import {
   ActorIdSchema,
   AgentIdSchema,
@@ -10,11 +12,10 @@ import {
   SessionIdSchema,
   StepsSchema,
   ToolCallIdSchema,
-  TurnRecordSchema,
   ToolNameSchema,
+  TurnRecordSchema,
 } from "../agent/types.ts";
-import { parseSessionContext } from "../agent/prompt.ts";
-import { ToolResultSchema } from "../agent/tool-batch.ts";
+import { PolicyPatchSchema, PolicySchema, PolicyVersionSchema } from "../policy/policy.ts";
 import { AppendIdSchema, RevisionSchema } from "./persistence.ts";
 
 export const SystemInputsSchema = z.array(z.string()).readonly();

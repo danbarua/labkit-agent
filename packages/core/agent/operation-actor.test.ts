@@ -1,13 +1,26 @@
 import { expect, test } from "bun:test";
+
 import { z } from "zod";
+
 import { createOperationActor } from "./operation-actor.ts";
-import { ref, type Result } from "./types.ts";
 import { deferred, until } from "./test-support.ts";
+import { ref, type Result } from "./types.ts";
 
 test("input validation, execution and output validation are distinct actor states", async () => {
-  const input = deferred<string>(), operation = deferred<unknown>(), output = deferred<number>();
+  const input = deferred<string>(),
+    operation = deferred<unknown>(),
+    output = deferred<number>();
   const outcomes: Result<number>[] = [];
-  const actor = createOperationActor(ref("completion", "test/request"), { input: "raw", parseInput: () => input.promise, run: () => operation.promise, parseOutput: () => output.promise }, result => outcomes.push(result));
+  const actor = createOperationActor(
+    ref("completion", "test/request"),
+    {
+      input: "raw",
+      parseInput: () => input.promise,
+      run: () => operation.promise,
+      parseOutput: () => output.promise,
+    },
+    (result) => outcomes.push(result),
+  );
   await actor.start();
   expect(actor.snapshot.status).toBe("validating_input");
   input.resolve("parsed");
@@ -25,11 +38,25 @@ test("input validation, execution and output validation are distinct actor state
 for (const stage of ["input", "run", "output"] as const) {
   test(`${stage} failure becomes a terminal actor outcome`, async () => {
     const results: Result<string>[] = [];
-    const actor = createOperationActor(ref("completion", "test/request"), {
-      input: "input", parseInput: value => { if (stage === "input") throw new Error("invalid input"); return z.string().parse(value); },
-      run: () => { if (stage === "run") throw new Error("I/O failed"); return "result"; },
-      parseOutput: value => { if (stage === "output") throw new Error("invalid output"); return z.string().parse(value); },
-    }, result => results.push(result));
+    const actor = createOperationActor(
+      ref("completion", "test/request"),
+      {
+        input: "input",
+        parseInput: (value) => {
+          if (stage === "input") throw new Error("invalid input");
+          return z.string().parse(value);
+        },
+        run: () => {
+          if (stage === "run") throw new Error("I/O failed");
+          return "result";
+        },
+        parseOutput: (value) => {
+          if (stage === "output") throw new Error("invalid output");
+          return z.string().parse(value);
+        },
+      },
+      (result) => results.push(result),
+    );
     await actor.start();
     await until(() => actor.snapshot.status === "failed");
     expect(results[0]?.kind).toBe("failed");
@@ -41,9 +68,19 @@ test("cancellation during asynchronous validation prevents execution", async () 
   const validation = deferred<string>();
   let executions = 0;
   const outcomes: Result<string>[] = [];
-  const actor = createOperationActor(ref("completion", "test/request"), { input: "", parseInput: () => validation.promise,
-    run: () => { executions++; return "ok"; }, parseOutput: z.string().parse,
-  }, result => outcomes.push(result));
+  const actor = createOperationActor(
+    ref("completion", "test/request"),
+    {
+      input: "",
+      parseInput: () => validation.promise,
+      run: () => {
+        executions++;
+        return "ok";
+      },
+      parseOutput: z.string().parse,
+    },
+    (result) => outcomes.push(result),
+  );
   await actor.start();
   await actor.cancel();
   validation.resolve("valid");
@@ -54,11 +91,23 @@ test("cancellation during asynchronous validation prevents execution", async () 
 
 test("cancels actual work once and ignores a late adapter result", async () => {
   const response = deferred<string>();
-  let signal!: AbortSignal, aborts = 0;
+  let signal!: AbortSignal,
+    aborts = 0;
   const outcomes: Result<string>[] = [];
-  const actor = createOperationActor(ref("completion", "test/request"), { input: "", parseInput: z.string().parse,
-    run: (_, current) => { signal = current; signal.addEventListener("abort", () => aborts++); return response.promise; }, parseOutput: z.string().parse,
-  }, result => outcomes.push(result));
+  const actor = createOperationActor(
+    ref("completion", "test/request"),
+    {
+      input: "",
+      parseInput: z.string().parse,
+      run: (_, current) => {
+        signal = current;
+        signal.addEventListener("abort", () => aborts++);
+        return response.promise;
+      },
+      parseOutput: z.string().parse,
+    },
+    (result) => outcomes.push(result),
+  );
   await actor.start();
   await until(() => Boolean(signal));
   await actor.cancel();

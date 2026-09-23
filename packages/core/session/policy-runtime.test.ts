@@ -1,14 +1,17 @@
 import { expect, test } from "bun:test";
+
 import { z } from "zod";
-import {
-  createSession,
-  restoreSession,
-  defineTool,
-  type BoundSessionOptions,
-} from "./session-runtime.ts";
-import { testOptions, deferred, until } from "./test-support.ts";
+
 import { builtinResolvers } from "../policy/policy.ts";
 import { journalJSONL } from "./session-log.ts";
+import {
+  createSession,
+  defineTool,
+  restoreSession,
+  type BoundSessionOptions,
+} from "./session-runtime.ts";
+import { deferred, testOptions, until } from "./test-support.ts";
+
 export function boundOptions(): BoundSessionOptions {
   const legacy = testOptions();
   return {

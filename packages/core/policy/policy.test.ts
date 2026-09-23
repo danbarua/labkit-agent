@@ -1,13 +1,15 @@
 import { expect, test } from "bun:test";
+
+import { ActorIdSchema, AgentIdSchema, StepsSchema } from "../agent/types.ts";
 import {
-  defaultPolicy,
-  patchPolicy,
-  initialPolicy,
-  copyResolvers,
   builtinResolvers,
+  copyResolvers,
+  defaultPolicy,
+  initialPolicy,
+  patchPolicy,
   projectPolicy,
 } from "./policy.ts";
-import { ActorIdSchema, AgentIdSchema, StepsSchema } from "../agent/types.ts";
+
 const capabilities = { agents: [["a", { tools: ["echo"] }]] as const };
 test("named pack selection resolves defaults and validates contradictory data", () => {
   const initial = defaultPolicy(capabilities, 4);

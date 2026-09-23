@@ -1,6 +1,7 @@
 # policy-permissions-allowance: root
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -9,17 +10,22 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Go"}
 - assistant: {"role":"assistant","text":"Restricted"}
 
 ## Turn 2: exhausted (a)
+
 Outcome: {"kind":"exhausted"}
+
 - user: {"role":"user","text":"No allowance"}
 
 # policy-permissions-allowance: restored
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -28,12 +34,16 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Go"}
 - assistant: {"role":"assistant","text":"Restricted"}
 
 ## Turn 2: exhausted (a)
+
 Outcome: {"kind":"exhausted"}
+
 - user: {"role":"user","text":"No allowance"}
 
 ---
@@ -41,6 +51,7 @@ Outcome: {"kind":"exhausted"}
 # queue-user: root
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -49,18 +60,23 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"First"}
 - assistant: {"role":"assistant","text":"First"}
 
 ## Turn 2: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Second"}
 - assistant: {"role":"assistant","text":"Second"}
 
 # queue-user: restored
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -69,12 +85,16 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"First"}
 - assistant: {"role":"assistant","text":"First"}
 
 ## Turn 2: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Second"}
 - assistant: {"role":"assistant","text":"Second"}
 
@@ -83,6 +103,7 @@ Outcome: {"kind":"completed"}
 # queue-recovery: root
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -91,11 +112,13 @@ Pending inputs: [{"inputId":"00000000-0000-4000-8000-000000000004","text":"Queue
 Context: []
 
 ## Interrupted/active turn 1: awaiting_model
+
 - user: {"role":"user","text":"First"}
 
 # queue-recovery: restored
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -104,15 +127,18 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: failed (a)
+
 Outcome: {"kind":"failed","error":{"message":"Interrupted session; external effects were not replayed"}}
+
 - user: {"role":"user","text":"First"}
-Recovery: Interrupted session; external effects were not replayed
+  Recovery: Interrupted session; external effects were not replayed
 
 ---
 
 # tool-error-continue: root
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -121,7 +147,9 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Go"}
 - assistant: {"role":"assistant","text":"Work","calls":[{"id":"bad","name":"echo","args":{"text":"error:broken"}},{"id":"ok","name":"echo","args":{"text":"ok"}}]}
 - tool: {"role":"tool","text":"{\"error\":\"broken\"}","callId":"bad"}
@@ -131,6 +159,7 @@ Outcome: {"kind":"completed"}
 # tool-error-continue: restored
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -139,7 +168,9 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Go"}
 - assistant: {"role":"assistant","text":"Work","calls":[{"id":"bad","name":"echo","args":{"text":"error:broken"}},{"id":"ok","name":"echo","args":{"text":"ok"}}]}
 - tool: {"role":"tool","text":"{\"error\":\"broken\"}","callId":"bad"}
@@ -151,6 +182,7 @@ Outcome: {"kind":"completed"}
 # abort-tools-on-user: root
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -159,19 +191,24 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: aborted (a)
+
 Outcome: {"kind":"aborted"}
+
 - user: {"role":"user","text":"Old"}
 - assistant: {"role":"assistant","text":"Work","calls":[{"id":"fast","name":"echo","args":{"text":"fast"}},{"id":"slow","name":"echo","args":{"text":"defer:slow"}}]}
 - tool: {"role":"tool","text":"fast","callId":"fast"}
 
 ## Turn 2: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"New"}
 - assistant: {"role":"assistant","text":"New turn"}
 
 # abort-tools-on-user: restored
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -180,13 +217,17 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: aborted (a)
+
 Outcome: {"kind":"aborted"}
+
 - user: {"role":"user","text":"Old"}
 - assistant: {"role":"assistant","text":"Work","calls":[{"id":"fast","name":"echo","args":{"text":"fast"}},{"id":"slow","name":"echo","args":{"text":"defer:slow"}}]}
 - tool: {"role":"tool","text":"fast","callId":"fast"}
 
 ## Turn 2: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"New"}
 - assistant: {"role":"assistant","text":"New turn"}
 
@@ -195,6 +236,7 @@ Outcome: {"kind":"completed"}
 # context-policy-fork: root
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 1
 System inputs: ["Shared instruction"]
@@ -203,13 +245,16 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Earlier"}
 - assistant: {"role":"assistant","text":"Ancestor"}
 
 # context-policy-fork: child
 
 # Session 00000000-0000-4000-8000-000000000008
+
 Origin: {"kind":"compaction","parent":"00000000-0000-4000-8000-000000000001","sequence":2}
 System version: 1
 System inputs: ["Shared instruction"]
@@ -218,7 +263,9 @@ Pending inputs: []
 Context: [{"role":"user","text":"Summary"}]
 
 ## Turn 1: completed (b)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Continue"}
 - assistant: {"role":"assistant","text":"Delegate"}
 - assistant: {"role":"assistant","text":"Child answer"}
@@ -226,6 +273,7 @@ Outcome: {"kind":"completed"}
 # context-policy-fork: restored
 
 # Session 00000000-0000-4000-8000-000000000008
+
 Origin: {"kind":"compaction","parent":"00000000-0000-4000-8000-000000000001","sequence":2}
 System version: 1
 System inputs: ["Shared instruction"]
@@ -234,7 +282,9 @@ Pending inputs: []
 Context: [{"role":"user","text":"Summary"}]
 
 ## Turn 1: completed (b)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Continue"}
 - assistant: {"role":"assistant","text":"Delegate"}
 - assistant: {"role":"assistant","text":"Child answer"}
@@ -244,6 +294,7 @@ Outcome: {"kind":"completed"}
 # legacy-upgrade: root
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -252,18 +303,23 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Before"}
 - assistant: {"role":"assistant","text":"Legacy"}
 
 ## Turn 2: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"After"}
 - assistant: {"role":"assistant","text":"Version two"}
 
 # legacy-upgrade: restored
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -272,12 +328,16 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Before"}
 - assistant: {"role":"assistant","text":"Legacy"}
 
 ## Turn 2: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"After"}
 - assistant: {"role":"assistant","text":"Version two"}
 
@@ -286,6 +346,7 @@ Outcome: {"kind":"completed"}
 # lost-acknowledgement: root
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -294,13 +355,16 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Go"}
 - assistant: {"role":"assistant","text":"Once"}
 
 # lost-acknowledgement: restored
 
 # Session 00000000-0000-4000-8000-000000000001
+
 Origin: {"kind":"root"}
 System version: 0
 System inputs: []
@@ -309,6 +373,8 @@ Pending inputs: []
 Context: []
 
 ## Turn 1: completed (a)
+
 Outcome: {"kind":"completed"}
+
 - user: {"role":"user","text":"Go"}
 - assistant: {"role":"assistant","text":"Once"}

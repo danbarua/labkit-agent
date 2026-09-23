@@ -1,7 +1,11 @@
 import { expect, test } from "bun:test";
+
+import type { PolicyPatch } from "../policy/policy.ts";
+import type { EnvEvent } from "./events.ts";
 import type { AppendResult, Revision } from "./persistence.ts";
-import type { StorageRef } from "./session-operation.ts";
 import type { SessionState } from "./session-fsm.ts";
+import type { StorageRef } from "./session-operation.ts";
+
 // Compile-time assertions; bunx tsc --noEmit is required in addition to the test runner.
 function assertions(state: SessionState, result: AppendResult) {
   // @ts-expect-error A plain number is not a journal revision.
@@ -29,8 +33,6 @@ test("domain assertions are checked by TypeScript", () => {
   expect(typeof assertions).toBe("function");
 });
 
-import type { EnvEvent } from "./events.ts";
-import type { PolicyPatch } from "../policy/policy.ts";
 function policyAssertions() {
   // @ts-expect-error Executable functions cannot enter a policy patch.
   const patch: PolicyPatch = { project: () => [] };

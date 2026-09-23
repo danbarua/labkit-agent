@@ -1,7 +1,9 @@
 import { z } from "zod";
-import { freeze } from "../fsm/fsm.ts";
+
 import { createChatCompletion, type PreparedModel } from "../agent/agent.ts";
 import { AgentIdSchema, ToolNameSchema } from "../agent/types.ts";
+import { freeze } from "../fsm/fsm.ts";
+
 /**
  * Existential tool adapter: defineTool retains input-schema inference at the authoring boundary.
  * Successful outputs must be JSON values. The host rejects undefined, Date, class instances,

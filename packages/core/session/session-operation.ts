@@ -1,3 +1,4 @@
+import type { SessionId } from "../agent/types.ts";
 import { Actor, type Decision } from "../fsm/fsm.ts";
 import {
   AppendResultSchema,
@@ -7,7 +8,6 @@ import {
   type LoadResult,
   type SessionPersistence,
 } from "./persistence.ts";
-import type { SessionId } from "../agent/types.ts";
 
 export type StorageRef = Readonly<{ kind: "load" | "append"; id: string }>;
 export type StorageState<T> =

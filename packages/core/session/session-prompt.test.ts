@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
-import { projectSessionPrompt } from "./session-prompt.ts";
+
 import { ActorIdSchema, AgentIdSchema, StepsSchema } from "../agent/types.ts";
+import { projectSessionPrompt } from "./session-prompt.ts";
 import { createSession, restoreSession } from "./session-runtime.ts";
-import { testOptions, scriptedCompletion } from "./test-support.ts";
+import { scriptedCompletion, testOptions } from "./test-support.ts";
+
 const turn = {
   id: ActorIdSchema.parse("turn"),
   generation: 1,

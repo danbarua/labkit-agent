@@ -1,3 +1,5 @@
+import type { EnvEvent } from "../session/events.ts";
+import type { SessionState } from "../session/session-fsm.ts";
 import {
   createSession,
   type BoundSessionOptions,
@@ -5,8 +7,6 @@ import {
   type EnvSettlement,
   type SessionRuntime,
 } from "../session/session-runtime.ts";
-import type { EnvEvent } from "../session/events.ts";
-import type { SessionState } from "../session/session-fsm.ts";
 
 export type EnvironmentUpdate =
   | Readonly<{ kind: "snapshot"; snapshot: SessionState }>

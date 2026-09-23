@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
+
+import { deferred } from "../agent/test-support.ts";
+import type { EnvEvent } from "../session/events.ts";
 import { createSession } from "../session/session-runtime.ts";
 import { createMemoryPersistence } from "../session/testing/memory-persistence.ts";
-import { deferred } from "../agent/test-support.ts";
 import { startEnvironment, type EnvironmentUpdate } from "./environment.ts";
-import type { EnvEvent } from "../session/events.ts";
 
 test("event loop receives abort during an unsettled completion and renders correlated outcomes", async () => {
   const started = deferred<void>();

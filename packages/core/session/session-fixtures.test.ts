@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { runFixtures } from "./fixture-runner.ts";
 
 test("approved structured and readable fixtures match across repeated deterministic runs", async () => {

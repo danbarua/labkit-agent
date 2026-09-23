@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { createSession } from "./session-runtime.ts";
-import { testOptions, deferred, until } from "./test-support.ts";
-import { decideSession, type SessionState, type SessionEvent } from "./session-fsm.ts";
+
 import { AppendIdSchema, RevisionSchema } from "./persistence.ts";
+import { decideSession, type SessionEvent, type SessionState } from "./session-fsm.ts";
+import { createSession } from "./session-runtime.ts";
+import { deferred, testOptions, until } from "./test-support.ts";
 import { createMemoryPersistence } from "./testing/memory-persistence.ts";
 
 async function initial(): Promise<SessionState> {
