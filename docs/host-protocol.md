@@ -45,34 +45,55 @@ this repository):
 - Not observed in the log: what a task hands to review when it finishes (no diff, changeset or commit
   record at `Finished`); `checkpoint` and `snapshot` appear but never as lifecycle records.
 
-## Where this runtime already has it
+## What the runtime implements today
 
-`agent-runtime.ts`, `execute`, `case "run_tools"`: the batch machine's `spawn_tool` command carries
-`call.id`, `call.name` and `call.args` before `tool.run` is invoked. That is an ACP `tool_call` minus
-`kind` and `locations`. The operation actor's states map onto ACP status: ready and validating input to
-`pending`, running to `in_progress`, succeeded to `completed`, failed and cancelled to `failed`, with
-`content` carrying the validated output on completion.
+`packages/core/host/host.ts` and `ports.ts`. `createHost(bindings, sinks)` is an execution adapter:
+`dispatch` runs the conversation's turn commands (`prepare_model`, `complete`, `prepare_handoff`,
+`run_tools`, `cancel`) through operation actors and a tool batch. Two sinks report back: `turn` posts
+typed `TurnEvent`s; `tool` posts a `HostToolOutcome` — `turnId`, `batchId`, `callId`, `result` — for
+each tool call **after it has run**. That outcome is held in `pendingTools` until the caller invokes
+`releaseTool(outcome)`, which passes it to the batch as `tool_settled` through the `toolFailure` policy
+(`fail-turn` or `return-error-and-continue`). `close()` cancels everything held. `ExecutionContext.
+allowedTools` narrows which tools a completion may be admitted with, per turn.
 
-What is missing is small and belongs in `defineTool`: a tool declares its `kind`, and how to derive
-`locations` from its parsed input (which arguments are paths). With that, the decision that admits a
-`tools` completion can emit one `tool_call` notification per call before any tool runs, and each
-operation actor's transitions emit `tool_call_update`. `session/request_permission` is a phase between
-admission and `run_tools`: the batch does not start until the host's option arrives, and `reject_*`
-becomes a batch outcome the turn records.
+Against ACP, that is: the outcome carries what a `tool_call_update` with `status: completed | failed`
+and `content` needs; `releaseTool` is a host-side hold on a result the agent has already produced,
+which ACP has no message for; `allowedTools` is a standing allow-list per turn, the effect of
+`allow_always` decided before the turn rather than per call. `defineTool` carries `description`, an
+input schema, its JSON Schema and `run`; it has no `kind` and no way to derive `locations`.
+
+## What is not implemented
+
+- **Nothing is reported before a tool runs.** The batch's `spawn_tool` holds `call.id`, `call.name` and
+  `call.args` before `tool.run`, which is an ACP `tool_call` minus `kind` and `locations`, but no event
+  leaves the host at that point. Emitting `tool_call` there, and `tool_call_update` on the operation
+  actor's transitions (ready and validating to `pending`, running to `in_progress`, succeeded to
+  `completed`, failed and cancelled to `failed`), is the first change.
+- **`defineTool` does not declare `kind` or how to derive `locations`** from parsed input. Without it a
+  `tool_call` cannot carry the fields a host uses to build scope.
+- **No `session/request_permission`.** The only gate is after execution (`releaseTool`). A pre-execution
+  gate is a phase between admission of a `tools` completion and `run_tools`: the batch does not start
+  until the host's option arrives, and `reject_*` becomes a batch outcome the turn records. It is not a
+  variant of `releaseTool`, because by then the effect has happened.
+- **No JSON-RPC transport.** The sinks are in-process callbacks; an ACP host needs them serialised as
+  `session/update` notifications and the permission request as a call.
 
 ## The context surface
 
-A host protocol makes the pre-tool context surface a subscriber rather than a special case. The
-`tool_call` event, emitted when the agent has decided and before the effect, carries `locations`; a
-subscriber keyed on those paths can look up what is recorded about them and return it to the turn as
-context before the tool result. The lookup is a read of a store, not a model call, and nothing in the
-prompt asks the agent to remember anything. Measured on the same file with two stores (exo-ledger,
+Once a `tool_call` is emitted before the effect, the pre-tool context surface is a subscriber rather
+than a special case: keyed on the event's `locations`, it looks up what is recorded about those paths
+and returns it to the turn as context before the tool result. The lookup is a read of a store, not a
+model call, and nothing in the prompt asks the agent to remember anything. It depends on the first
+two items above and does not exist yet. Measured on the same file with two stores (exo-ledger,
 `tools/hindsight/FINDINGS.md` §11–12): a file-keyed read of settled and contested positions changed an
 agent's proposal; a file-keyed read of session narration did not.
 
-## Non-goals for a first implementation
+## Order of work
 
-Streaming text updates, `switch_mode`, and the host's own file-system daemon. The first implementation
-is: `tool_call` and `tool_call_update` on every tool call, `request_permission` before a batch, and
-`locations` derived from tool definitions. That is enough for Air to drive the runtime and see its scope,
-and for the context surface to exist.
+1. `kind` and `locations` in `defineTool`.
+2. `tool_call` on `spawn_tool` and `tool_call_update` on operation-actor transitions, as a third sink
+   beside `turn` and `tool`.
+3. `request_permission` as a phase before `run_tools`.
+4. A JSON-RPC transport that carries the sinks as `session/update` and the permission request as a call.
+
+Not planned: streaming text updates, `switch_mode`, and any file-system daemon of the host's own.

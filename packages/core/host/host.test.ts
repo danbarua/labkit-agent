@@ -4,7 +4,13 @@ import { completionContract } from "./testing/completion-contract.ts";
 import { toolContract } from "./testing/tool-contract.ts";
 import { defineTool, completionTransport } from "./ports.ts";
 import { createHost, type HostToolOutcome } from "./host.ts";
-import { ActorIdSchema, CompletionSchema, ref } from "../agent/types.ts";
+import {
+  ActorIdSchema,
+  AgentIdSchema,
+  StepsSchema,
+  CompletionSchema,
+  ref,
+} from "../agent/types.ts";
 import { PreparedModelSchema } from "../agent/agent.ts";
 import { until } from "../agent/test-support.ts";
 completionContract("completion port through operation host", (source) => source);
@@ -72,4 +78,58 @@ test("transport binding supplies credentials outside the serializable request", 
   await complete(request, new AbortController().signal);
   expect(sent.headers.Authorization).toBe("Bearer secret");
   expect(JSON.stringify(request)).not.toContain("secret");
+});
+
+test("preparation commands reject missing prompt context before spawning operations", () => {
+  const host = createHost(
+    {
+      agents: new Map([["a", { model: "m" }]]),
+      complete: () => {
+        throw new Error("Must not execute");
+      },
+    },
+    {
+      turn: () => {
+        throw new Error("Must not report a child");
+      },
+      tool: () => {
+        throw new Error("Must not execute tools");
+      },
+    },
+  );
+  const turn = {
+    id: ActorIdSchema.parse("turn"),
+    agent: AgentIdSchema.parse("a"),
+    generation: 1,
+    steps: StepsSchema.parse(1),
+    messages: [],
+    view: { kind: "history" as const },
+  };
+  expect(() =>
+    host.dispatch(
+      {
+        type: "turn",
+        turnId: turn.id,
+        command: { type: "prepare_model", child: ref("prepare", "prepare"), turn },
+      },
+      { projectPrompt: () => [] },
+    ),
+  ).toThrow("prepare_model requires prompt context");
+  expect(() =>
+    host.dispatch(
+      {
+        type: "turn",
+        turnId: turn.id,
+        command: {
+          type: "prepare_handoff",
+          child: ref("handoff", "handoff"),
+          turn,
+          from: turn.agent,
+        },
+      },
+      { projectPrompt: () => [] },
+    ),
+  ).toThrow("prepare_handoff requires prompt context");
+  expect(host.snapshot).toHaveLength(0);
+  host.close();
 });

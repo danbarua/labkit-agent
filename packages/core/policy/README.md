@@ -29,3 +29,8 @@ live callers; restore records cancellation of queued inputs and never starts the
 For tool-error continuation, the journal retains the raw failure. `effectiveToolResult` deterministically
 projects it as JSON text `{ "error": "message" }` for batch correlation and model context. Both live
 release and replay use this function. Successful siblings continue; cancellation is not an error result.
+
+Malformed tool-call arguments in a custom projection are prompt-preparation failures, not executed
+tool failures. Malformed provider arguments are rejected during completion decoding. Neither case
+synthesizes a tool result for an unadmitted call; tool-error continuation applies to admitted tool
+operations, including their output-validation failures.

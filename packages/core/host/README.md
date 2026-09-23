@@ -18,3 +18,8 @@ The reusable completion/tool contract suites accept adapter factories over scrip
 exercise the adapter through the same validating operation actor used by the host. Cancellation
 means the signal is delivered and late results cannot settle the actor again; it does not assert
 rollback or exactly-once external effects. `host.test.ts` separately verifies the tool release gate.
+
+Tool outputs are JSON-only: null, booleans, finite numbers, strings, arrays and plain objects.
+Return null instead of undefined, and explicitly convert dates or class instances to JSON data.
+The host reports output validation failures through the same correlated tool-outcome path as
+execution errors. Error-continuation policy can project that failure into a model tool message.

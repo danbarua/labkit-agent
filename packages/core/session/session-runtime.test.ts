@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import * as sessionLog from "./session-log.ts";
+import { expect, test, spyOn } from "bun:test";
 import { z } from "zod";
 import { createSession, restoreSession, defineTool } from "./session-runtime.ts";
 import {
@@ -519,4 +520,21 @@ test("fork after partial-tool abort preserves source evidence and valid child pr
   expect(callMessage.tool_calls.map((call: any) => call.id)).toEqual(["fast"]);
   expect(journalJSONL(session.snapshot.durable)).toBe(ancestor);
   slow.resolve("late");
+});
+
+test("synchronous fork publication failure rejects its caller without poisoning later forks", async () => {
+  const session = await createSession(testOptions());
+  const seed = spyOn(sessionLog, "toSeed").mockImplementationOnce(() => {
+    throw new Error("Seed construction failed");
+  });
+  try {
+    await expect(session.fork()).rejects.toThrow("Seed construction failed");
+    expect(session.snapshot.status).toBe("ready");
+  } finally {
+    seed.mockRestore();
+  }
+  const child = await session.fork();
+  expect(child.snapshot.durable.conversation.origin.kind).toBe("fork");
+  await child.close();
+  await session.close();
 });

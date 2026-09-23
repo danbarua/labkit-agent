@@ -2,7 +2,12 @@ import { z } from "zod";
 import { freeze } from "../fsm/fsm.ts";
 import { createChatCompletion, type PreparedModel } from "../agent/agent.ts";
 import { AgentIdSchema, ToolNameSchema } from "../agent/types.ts";
-/** Existential tool adapter: defineTool retains schema inference at the authoring boundary. */
+/**
+ * Existential tool adapter: defineTool retains input-schema inference at the authoring boundary.
+ * Successful outputs must be JSON values. The host rejects undefined, Date, class instances,
+ * functions and other non-JSON values as correlated failed tool outcomes. Return null for no value.
+ * Strings pass through; other JSON values are serialized for model tool messages.
+ */
 export type Tool = Readonly<{
   description?: string;
   parameters: Record<string, unknown>;

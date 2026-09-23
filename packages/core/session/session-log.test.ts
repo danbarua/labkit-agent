@@ -118,3 +118,42 @@ test("v2 replay rejects policy version drift, downgrade, and advertised tool esc
   ])
     expect(() => replay(corrupt(loaded.batches, mutate))).toThrow();
 });
+
+test("replay requires policy agent coverage and the original advertised tool ordering", async () => {
+  const original = testOptions();
+  const options = testOptions({
+    agents: new Map([
+      ["a", { model: "m", tools: ["echo", "other"] }],
+      ["b", { model: "m", tools: ["echo"] }],
+    ]),
+    tools: new Map([
+      ["echo", original.tools!.get("echo")!],
+      ["other", original.tools!.get("echo")!],
+    ]),
+  });
+  const session = await createSession(options);
+  await session.updatePolicy({});
+  await session.input("go").settled;
+  const loaded = await options.persistence.load(
+    session.snapshot.durable.conversation.sessionId,
+    new AbortController().signal,
+  );
+  if (loaded.kind !== "loaded") throw new Error("Expected stream");
+  expect(replay(loaded.batches)).toEqual(session.snapshot.durable);
+  expect(() =>
+    replay(
+      corrupt(loaded.batches, (record) => {
+        if (record.body.kind === "upgrade") delete record.body.policy.tools.b;
+      }),
+    ),
+  ).toThrow("capabilities");
+  expect(() =>
+    replay(
+      corrupt(loaded.batches, (record) => {
+        if (record.body.event?.event?.type === "prepared")
+          record.body.event.event.result.value.tools.reverse();
+      }),
+    ),
+  ).toThrow("Prompt tool permissions mismatch");
+  await session.close();
+});

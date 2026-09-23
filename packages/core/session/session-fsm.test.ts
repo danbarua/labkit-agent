@@ -229,3 +229,27 @@ test("invalid internal event drained from a queue fails and settles remaining qu
     queued.commands.filter((command) => command.type === "reply").map((command) => command.id),
   ).toEqual(["bad", "next"]);
 });
+
+test("idle boundaries with accepted queued inputs keep policy and system updates busy", async () => {
+  const before = await initial();
+  const state: SessionState = {
+    status: "ready",
+    queue: [],
+    durable: {
+      ...before.durable,
+      pendingInputs: [{ inputId: before.durable.conversation.turnId, text: "accepted" }],
+    },
+  };
+  const inputs = [
+    { kind: "policy" as const, patch: { steps: 0 } },
+    { kind: "system" as const, inputs: ["replacement"], version: before.durable.systemVersion },
+  ];
+  for (const input of inputs) {
+    const decision = decideSession(state, {
+      type: "submit",
+      submission: { id: "change", appendId: AppendIdSchema.parse("change"), input },
+    });
+    expect(decision.state).toBe(state);
+    expect(decision.commands).toEqual([{ type: "reply", id: "change", result: { kind: "busy" } }]);
+  }
+});

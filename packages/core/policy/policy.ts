@@ -173,11 +173,15 @@ export function projectPolicy(
         return {
           role: "assistant",
           text: message.content,
-          calls: message.tool_calls.map((call) => ({
-            id: call.id,
-            name: call.function.name,
-            args: JSON.parse(call.function.arguments),
-          })),
+          calls: message.tool_calls.map((call) => {
+            let args: unknown;
+            try {
+              args = JSON.parse(call.function.arguments);
+            } catch {
+              throw new Error(`Invalid JSON arguments for projected tool call ${call.id}`);
+            }
+            return { id: call.id, name: call.function.name, args };
+          }),
         };
       return { role: message.role, text: message.content };
     }),

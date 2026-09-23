@@ -101,7 +101,9 @@ export function createHost(
         cancel(command.child);
         break;
       case "prepare_model": {
-        const agent = context.prompt!.agent;
+        const prompt = context.prompt;
+        if (!prompt) throw new Error("Host prepare_model requires prompt context");
+        const agent = prompt.agent;
         spawn(
           command.child,
           {
@@ -111,7 +113,7 @@ export function createHost(
               baseUrl,
               apiKey,
               model: agent.model,
-              messages: await context.projectPrompt(context.prompt!, signal),
+              messages: await context.projectPrompt(prompt, signal),
               tools: agent.tools.map((name) => ({
                 type: "function",
                 function: {
@@ -145,6 +147,8 @@ export function createHost(
         break;
       }
       case "prepare_handoff": {
+        const prompt = context.prompt;
+        if (!prompt) throw new Error("Host prepare_handoff requires prompt context");
         spawn(
           command.child,
           {
@@ -153,7 +157,7 @@ export function createHost(
             run: (_, signal) =>
               context.projectHandoff
                 ? context.projectHandoff(
-                    { ...context.prompt!, from: command.from, to: command.turn.agent },
+                    { ...prompt, from: command.from, to: command.turn.agent },
                     signal,
                   )
                 : [
@@ -179,8 +183,14 @@ export function createHost(
                   parseInput: tool.parseInput,
                   run: tool.run,
                   parseOutput: (value) => {
-                    const json = z.json().parse(value);
-                    return typeof json === "string" ? json : JSON.stringify(json);
+                    const parsed = z.json().safeParse(value);
+                    if (!parsed.success)
+                      throw new Error(
+                        "Tool output must be a JSON value: null, boolean, finite number, string, array, or plain object",
+                      );
+                    return typeof parsed.data === "string"
+                      ? parsed.data
+                      : JSON.stringify(parsed.data);
                   },
                 },
                 (result) => {

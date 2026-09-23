@@ -374,6 +374,11 @@ function configure(raw: SessionOptions, restoring = false) {
                   child: effect.command.child,
                   error: failure(error),
                 });
+              else {
+                const reply = branchReplies.get(effect.requestId);
+                branchReplies.delete(effect.requestId);
+                reply?.reject(error);
+              }
             }
           }
           break;

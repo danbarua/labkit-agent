@@ -45,7 +45,9 @@ first. Validation errors at public schema boundaries throw before admission. Chi
 public entry point.
 
 `updateSystem` replaces the ordered session inputs and appends the next system version. It returns
-`busy` at an active boundary. Every accepted event captures the version at its serialized boundary,
+`busy` at an active boundary or while durable accepted inputs are waiting to start. Even between
+turns, those queued inputs keep their accepted configuration; drain or close the session before
+changing it. Every accepted event captures the version at its serialized boundary,
 including inputs queued behind an idle system update. Prompt order is configured agent system text,
 ordered session system inputs, then the existing context/history/current-turn or handoff projection.
 
@@ -136,7 +138,9 @@ traces and an error file. A mismatch also leaves actual aggregate outputs for di
 never update expectations. The initial checked-in baselines are generated implementation evidence for
 review; intentional behavior changes require the explicit update command and review of both diffs.
 
-No ordering, tool correlation, lineage, or outcome fields are normalized away. Tests compare repeated
+No ordering, tool correlation, lineage, or outcome fields are normalized away. Advertised tool
+order is part of the captured provider request and must match the ordered policy tool list on
+replay; transports must not rewrite persisted request records. Tests compare repeated
 runs byte-for-byte. Transport settings and credentials are excluded through explicit DTO projection;
 the fixture suite checks a sentinel API key is absent. As with any transcript, caller-supplied message
 and tool-result content is recorded verbatim and should not contain secrets intended to stay private.

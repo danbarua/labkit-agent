@@ -412,3 +412,149 @@ test("restore binds historical resolvers without requiring unrelated creation de
   );
   expect(restored.snapshot.durable).toEqual(session.snapshot.durable);
 });
+
+class NonJsonToolOutput {
+  value = "not a plain object";
+}
+for (const [name, value] of [
+  ["undefined", undefined],
+  ["Date", new Date(0)],
+  ["class instance", new NonJsonToolOutput()],
+] as const) {
+  test(`non-JSON ${name} tool output is a correlated failure and honors continuation`, async () => {
+    const options = boundOptions();
+    let completions = 0;
+    const session = await createSession({
+      ...options,
+      configuration: { ...options.configuration, policy: { id: "tolerant@1" } },
+      bindings: {
+        ...options.bindings,
+        tools: new Map([
+          ["echo", defineTool({ input: z.object({ text: z.string() }), run: () => value })],
+        ]),
+        complete: () =>
+          ++completions === 1
+            ? {
+                kind: "tools",
+                text: "run",
+                calls: [{ id: "call", name: "echo", args: { text: "go" } }],
+              }
+            : { kind: "answer", text: "continued" },
+      },
+    });
+    expect(await session.input("go").settled).toMatchObject({
+      record: { outcome: { kind: "completed" } },
+    });
+    const tool = session.snapshot.durable.records.find(
+      (record) => record.body.kind === "tool",
+    )?.body;
+    expect(tool).toMatchObject({ kind: "tool", callId: "call", result: { kind: "failed" } });
+    if (tool?.kind !== "tool" || tool.result.kind !== "failed")
+      throw new Error("Expected tool failure");
+    expect(tool.result.error.message).toContain("Tool output must be a JSON value");
+    expect(
+      session.snapshot.durable.conversation.log[0]!.messages.find(
+        (message) => message.role === "tool",
+      )?.text,
+    ).toContain("Tool output must be a JSON value");
+    await session.close();
+  });
+}
+
+test("malformed projected arguments fail preparation without inventing tool results", async () => {
+  const options = boundOptions();
+  let completions = 0;
+  const policies = {
+    ...builtinResolvers,
+    projections: new Map([
+      ...builtinResolvers.projections,
+      [
+        "malformed@1",
+        () => [
+          {
+            role: "assistant" as const,
+            content: "bad",
+            tool_calls: [
+              {
+                id: "bad-call",
+                type: "function" as const,
+                function: { name: "echo", arguments: "{" },
+              },
+            ],
+          },
+          { role: "tool" as const, content: "result", tool_call_id: "bad-call" },
+        ],
+      ],
+    ]),
+  };
+  const session = await createSession({
+    ...options,
+    configuration: {
+      ...options.configuration,
+      policy: { id: "tolerant@1", project: "malformed@1" },
+    },
+    bindings: {
+      ...options.bindings,
+      policies,
+      complete: () => {
+        completions++;
+        return { kind: "answer", text: "unexpected" };
+      },
+    },
+  });
+  expect(await session.input("go").settled).toMatchObject({
+    record: {
+      outcome: {
+        kind: "failed",
+        error: { message: "Invalid JSON arguments for projected tool call bad-call" },
+      },
+    },
+  });
+  expect(completions).toBe(0);
+  expect(session.snapshot.durable.records.some((record) => record.body.kind === "tool")).toBe(
+    false,
+  );
+  await session.close();
+});
+
+test("malformed provider arguments fail completion even under tool-error continuation", async () => {
+  let tools = 0;
+  const options = testOptions({
+    complete: undefined,
+    fetch: (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({
+        choices: [
+          {
+            message: {
+              content: "bad",
+              tool_calls: [
+                { id: "bad", type: "function", function: { name: "echo", arguments: "{" } },
+              ],
+            },
+          },
+        ],
+      })) as typeof fetch,
+    tools: new Map([
+      [
+        "echo",
+        defineTool({
+          input: z.object({ text: z.string() }),
+          run: () => {
+            tools++;
+            return "unexpected";
+          },
+        }),
+      ],
+    ]),
+  });
+  const session = await createSession(options);
+  await session.updatePolicy({ id: "tolerant@1" });
+  expect(await session.input("go").settled).toMatchObject({
+    record: { outcome: { kind: "failed" } },
+  });
+  expect(tools).toBe(0);
+  expect(session.snapshot.durable.records.some((record) => record.body.kind === "tool")).toBe(
+    false,
+  );
+  await session.close();
+});
