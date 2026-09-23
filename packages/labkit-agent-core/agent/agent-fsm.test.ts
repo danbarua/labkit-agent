@@ -63,8 +63,33 @@ test("treats done as terminal while handoff remains resumable", async () => {
 	const done = createAgentMachine(context());
 	await fire(done, { type: "user", text: "hello" });
 	await fire(done, { type: "model_done" });
-	await fire(done, { type: "abort" });
+
+	expect(done.snapshot.state).toBe("done");
 	await expect(fire(done, { type: "user", text: "after completion" })).rejects.toThrow(
 		"final state",
 	);
+});
+
+test("finishes active work when it is aborted", async () => {
+	const machine = createAgentMachine(context());
+
+	await fire(machine, { type: "user", text: "hello" });
+	await fire(machine, { type: "abort" });
+
+	expect(machine.snapshot.state).toBe("done");
+});
+
+test("cancels HTTP once when aborting model work", async () => {
+	let cancellations = 0;
+	const machine = createAgentMachine(context(), {
+		cancelHttp: (current) => {
+			cancellations++;
+			return current;
+		},
+	});
+
+	await fire(machine, { type: "user", text: "hello" });
+	await fire(machine, { type: "abort" });
+
+	expect(cancellations).toBe(1);
 });

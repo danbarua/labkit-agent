@@ -80,7 +80,7 @@ export function createAgentMachine(ctx: AgentContext, actions: AgentActions = {}
     )
     .state("awaiting_model", (state) =>
       state
-        .on("abort", "idle", undefined, cancelHttp)
+        .on("abort", "done")
         .on("user", "awaiting_model", undefined, async (current, event) =>
           startCompletion(appendUser(await cancelHttp(current), event)),
         )
@@ -90,12 +90,12 @@ export function createAgentMachine(ctx: AgentContext, actions: AgentActions = {}
           event.type === "model_done" && Boolean(event.handoff), async (current, event) =>
            actions.swapAgent ? actions.swapAgent(current, (event as Extract<AgentEvent, { type: "model_done" }>).handoff!) : current,
         )
-        .on("model_done", "idle")
+        .on("model_done", "done")
         .onExit(cancelHttp),
     )
     .state("executing_tools", (state) =>
       state
-        .on("abort", "idle", undefined, cancelTools)
+        .on("abort", "done", undefined, cancelTools)
         .on("tool_done", "awaiting_model", allToolsSettled, appendToolResult)
         .on("tool_done", "executing_tools", undefined, appendToolResult),
     )
