@@ -1,0 +1,268 @@
+import { effectiveToolResult, type Policy } from "../policy/policy.ts";
+import { z } from "zod";
+import { Actor, freeze } from "../fsm/fsm.ts";
+import { PreparedModelSchema } from "../agent/agent.ts";
+import { admittedCompletionSchema, type TurnEvent } from "../agent/agent-fsm.ts";
+import type { ConversationCommand } from "../agent/agent-conversation.ts";
+import {
+  createOperationActor,
+  type Operation,
+  type OperationState,
+} from "../agent/operation-actor.ts";
+import type { PromptInput } from "../agent/prompt.ts";
+import {
+  toolBatchMachine,
+  type BatchCommand,
+  type BatchEvent,
+  type BatchState,
+} from "../agent/tool-batch.ts";
+import {
+  MessagesSchema,
+  ToolNameSchema,
+  failure,
+  type ActorId,
+  type ChildRef,
+  type Result,
+  type ToolCall,
+} from "../agent/types.ts";
+import { copyRegistries, type ExecutionBindings } from "./ports.ts";
+export type HostToolOutcome = Readonly<{
+  turnId: ActorId;
+  batchId: ActorId;
+  callId: ToolCall["id"];
+  result: Result<string>;
+}>;
+export type ExecutionContext = Readonly<{
+  prompt?: PromptInput;
+  allowedTools?: readonly string[];
+  toolFailure?: Policy["toolFailure"];
+  projectPrompt: (input: PromptInput, signal: AbortSignal) => unknown | Promise<unknown>;
+  projectHandoff?: (
+    input: PromptInput & { from: string; to: string },
+    signal: AbortSignal,
+  ) => unknown | Promise<unknown>;
+}>;
+type Child = {
+  readonly snapshot: OperationState<unknown> | BatchState;
+  cancel(): Promise<unknown>;
+};
+/** An execution adapter, not another state machine or persistence gate. */
+export function createHost(
+  bindings: ExecutionBindings & { baseUrl?: string; apiKey?: string },
+  sinks: {
+    turn: (turnId: ActorId, event: TurnEvent) => void;
+    tool: (outcome: HostToolOutcome) => void;
+  },
+) {
+  const { agents, tools } = copyRegistries(bindings);
+  const baseUrl = bindings.baseUrl ?? "https://journal.invalid";
+  const apiKey = bindings.apiKey;
+  const children = new Map<ActorId, { ref: ChildRef; actor: Child }>();
+  const pendingTools = new Map<
+    string,
+    {
+      outcome: HostToolOutcome;
+      toolFailure?: Policy["toolFailure"];
+      batch: Actor<BatchState, BatchEvent, BatchCommand>;
+    }
+  >();
+  let closed = false;
+  const post: typeof sinks.turn = (turnId, event) => {
+    if (!closed) sinks.turn(turnId, event);
+  };
+  function spawn<I, O>(
+    child: ChildRef,
+    operation: Operation<I, O>,
+    settled: (result: Result<O>) => void,
+  ) {
+    const actor = createOperationActor(child, operation, (result) => {
+      children.delete(child.id);
+      if (!closed) settled(result);
+    });
+    children.set(child.id, { ref: child, actor });
+    void actor.start();
+  }
+  const cancel = (child: ChildRef) => {
+    void children.get(child.id)?.actor.cancel();
+  };
+  const dispatch = (
+    effect: Extract<ConversationCommand, { type: "turn" }>,
+    context: ExecutionContext,
+  ): undefined => {
+    if (closed) throw new Error("Host closed");
+    context = freeze({
+      ...context,
+      prompt: context.prompt ? structuredClone(context.prompt) : undefined,
+      allowedTools: context.allowedTools?.slice(),
+    });
+    const { turnId, command } = effect;
+    switch (command.type) {
+      case "cancel":
+        cancel(command.child);
+        break;
+      case "prepare_model": {
+        const agent = context.prompt!.agent;
+        spawn(
+          command.child,
+          {
+            input: null,
+            parseInput: z.null().parse,
+            run: async (_, signal) => ({
+              baseUrl,
+              apiKey,
+              model: agent.model,
+              messages: await context.projectPrompt(context.prompt!, signal),
+              tools: agent.tools.map((name) => ({
+                type: "function",
+                function: {
+                  name,
+                  description: tools.get(ToolNameSchema.parse(name))!.description,
+                  parameters: tools.get(ToolNameSchema.parse(name))!.parameters,
+                },
+              })),
+            }),
+            parseOutput: PreparedModelSchema.parseAsync,
+          },
+          (result) => post(turnId, { type: "prepared", child: command.child, result }),
+        );
+        break;
+      }
+      case "complete": {
+        const admitted = admittedCompletionSchema(
+          new Set(agents.keys()),
+          new Set(context.allowedTools ?? agents.get(command.turn.agent)!.tools),
+        );
+        spawn(
+          command.child,
+          {
+            input: { ...command.request, baseUrl, apiKey },
+            parseInput: PreparedModelSchema.parseAsync,
+            run: (request, signal) => bindings.complete(request, signal),
+            parseOutput: admitted.parseAsync,
+          },
+          (result) => post(turnId, { type: "model_settled", child: command.child, result }),
+        );
+        break;
+      }
+      case "prepare_handoff": {
+        spawn(
+          command.child,
+          {
+            input: null,
+            parseInput: z.null().parse,
+            run: (_, signal) =>
+              context.projectHandoff
+                ? context.projectHandoff(
+                    { ...context.prompt!, from: command.from, to: command.turn.agent },
+                    signal,
+                  )
+                : [
+                    command.turn.messages.findLast((message) => message.role === "user"),
+                    command.turn.messages.at(-1),
+                  ].filter((message) => message !== undefined),
+            parseOutput: MessagesSchema.parseAsync,
+          },
+          (result) => post(turnId, { type: "handoff_prepared", child: command.child, result }),
+        );
+        break;
+      }
+      case "run_tools": {
+        let batch: Actor<BatchState, BatchEvent, BatchCommand>;
+        const runBatchCommand = (batchCommand: BatchCommand): undefined => {
+          switch (batchCommand.type) {
+            case "spawn_tool": {
+              const tool = tools.get(batchCommand.call.name)!;
+              spawn(
+                batchCommand.child,
+                {
+                  input: batchCommand.call.args,
+                  parseInput: tool.parseInput,
+                  run: tool.run,
+                  parseOutput: (value) => {
+                    const json = z.json().parse(value);
+                    return typeof json === "string" ? json : JSON.stringify(json);
+                  },
+                },
+                (result) => {
+                  const outcome: HostToolOutcome = {
+                    turnId,
+                    batchId: command.child.id,
+                    callId: batchCommand.call.id,
+                    result,
+                  };
+                  pendingTools.set(`${outcome.batchId}/${outcome.callId}`, {
+                    outcome,
+                    batch,
+                    toolFailure: context.toolFailure,
+                  });
+                  sinks.tool(outcome);
+                },
+              );
+              break;
+            }
+            case "cancel_tool":
+              cancel(batchCommand.child);
+              break;
+            case "notify":
+              children.delete(command.child.id);
+              for (const [key, pending] of pendingTools)
+                if (pending.outcome.batchId === command.child.id) pendingTools.delete(key);
+              post(turnId, {
+                type: "batch_settled",
+                child: command.child,
+                outcome: batchCommand.outcome,
+              });
+              break;
+          }
+          return undefined;
+        };
+        batch = new Actor<BatchState, BatchEvent, BatchCommand>(
+          { status: "ready", calls: command.completion.calls },
+          toolBatchMachine(command.child),
+          runBatchCommand,
+          (_, error) => ({ type: "failed", error: failure(error) }),
+        );
+        children.set(command.child.id, {
+          ref: command.child,
+          actor: {
+            get snapshot() {
+              return batch.snapshot;
+            },
+            cancel: () => batch.send({ type: "cancel" }),
+          },
+        });
+        void batch.send({ type: "start" });
+        break;
+      }
+    }
+    return undefined;
+  };
+
+  return {
+    dispatch,
+    releaseTool(outcome: HostToolOutcome) {
+      const key = `${outcome.batchId}/${outcome.callId}`;
+      const pending = pendingTools.get(key);
+      if (!pending || pending.outcome !== outcome) return;
+      pendingTools.delete(key);
+      void pending.batch.send({
+        type: "tool_settled",
+        callId: outcome.callId,
+        result: effectiveToolResult(
+          outcome.result,
+          pending.toolFailure ? { toolFailure: pending.toolFailure } : undefined,
+        ),
+      });
+    },
+    close() {
+      closed = true;
+      for (const { actor } of children.values()) void actor.cancel();
+      pendingTools.clear();
+    },
+    get snapshot() {
+      return freeze(
+        [...children.values()].map(({ ref, actor }) => ({ ref, state: actor.snapshot })),
+      );
+    },
+  };
+}

@@ -1,3 +1,4 @@
+import { PolicySchema, PolicyPatchSchema, PolicyVersionSchema } from "../policy/policy.ts";
 import { z } from "zod";
 import { ChatMessageSchema, ChatToolSchema } from "../agent/agent.ts";
 import {
@@ -64,6 +65,7 @@ export const SeedSchema = z
     systemInputs: SystemInputsSchema,
     systemVersion: SystemVersionSchema,
     configuration: ConfigurationSchema,
+    policy: PolicySchema.optional(),
   })
   .readonly();
 export type Seed = z.infer<typeof SeedSchema>;
@@ -151,10 +153,29 @@ export const WireEventSchema = z.discriminatedUnion("type", [
 export type WireEvent = z.infer<typeof WireEventSchema>;
 export const BodySchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("created"), seed: SeedSchema }),
+  z.strictObject({ kind: z.literal("upgrade"), policy: PolicySchema }),
+  z.strictObject({ kind: z.literal("policy"), patch: PolicyPatchSchema, policy: PolicySchema }),
+  z.strictObject({
+    kind: z.literal("queued"),
+    inputId: ActorIdSchema,
+    text: z.string(),
+    policyVersion: PolicyVersionSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("dequeued"),
+    inputId: ActorIdSchema,
+    policyVersion: PolicyVersionSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("input_cancelled"),
+    inputId: ActorIdSchema,
+    reason: z.string(),
+  }),
   z.strictObject({
     kind: z.literal("event"),
     event: WireEventSchema,
     systemVersion: SystemVersionSchema,
+    policyVersion: PolicyVersionSchema.optional(),
   }),
   z.strictObject({
     kind: z.literal("system"),
@@ -174,13 +195,25 @@ export const BodySchema = z.discriminatedUnion("kind", [
 export type JournalBody = z.infer<typeof BodySchema>;
 export const JournalRecordSchema = z
   .strictObject({
-    version: z.literal(1),
+    version: z.union([z.literal(1), z.literal(2)]),
     sessionId: SessionIdSchema,
     revision: RevisionSchema,
     entryId: z.string().min(1),
     appendId: AppendIdSchema,
     body: BodySchema,
   })
+  .refine((record) => {
+    const body = record.body;
+    if (record.version === 1)
+      return (
+        !["upgrade", "policy", "queued", "dequeued", "input_cancelled"].includes(body.kind) &&
+        !(body.kind === "created" && body.seed.policy) &&
+        !(body.kind === "event" && body.policyVersion !== undefined)
+      );
+    return body.kind !== "event" || body.policyVersion !== undefined;
+  }, "Journal version does not match body")
   .readonly();
 export type JournalRecord = z.infer<typeof JournalRecordSchema>;
-export type SessionInput = Exclude<JournalBody, { kind: "terminal" }>;
+export type SessionInput =
+  | Exclude<JournalBody, { kind: "terminal" | "policy" }>
+  | Readonly<{ kind: "policy"; patch: z.input<typeof PolicyPatchSchema> }>;

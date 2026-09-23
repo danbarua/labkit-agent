@@ -1,3 +1,6 @@
+import { builtinResolvers, type PolicyResolvers } from "../policy/policy.ts";
+import { ActorIdSchema } from "../agent/types.ts";
+import { AppendIdSchema } from "./persistence.ts";
 import type { ConversationCommand } from "../agent/agent-conversation.ts";
 import type { Decision } from "../fsm/fsm.ts";
 import { accepts, replay, stage, type JournalState } from "./session-log.ts";
@@ -80,7 +83,11 @@ function committed(
     ],
   };
 }
-export function decideSession(state: SessionState, event: SessionEvent): D {
+export function decideSession(
+  state: SessionState,
+  event: SessionEvent,
+  resolvers: PolicyResolvers = builtinResolvers,
+): D {
   if (event.type === "close") {
     const submissions = [...("pending" in state ? [state.pending.submission] : []), ...state.queue];
     return {
@@ -95,8 +102,9 @@ export function decideSession(state: SessionState, event: SessionEvent): D {
       return { state, commands: [reply(s.id, { kind: "failed", message: state.message })] };
     // Busy is evaluated at admission, including a staged active turn.
     if (
-      s.input.kind === "system" &&
-      (state.durable.conversation.turn.status !== "idle" ||
+      (s.input.kind === "system" || s.input.kind === "policy") &&
+      (Boolean(state.durable.pendingInputs?.length) ||
+        state.durable.conversation.turn.status !== "idle" ||
         ("pending" in state && state.pending.next.conversation.turn.status !== "idle"))
     )
       return { state, commands: [reply(s.id, { kind: "busy" })] };
@@ -115,7 +123,7 @@ export function decideSession(state: SessionState, event: SessionEvent): D {
           : s.input.kind === "event"
             ? { ...s.input, systemVersion: state.durable.systemVersion }
             : s.input;
-      const next = stage(state.durable, input, s.appendId);
+      const next = stage(state.durable, input, s.appendId, resolvers, ActorIdSchema.parse(s.id));
       const request: AppendRequest = {
         sessionId: state.durable.conversation.sessionId,
         expectedRevision: state.durable.revision,
@@ -140,6 +148,7 @@ export function decideSession(state: SessionState, event: SessionEvent): D {
       const message = error instanceof Error ? error.message : String(error);
       if (
         s.input.kind === "tool" ||
+        s.input.kind === "dequeued" ||
         s.input.kind === "recovery" ||
         (s.input.kind === "event" && s.input.event.type === "child")
       ) {
@@ -153,10 +162,39 @@ export function decideSession(state: SessionState, event: SessionEvent): D {
     }
   }
   if (event.type === "drain") {
-    if (state.status !== "ready" || !state.queue.length) return { state, commands: [] };
+    if (state.status !== "ready") return { state, commands: [] };
+    const queuedInput = state.durable.pendingInputs?.[0];
+    if (queuedInput && state.durable.conversation.turn.status === "idle") {
+      return mergeQueue(
+        decideSession(
+          { ...state, queue: [] },
+          {
+            type: "submit",
+            submission: {
+              id: `dequeue/${queuedInput.inputId}`,
+              appendId: AppendIdSchema.parse(
+                `${state.durable.conversation.sessionId}/dequeue/${queuedInput.inputId}`,
+              ),
+              input: {
+                kind: "dequeued",
+                inputId: queuedInput.inputId,
+                policyVersion: state.durable.policy!.version,
+              },
+            },
+          },
+          resolvers,
+        ),
+        state.queue,
+      );
+    }
+    if (!state.queue.length) return { state, commands: [] };
     const [submission, ...queue] = state.queue;
     const decision = mergeQueue(
-      decideSession({ ...state, queue: [] }, { type: "submit", submission: submission! }),
+      decideSession(
+        { ...state, queue: [] },
+        { type: "submit", submission: submission! },
+        resolvers,
+      ),
       queue,
     );
     return {
@@ -190,7 +228,7 @@ export function decideSession(state: SessionState, event: SessionEvent): D {
     const p = state.pending;
     if (loaded.kind === "loaded") {
       try {
-        if (replay(loaded.batches).revision !== loaded.revision)
+        if (replay(loaded.batches, resolvers).revision !== loaded.revision)
           throw new Error("Load revision mismatch");
       } catch (error) {
         return fail(state, String(error));

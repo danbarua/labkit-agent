@@ -2,22 +2,28 @@
 
 An immutable, actor-driven session with an append-only journal and an injected persistence port.
 There is no default store, database dependency, or durable backend. The testing adapter is explicitly
-process-local. The agent module is unchanged.
+process-local. Both the session and nonjournaled agent runtime use the shared execution host.
 
 ## Public API
 
 ```ts
 import { createSession, restoreSession, defineTool } from "./index.ts";
+import { completionTransport } from "../host/ports.ts";
 import { createMemoryPersistence } from "./testing/memory-persistence.ts";
 
 const persistence = createMemoryPersistence(); // tests / process-local experiments only
 const options = {
   persistence,
-  agent: "researcher",
-  agents: new Map([["researcher", { model: "your-model", systemPrompt: "Be precise." }]]),
-  steps: 8,
-  baseUrl: "https://your-provider.example/v1",
-  systemInputs: ["Use SI units."],
+  configuration: {
+    agent: "researcher",
+    agents: new Map([["researcher", { model: "your-model", systemPrompt: "Be precise." }]]),
+    steps: 8,
+    systemInputs: ["Use SI units."],
+    policy: { id: "default@1" },
+  },
+  bindings: {
+    complete: completionTransport({ baseUrl: "https://your-provider.example/v1" }),
+  },
 };
 const session = await createSession(options);
 const turn = session.input("Describe the experiment.");
@@ -79,7 +85,7 @@ prove protocol behavior only, not crash durability.
 
 ## Journal and recovery
 
-Version-one records have session, append and entry identities, contiguous journal revisions, and
+Version-one and version-two records have session, append and entry identities, contiguous journal revisions, and
 strict Zod payload schemas. The codec validates session/append/entry continuity, turn/child identities,
 system versions, terminal records, actual projected messages, and individual/batched tool correlation.
 Replay calls pure conversation decisions and freezes reconstructed state; it executes no commands.
@@ -136,15 +142,53 @@ the fixture suite checks a sentinel API key is absent. As with any transcript, c
 and tool-result content is recorded verbatim and should not contain secrets intended to stay private.
 Generated artifacts are ignored; approved scenario/baseline files stay tracked.
 
-## Copied-code provenance
+## Shared execution and public events
 
-Session orchestration in `session-runtime.ts` was copied from `../agent/agent-runtime.ts` as authorized
-by the session plan: registry copying/validation, child operation routing, tool batch orchestration,
-handoff preparation, transport injection and cancellation. Pure decisions remain imported from
-`../agent/agent-conversation.ts`; tool batching, completion admission, transport, operation actors,
-and prompt correlation validation are reused. `session-operation.ts` follows
-`../agent/operation-actor.ts` and uses the same serialized `Actor` mailbox, with session-specific
-`load`/`append` references and cancellation that waits for the actual storage outcome.
+The formerly copied turn dispatcher now lives once in `../host/host.ts`. It owns children,
+registries, completion/handoff/preparation execution and tool batches. Session owns storage actors,
+receipts, terminal waiters, branch publication and the individual tool-result commit gate. Existing
+agent-runtime APIs and behavior are preserved through the same host. No new wrapper FSM was added.
 
-Runtime parity and race tests accompany the copy. If agent orchestration changes, compare those sites
-and rerun both suites rather than assuming the session copy automatically inherits the change.
+`fire(event)` admits any validated `EnvEvent`: user, abort, system, policy, fork, compact or close.
+`dispatch(event)` returns `{ accepted, settled }`; awaiting `accepted` never waits for a turn or child
+publication. User settlement contains a correlated terminal, branch settlement contains the published
+child, and configuration operations settle with their receipt. Close returns `close_acknowledged`,
+not a fabricated persistence receipt. Existing convenience methods use this same submission path.
+
+Bindings can include `observe(snapshot)`. Notifications contain frozen pending/durable snapshots and
+run outside decisions. Exceptions or rejected observer promises do not fail the session; reentrant
+submissions enter the mailbox. The environment module provides a reference event-source/render loop.
+
+## Policy and journal compatibility
+
+The explicit `configuration`/`bindings` API creates version-two streams. Legacy flat `SessionOptions`
+remain a compatibility adapter and create version-one streams, preserving their fixture bytes.
+Executable callbacks, credentials and persistence resources are never journaled.
+
+`updatePolicy(patch)` or `fire({type:"policy", patch})` journals an idle-boundary change. The effective
+policy is immutable and versioned; each event captures that version. Capability manifests stay
+immutable while per-agent permitted names may be restricted within those capabilities. Step patches
+apply to subsequent turns; active-agent transitions remain handoffs. See the policy module for packs,
+queue behavior and error continuation.
+
+Updating policy in a version-one stream appends an explicit version-two upgrade record and resolved
+policy record atomically. Historical bytes are never rewritten; version-one replay uses the original
+projection semantics. Raw legacy handoff callbacks must be migrated to named bindings before upgrade.
+A restored session requires compatible capability data and all referenced pure policy implementations.
+Replay executes pure projection validation but no external work.
+
+Restoration also cancels durable pending inputs with explicit records. It never auto-runs a queued
+input, even if the interruption happened at an idle boundary before dequeue. The historical accepted
+input remains evidence. Ordinary forks inherit policy/system versions; compaction affects child
+context/history only and does not inherit the parent's pending input queue.
+
+Version-two fixtures are separate from the unchanged version-one baselines:
+
+```sh
+bun run packages/core/session/fixture-runner.ts --v2
+bun run packages/core/session/fixture-runner.ts --v2 --update
+bun test packages/core/host packages/core/policy packages/core/environment packages/core/session
+```
+
+`--v2` compares `fixtures/expected-v2.json` and `fixtures/expected-v2.md`, emitting under
+`.session-artifacts/latest-v2`. Neither command without `--update` changes an approved baseline.

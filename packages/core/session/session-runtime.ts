@@ -1,3 +1,15 @@
+import { EnvEventSchema, type EnvEvent } from "./events.ts";
+import {
+  initialPolicy as resolveInitialPolicy,
+  validatePolicy,
+  projectPolicy,
+  copyResolvers,
+  type PolicyPatch,
+  type PolicyResolvers,
+} from "../policy/policy.ts";
+import type { CompletionPort } from "../host/ports.ts";
+import { createHost } from "../host/host.ts";
+import { copyRegistries } from "../host/ports.ts";
 import { z } from "zod";
 import { Actor, freeze } from "../fsm/fsm.ts";
 import {
@@ -5,32 +17,16 @@ import {
   PreparedModelSchema,
   type ChatCompletionRequest,
 } from "../agent/agent.ts";
-import { admittedCompletionSchema, type TurnEvent } from "../agent/agent-fsm.ts";
+import type { TurnEvent } from "../agent/agent-fsm.ts";
 import type { ConversationCommand, SessionRequest } from "../agent/agent-conversation.ts";
-import {
-  createOperationActor,
-  type Operation,
-  type OperationState,
-} from "../agent/operation-actor.ts";
 import { parseSessionContext, type PromptInput } from "../agent/prompt.ts";
-import {
-  toolBatchMachine,
-  type BatchCommand,
-  type BatchEvent,
-  type BatchState,
-} from "../agent/tool-batch.ts";
 import {
   ActorIdSchema,
   SessionIdSchema,
   AgentIdSchema,
-  MessagesSchema,
   StepsSchema,
-  ToolNameSchema,
-  UserEventSchema,
   failure,
   type ActorId,
-  type ChildRef,
-  type Result,
   type TurnData,
   type TurnRecord,
 } from "../agent/types.ts";
@@ -46,62 +42,105 @@ import {
 } from "./session-fsm.ts";
 import { replay, seedConversation, toSeed, wireEvent, type JournalState } from "./session-log.ts";
 import {
-  AgentDefinitionSchema,
   ConfigurationSchema,
   SeedSchema,
-  SystemInputsSchema,
   SystemVersionSchema,
   type Seed,
   type SessionInput,
 } from "./types.ts";
 import { projectSessionPrompt } from "./session-prompt.ts";
 
-export { defineTool } from "../agent/agent-runtime.ts";
+export { defineTool } from "../host/ports.ts";
 export type { Tool, AgentDefinition };
-export type SessionOptions = Omit<RuntimeOptions, "projectPrompt"> & {
+/** Compatibility input: new integrations should supply SessionConfiguration and SessionBindings. */
+export type LegacySessionOptions = Omit<RuntimeOptions, "projectPrompt"> & {
   persistence: SessionPersistence;
   sessionId?: string;
   systemInputs?: readonly string[];
   /** UUIDs for session identities; arbitrary nonempty strings for append/request IDs. */
   id?: () => string;
 };
+export type SessionConfiguration = Readonly<{
+  agent: string;
+  agents: ReadonlyMap<string, AgentDefinition>;
+  steps: number;
+  systemInputs?: readonly string[];
+  policy?: PolicyPatch;
+}>;
+export type SessionBindings = Readonly<{
+  complete: CompletionPort;
+  tools?: ReadonlyMap<string, Tool>;
+  policies?: PolicyResolvers;
+  id?: () => string;
+  observe?: (snapshot: SessionState) => unknown;
+}>;
+export type BoundSessionOptions = Readonly<{
+  persistence: SessionPersistence;
+  configuration: SessionConfiguration;
+  bindings: SessionBindings;
+  sessionId?: string;
+}>;
+export type SessionOptions = LegacySessionOptions | BoundSessionOptions;
+function normalizeOptions(options: SessionOptions, restoring = false) {
+  if (!("configuration" in options))
+    return { options, resolvers: copyResolvers(), initialPolicy: undefined, observe: undefined };
+  const { configuration, bindings } = options;
+  const capabilities = {
+    agents: [...configuration.agents].map(
+      ([name, agent]) => [name, { ...agent, tools: agent.tools ?? [] }] as const,
+    ),
+  };
+  const resolvers = copyResolvers(bindings.policies);
+  const initialPolicy = restoring
+    ? undefined
+    : resolveInitialPolicy(capabilities, configuration.steps, configuration.policy, resolvers);
+  const completePort = bindings.complete;
+  const normalized: LegacySessionOptions = {
+    ...configuration,
+    steps: initialPolicy?.steps ?? configuration.steps,
+    persistence: options.persistence,
+    sessionId: options.sessionId,
+    tools: bindings.tools,
+    id: bindings.id,
+    baseUrl: "https://journal.invalid",
+    complete: (request) => {
+      const { signal, ...prepared } = request;
+      return completePort(PreparedModelSchema.parse(prepared), signal!);
+    },
+  };
+  return { options: normalized, resolvers, initialPolicy, observe: bindings.observe };
+}
 export type TerminalResult =
   | Readonly<{ kind: "terminal"; turnId: ActorId; record: TurnRecord }>
   | Readonly<{ kind: "failed" | "closed"; message: string }>;
+export type EnvReceipt = CommandReceipt | Readonly<{ kind: "close_acknowledged" }>;
+export type EnvSettlement =
+  | TerminalResult
+  | Readonly<{ kind: "branch"; session: SessionRuntime }>
+  | Readonly<{ kind: "acknowledged"; receipt: EnvReceipt }>;
+export type EnvCommandHandle = Readonly<{
+  accepted: Promise<EnvReceipt>;
+  settled: Promise<EnvSettlement>;
+}>;
 export type SessionRuntime = {
   readonly snapshot: SessionState;
-  fire(event: unknown): Promise<CommandReceipt>;
+  fire(event: unknown): Promise<EnvReceipt>;
+  dispatch(event: unknown): EnvCommandHandle;
   input(text: string): { accepted: Promise<CommandReceipt>; settled: Promise<TerminalResult> };
   updateSystem(inputs: readonly string[]): Promise<CommandReceipt>;
+  updatePolicy(patch: PolicyPatch): Promise<CommandReceipt>;
   fork(): Promise<SessionRuntime>;
   compact(context: unknown): Promise<SessionRuntime>;
   close(): Promise<void>;
 };
-type Child = {
-  readonly snapshot: OperationState<unknown> | BatchState;
-  cancel(): Promise<unknown>;
-};
 
-function configure(options: SessionOptions) {
+function configure(raw: SessionOptions, restoring = false) {
+  const { options, resolvers, initialPolicy, observe } = normalizeOptions(raw, restoring);
   const agentId = AgentIdSchema.parse(options.agent);
   const steps = StepsSchema.parse(options.steps);
   const baseUrl = z.url({ protocol: /^https?$/ }).parse(options.baseUrl);
-  const agents = new Map(
-    [...options.agents].map(([id, definition]) => [
-      AgentIdSchema.parse(id),
-      AgentDefinitionSchema.parse(definition),
-    ]),
-  );
+  const { agents, tools } = copyRegistries(options);
   if (!agents.has(agentId)) throw new Error(`Unknown agent: ${agentId}`);
-  const tools = new Map(
-    [...(options.tools ?? [])].map(([name, tool]) => [
-      ToolNameSchema.parse(name),
-      Object.freeze({ ...tool, parameters: freeze(structuredClone(tool.parameters)) }),
-    ]),
-  );
-  for (const definition of agents.values())
-    for (const name of definition.tools)
-      if (!tools.has(ToolNameSchema.parse(name))) throw new Error(`Unknown tool: ${name}`);
   const configuration = ConfigurationSchema.parse({
     agents: [...agents],
     tools: [...tools].map(([name, tool]) => [name, tool.parameters]),
@@ -117,7 +156,7 @@ function configure(options: SessionOptions) {
   if (!port) throw new Error("Session persistence is required");
 
   async function initialize(seed: Seed): Promise<SessionRuntime> {
-    const built = build(seedConversation(seed));
+    const built = build(seedConversation(seed, resolvers));
     const receipt = await built.submit(
       { kind: "created", seed },
       undefined,
@@ -131,6 +170,7 @@ function configure(options: SessionOptions) {
     return built.runtime;
   }
   function build(initial: JournalState) {
+    if (initial.policy) validatePolicy(initial.policy, initial.configuration, resolvers);
     if (JSON.stringify(initial.configuration) !== JSON.stringify(configuration))
       throw new Error("Session configuration does not match persisted registry");
     const branchReplies = new Map<
@@ -141,7 +181,8 @@ function configure(options: SessionOptions) {
     const afterCommit = new Map<string, () => void>();
     const admissions = new Map<string, (result: TerminalResult) => void>();
     const waiters = new Map<ActorId, ((result: TerminalResult) => void)[]>();
-    const children = new Map<ActorId, { ref: ChildRef; actor: Child }>();
+    const queuedWaiters = new Map<string, (result: TerminalResult) => void>();
+
     const storage = new Set<{ cancel(): Promise<unknown> }>();
     let session: Actor<SessionState, SessionEvent, SessionCommand>;
     let dispatchBoundary = initial;
@@ -149,10 +190,22 @@ function configure(options: SessionOptions) {
       context: session.snapshot.durable.conversation.context,
       log: session.snapshot.durable.conversation.log,
       turn,
-      agent: agents.get(turn.agent)!,
+      agent: {
+        ...agents.get(turn.agent)!,
+        tools: session.snapshot.durable.policy?.tools[turn.agent] ?? agents.get(turn.agent)!.tools,
+      },
     });
-    const project = (value: PromptInput, _signal: AbortSignal) =>
-      projectSessionPrompt(value, session.snapshot.durable.systemInputs);
+    function send(event: SessionEvent) {
+      return session.send(event).then((snapshot) => {
+        try {
+          const result = observe?.(snapshot);
+          if (result instanceof Promise) void result.catch(() => {});
+        } catch {
+          /* Observation cannot change execution. */
+        }
+        return snapshot;
+      });
+    }
     const post = (turnId: ActorId, event: TurnEvent) => {
       void submit({
         kind: "event",
@@ -160,21 +213,21 @@ function configure(options: SessionOptions) {
         systemVersion: session.snapshot.durable.systemVersion,
       });
     };
-    function spawn<I, O>(
-      child: ChildRef,
-      operation: Operation<I, O>,
-      settled: (result: Result<O>) => void,
-    ) {
-      const actor = createOperationActor(child, operation, (result) => {
-        children.delete(child.id);
-        settled(result);
-      });
-      children.set(child.id, { ref: child, actor });
-      void actor.start();
-    }
-    const cancel = (child: ChildRef) => {
-      void children.get(child.id)?.actor.cancel();
-    };
+    const host = createHost(
+      {
+        agents,
+        tools,
+        baseUrl,
+        apiKey,
+        complete: (request, signal) => complete({ ...request, signal }),
+      },
+      {
+        turn: post,
+        tool: (outcome) => {
+          void submit({ kind: "tool", ...outcome }, () => host.releaseTool(outcome));
+        },
+      },
+    );
     const execute = (effect: ConversationCommand): undefined => {
       if (effect.type === "reply") {
         const reply = branchReplies.get(effect.requestId);
@@ -194,148 +247,21 @@ function configure(options: SessionOptions) {
           );
         return undefined;
       }
-      const { turnId, command } = effect;
-      switch (command.type) {
-        case "cancel":
-          cancel(command.child);
-          break;
-        case "prepare_model": {
-          const agent = agents.get(command.turn.agent)!;
-          spawn(
-            command.child,
-            {
-              input: null,
-              parseInput: z.null().parse,
-              run: async (_, signal) => ({
-                baseUrl,
-                apiKey,
-                model: agent.model,
-                messages: await project(input(command.turn), signal),
-                tools: agent.tools.map((name) => ({
-                  type: "function",
-                  function: {
-                    name,
-                    description: tools.get(name)!.description,
-                    parameters: tools.get(name)!.parameters,
-                  },
-                })),
-              }),
-              parseOutput: PreparedModelSchema.parseAsync,
-            },
-            (result) => post(turnId, { type: "prepared", child: command.child, result }),
-          );
-          break;
-        }
-        case "complete": {
-          const admitted = admittedCompletionSchema(
-            new Set(agents.keys()),
-            new Set(agents.get(command.turn.agent)!.tools),
-          );
-          spawn(
-            command.child,
-            {
-              input: { ...command.request, baseUrl, apiKey },
-              parseInput: PreparedModelSchema.parseAsync,
-              run: (request, signal) => complete({ ...request, signal }),
-              parseOutput: admitted.parseAsync,
-            },
-            (result) => post(turnId, { type: "model_settled", child: command.child, result }),
-          );
-          break;
-        }
-        case "prepare_handoff": {
-          spawn(
-            command.child,
-            {
-              input: null,
-              parseInput: z.null().parse,
-              run: (_, signal) =>
-                projectHandoff
-                  ? projectHandoff(
-                      { ...input(command.turn), from: command.from, to: command.turn.agent },
-                      signal,
-                    )
-                  : [
-                      command.turn.messages.findLast((message) => message.role === "user"),
-                      command.turn.messages.at(-1),
-                    ].filter((message) => message !== undefined),
-              parseOutput: MessagesSchema.parseAsync,
-            },
-            (result) => post(turnId, { type: "handoff_prepared", child: command.child, result }),
-          );
-          break;
-        }
-        case "run_tools": {
-          let batch: Actor<BatchState, BatchEvent, BatchCommand>;
-          const runBatchCommand = (batchCommand: BatchCommand): undefined => {
-            switch (batchCommand.type) {
-              case "spawn_tool": {
-                const tool = tools.get(batchCommand.call.name)!;
-                spawn(
-                  batchCommand.child,
-                  {
-                    input: batchCommand.call.args,
-                    parseInput: tool.parseInput,
-                    run: tool.run,
-                    parseOutput: (value) => {
-                      const json = z.json().parse(value);
-                      return typeof json === "string" ? json : JSON.stringify(json);
-                    },
-                  },
-                  (result) => {
-                    void submit(
-                      {
-                        kind: "tool",
-                        turnId,
-                        batchId: command.child.id,
-                        callId: batchCommand.call.id,
-                        result,
-                      },
-                      () => {
-                        void batch.send({
-                          type: "tool_settled",
-                          callId: batchCommand.call.id,
-                          result,
-                        });
-                      },
-                    );
-                  },
-                );
-                break;
-              }
-              case "cancel_tool":
-                cancel(batchCommand.child);
-                break;
-              case "notify":
-                children.delete(command.child.id);
-                post(turnId, {
-                  type: "batch_settled",
-                  child: command.child,
-                  outcome: batchCommand.outcome,
-                });
-                break;
-            }
-            return undefined;
-          };
-          batch = new Actor<BatchState, BatchEvent, BatchCommand>(
-            { status: "ready", calls: command.completion.calls },
-            toolBatchMachine(command.child),
-            runBatchCommand,
-            (_, error) => ({ type: "failed", error: failure(error) }),
-          );
-          children.set(command.child.id, {
-            ref: command.child,
-            actor: {
-              get snapshot() {
-                return batch.snapshot;
-              },
-              cancel: () => batch.send({ type: "cancel" }),
-            },
-          });
-          void batch.send({ type: "start" });
-          break;
-        }
-      }
+      const durable = session.snapshot.durable;
+      const policy = durable.policy;
+      const prompt = "turn" in effect.command ? input(effect.command.turn) : undefined;
+      host.dispatch(effect, {
+        prompt,
+        allowedTools: prompt?.agent.tools,
+        toolFailure: policy?.toolFailure,
+        projectPrompt: (value) =>
+          policy
+            ? projectPolicy(value, durable.systemInputs, policy, resolvers)
+            : projectSessionPrompt(value, durable.systemInputs),
+        projectHandoff: policy
+          ? (value) => resolvers.handoffs.get(policy.handoff)!(value)
+          : projectHandoff,
+      });
       return undefined;
     };
     function submit(
@@ -349,7 +275,7 @@ function configure(options: SessionOptions) {
         receipts.set(requestId, resolve);
         if (committed) afterCommit.set(requestId, committed);
         if (settlement) admissions.set(requestId, settlement);
-        void session.send({
+        void send({
           type: "submit",
           submission: {
             id: requestId,
@@ -362,7 +288,7 @@ function configure(options: SessionOptions) {
       });
     }
     function stop() {
-      for (const { actor } of children.values()) void actor.cancel();
+      host.close();
       for (const actor of storage) void actor.cancel();
       const result: TerminalResult =
         session.snapshot.status === "closed"
@@ -372,6 +298,8 @@ function configure(options: SessionOptions) {
       admissions.clear();
       for (const group of waiters.values()) for (const settle of group) settle(result);
       waiters.clear();
+      for (const settle of queuedWaiters.values()) settle(result);
+      queuedWaiters.clear();
       for (const reply of branchReplies.values()) reply.reject(new Error(result.message));
       branchReplies.clear();
     }
@@ -383,7 +311,7 @@ function configure(options: SessionOptions) {
           void actor.start();
           void actor.result.then((result) => {
             storage.delete(actor);
-            return session.send({ type: "appended", appendId: command.request.appendId, result });
+            return send({ type: "appended", appendId: command.request.appendId, result });
           });
           break;
         }
@@ -393,19 +321,40 @@ function configure(options: SessionOptions) {
           void actor.start();
           void actor.result.then((result) => {
             storage.delete(actor);
-            return session.send({ type: "loaded", appendId: command.appendId, result });
+            return send({ type: "loaded", appendId: command.appendId, result });
           });
           break;
         }
         case "dispatch": {
           dispatchBoundary = command.durable;
           const terminal = command.durable.records.at(-1)?.body;
+          const newBodies = command.durable.records
+            .filter((record) => record.appendId === command.submission.appendId)
+            .map((record) => record.body);
+          for (const body of newBodies)
+            if (body.kind === "dequeued") {
+              const waiting = queuedWaiters.get(body.inputId);
+              if (waiting) {
+                queuedWaiters.delete(body.inputId);
+                const turnId =
+                  terminal?.kind === "terminal"
+                    ? terminal.turnId
+                    : command.durable.conversation.turnId;
+                waiters.set(turnId, [...(waiters.get(turnId) ?? []), waiting]);
+              }
+            }
           const admission = admissions.get(command.submission.id);
           if (admission) {
             admissions.delete(command.submission.id);
-            const turnId =
-              terminal?.kind === "terminal" ? terminal.turnId : command.durable.conversation.turnId;
-            waiters.set(turnId, [...(waiters.get(turnId) ?? []), admission]);
+            const queued = newBodies.find((body) => body.kind === "queued");
+            if (queued?.kind === "queued") queuedWaiters.set(queued.inputId, admission);
+            else {
+              const turnId =
+                terminal?.kind === "terminal"
+                  ? terminal.turnId
+                  : command.durable.conversation.turnId;
+              waiters.set(turnId, [...(waiters.get(turnId) ?? []), admission]);
+            }
           }
           // Forward a committed individual result before processing a queued cancellation.
           afterCommit.get(command.submission.id)?.();
@@ -441,7 +390,7 @@ function configure(options: SessionOptions) {
           break;
         }
         case "drain":
-          void session.send({ type: "drain" });
+          void send({ type: "drain" });
           break;
         case "stop":
           stop();
@@ -451,84 +400,142 @@ function configure(options: SessionOptions) {
     };
     session = new Actor<SessionState, SessionEvent, SessionCommand>(
       { status: "ready", durable: initial, queue: [] },
-      decideSession,
+      (state, event) => decideSession(state, event, resolvers),
       executeSession,
       () => ({ type: "close" }),
     );
-    const branch = (request: SessionRequest): Promise<SessionRuntime> =>
-      new Promise((resolve, reject) => {
-        branchReplies.set(request.id, { resolve, reject });
-        void submit({
-          kind: "event",
-          event: wireEvent({ type: "request", request }),
-          systemVersion: session.snapshot.durable.systemVersion,
-        }).then((receipt) => {
-          if (receipt.kind !== "accepted") {
-            branchReplies.delete(request.id);
-            reject(new Error(`Branch ${receipt.kind}`));
-          }
-        });
+    function branch(request: SessionRequest) {
+      let resolve!: (runtime: SessionRuntime) => void;
+      let reject!: (error: unknown) => void;
+      const settled = new Promise<SessionRuntime>((done, failed) => {
+        resolve = done;
+        reject = failed;
       });
-    const runtime: SessionRuntime = {
-      get snapshot() {
-        return session.snapshot;
-      },
-      fire(raw) {
-        return submit({
-          kind: "event",
-          event: UserEventSchema.parse(raw),
-          systemVersion: session.snapshot.durable.systemVersion,
-        });
-      },
-      input(text) {
+      branchReplies.set(request.id, { resolve, reject });
+      const accepted = submit({
+        kind: "event",
+        event: wireEvent({ type: "request", request }),
+        systemVersion: session.snapshot.durable.systemVersion,
+      });
+      void accepted.then((receipt) => {
+        if (receipt.kind !== "accepted") {
+          branchReplies.delete(request.id);
+          reject(new Error(`Branch ${receipt.kind}`));
+        }
+      });
+      return { accepted, settled };
+    }
+    function dispatch(raw: Extract<EnvEvent, { type: "user" }>): {
+      accepted: Promise<CommandReceipt>;
+      settled: Promise<TerminalResult>;
+    };
+    function dispatch(raw: Extract<EnvEvent, { type: "system" | "policy" | "abort" }>): {
+      accepted: Promise<CommandReceipt>;
+      settled: Promise<EnvSettlement>;
+    };
+    function dispatch(raw: unknown): EnvCommandHandle;
+    function dispatch(raw: unknown): EnvCommandHandle {
+      const event = EnvEventSchema.parse(raw);
+      if (event.type === "user") {
         let settle!: (result: TerminalResult) => void;
         const settled = new Promise<TerminalResult>((resolve) => {
           settle = resolve;
         });
         const accepted = submit(
-          {
-            kind: "event",
-            event: UserEventSchema.parse({ type: "user", text }),
-            systemVersion: session.snapshot.durable.systemVersion,
-          },
+          { kind: "event", event, systemVersion: session.snapshot.durable.systemVersion },
           undefined,
           settle,
         );
         return { accepted, settled };
-      },
-      updateSystem(inputs) {
-        return submit({
-          kind: "system",
-          inputs: SystemInputsSchema.parse(inputs),
-          version: SystemVersionSchema.parse(session.snapshot.durable.systemVersion + 1),
+      }
+      if (event.type === "fork" || event.type === "compact") {
+        const request = { id: ActorIdSchema.parse(id()), sessionId: SessionIdSchema.parse(id()) };
+        const handle = branch(
+          event.type === "fork"
+            ? { ...request, kind: "fork" }
+            : { ...request, kind: "compact", context: event.context },
+        );
+        return {
+          accepted: handle.accepted,
+          settled: handle.settled.then(
+            (child) => ({ kind: "branch" as const, session: child }),
+            (error) => ({ kind: "failed" as const, message: failure(error).message }),
+          ),
+        };
+      }
+      if (event.type === "close") {
+        const accepted = send({ type: "close" }).then(() => ({
+          kind: "close_acknowledged" as const,
+        }));
+        return {
+          accepted,
+          settled: accepted.then((receipt) => ({ kind: "acknowledged", receipt })),
+        };
+      }
+      if (event.type === "policy" && projectHandoff && !session.snapshot.durable.policy) {
+        const accepted = Promise.resolve<CommandReceipt>({
+          kind: "failed",
+          message: "Bind a named handoff policy before upgrading a legacy callback",
         });
+        return {
+          accepted,
+          settled: accepted.then((receipt) => ({ kind: "acknowledged", receipt })),
+        };
+      }
+      const input: SessionInput =
+        event.type === "system"
+          ? {
+              kind: "system",
+              inputs: event.inputs,
+              version: SystemVersionSchema.parse(session.snapshot.durable.systemVersion + 1),
+            }
+          : event.type === "policy"
+            ? { kind: "policy", patch: event.patch }
+            : { kind: "event", event, systemVersion: session.snapshot.durable.systemVersion };
+      const accepted = submit(input);
+      return { accepted, settled: accepted.then((receipt) => ({ kind: "acknowledged", receipt })) };
+    }
+    const publishBranch = async (event: EnvEvent): Promise<SessionRuntime> => {
+      const result = await dispatch(event).settled;
+      if (result.kind !== "branch")
+        throw new Error("message" in result ? result.message : "Branch was not published");
+      return result.session;
+    };
+    const runtime: SessionRuntime = {
+      get snapshot() {
+        return session.snapshot;
       },
-      fork: () =>
-        branch({
-          kind: "fork",
-          id: ActorIdSchema.parse(id()),
-          sessionId: SessionIdSchema.parse(id()),
-        }),
-      compact(raw) {
-        const context = parseSessionContext(raw);
-        return branch({
-          kind: "compact",
-          id: ActorIdSchema.parse(id()),
-          sessionId: SessionIdSchema.parse(id()),
-          context,
-        });
+      dispatch,
+      fire: (raw) => dispatch(raw).accepted,
+      input: (text) => dispatch({ type: "user", text }),
+      updateSystem: (inputs) => dispatch({ type: "system", inputs }).accepted,
+      updatePolicy: (patch) => dispatch({ type: "policy", patch }).accepted,
+      fork: () => publishBranch({ type: "fork" }),
+      compact: (context) => {
+        const validated = parseSessionContext(context);
+        return publishBranch({ type: "compact", context: validated });
       },
       async close() {
-        await session.send({ type: "close" });
+        await dispatch({ type: "close" }).accepted;
       },
     };
     return { runtime, submit };
   }
-  return { agentId, steps, configuration, id, initialize, build };
+  return {
+    agentId,
+    steps,
+    configuration,
+    id,
+    initialize,
+    build,
+    options,
+    resolvers,
+    initialPolicy,
+  };
 }
 export async function createSession(options: SessionOptions): Promise<SessionRuntime> {
   const configured = configure(options);
-  const sessionId = SessionIdSchema.parse(options.sessionId ?? configured.id());
+  const sessionId = SessionIdSchema.parse(configured.options.sessionId ?? configured.id());
   return configured.initialize(
     SeedSchema.parse({
       sessionId,
@@ -538,7 +545,8 @@ export async function createSession(options: SessionOptions): Promise<SessionRun
       agent: configured.agentId,
       allowance: configured.steps,
       sequence: 1,
-      systemInputs: options.systemInputs ?? [],
+      systemInputs: configured.options.systemInputs ?? [],
+      ...(configured.initialPolicy ? { policy: configured.initialPolicy } : {}),
       systemVersion: 0,
       configuration: configured.configuration,
     }),
@@ -548,18 +556,18 @@ export async function restoreSession(
   options: SessionOptions,
   rawSessionId: string,
 ): Promise<SessionRuntime> {
-  const configured = configure(options);
+  const configured = configure(options, true);
   const sessionId = SessionIdSchema.parse(rawSessionId);
   const loaded = await loadSession(options.persistence, sessionId);
   if (loaded.kind !== "loaded")
     throw new Error(loaded.kind === "not_found" ? "Session not found" : loaded.message);
-  const journal = replay(loaded.batches);
+  const journal = replay(loaded.batches, configured.resolvers);
   if (journal.conversation.sessionId !== sessionId || journal.revision !== loaded.revision)
     throw new Error("Loaded stream identity/revision mismatch");
   const built = configured.build(
     freeze({ ...journal, conversation: { ...journal.conversation, pending: [] } }),
   );
-  if (journal.conversation.turn.status !== "idle") {
+  if (journal.conversation.turn.status !== "idle" || journal.pendingInputs?.length) {
     const receipt = await built.submit(
       {
         kind: "recovery",

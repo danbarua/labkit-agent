@@ -28,3 +28,15 @@ function assertions(state: SessionState, result: AppendResult) {
 test("domain assertions are checked by TypeScript", () => {
   expect(typeof assertions).toBe("function");
 });
+
+import type { EnvEvent } from "./events.ts";
+import type { PolicyPatch } from "../policy/policy.ts";
+function policyAssertions() {
+  // @ts-expect-error Executable functions cannot enter a policy patch.
+  const patch: PolicyPatch = { project: () => [] };
+  // @ts-expect-error Private child events cannot be public environment events.
+  const child: EnvEvent = { type: "child", event: {} };
+  void patch;
+  void child;
+}
+void policyAssertions;

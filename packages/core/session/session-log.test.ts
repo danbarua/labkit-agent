@@ -88,3 +88,33 @@ test("terminal and transition share a batch; duplicate append batches are reject
     ]),
   ).toThrow();
 });
+
+test("v2 replay rejects policy version drift, downgrade, and advertised tool escalation", async () => {
+  const options = testOptions();
+  const session = await createSession(options);
+  await session.updatePolicy({ tools: { a: [] } });
+  await session.input("Go").settled;
+  const loaded = await options.persistence.load(
+    session.snapshot.durable.conversation.sessionId,
+    new AbortController().signal,
+  );
+  if (loaded.kind !== "loaded") throw new Error("Expected stream");
+  for (const mutate of [
+    (r: any) => {
+      if (r.body.kind === "policy") r.body.policy.version++;
+    },
+    (r: any) => {
+      if (r.body.kind === "event") r.body.policyVersion++;
+    },
+    (r: any) => {
+      if (r.body.kind === "policy") r.version = 1;
+    },
+    (r: any) => {
+      if (r.body.event?.event?.type === "prepared")
+        r.body.event.event.result.value.tools = [
+          { type: "function", function: { name: "echo", parameters: {} } },
+        ];
+    },
+  ])
+    expect(() => replay(corrupt(loaded.batches, mutate))).toThrow();
+});

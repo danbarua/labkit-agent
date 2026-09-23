@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineTool, type SessionOptions } from "./session-runtime.ts";
+import { defineTool, type LegacySessionOptions as SessionOptions } from "./session-runtime.ts";
 import { createMemoryPersistence } from "./testing/memory-persistence.ts";
 export { deferred, until } from "../agent/test-support.ts";
 

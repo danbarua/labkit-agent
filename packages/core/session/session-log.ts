@@ -1,3 +1,14 @@
+import {
+  PolicyPatchSchema,
+  defaultPolicy,
+  validatePolicy,
+  patchPolicy,
+  projectPolicy,
+  effectiveToolResult,
+  builtinResolvers,
+  type Policy,
+  type PolicyResolvers,
+} from "../policy/policy.ts";
 import { PreparedModelSchema } from "../agent/agent.ts";
 import {
   decideConversation,
@@ -35,6 +46,11 @@ import { projectSessionPrompt } from "./session-prompt.ts";
 export type ToolEntry = Extract<JournalBody, { kind: "tool" }>;
 export type JournalState = Readonly<{
   conversation: ConversationState;
+  policy?: Policy;
+  pendingInputs?: readonly Readonly<{
+    inputId: ReturnType<typeof ActorIdSchema.parse>;
+    text: string;
+  }>[];
   configuration: Configuration;
   systemInputs: readonly string[];
   systemVersion: ReturnType<typeof SystemVersionSchema.parse>;
@@ -42,7 +58,10 @@ export type JournalState = Readonly<{
   revision: Revision;
   records: readonly JournalRecord[];
 }>;
-export function seedConversation(raw: Seed): JournalState {
+export function seedConversation(
+  raw: Seed,
+  resolvers: PolicyResolvers = builtinResolvers,
+): JournalState {
   const seed = SeedSchema.parse(raw);
   if (
     seed.sequence !== seed.log.length + 1 ||
@@ -55,6 +74,11 @@ export function seedConversation(raw: Seed): JournalState {
     throw new Error("Invalid root boundary");
   if (seed.origin.kind === "compaction" && (seed.sequence !== 1 || seed.log.length))
     throw new Error("Invalid compaction boundary");
+  if (
+    seed.policy &&
+    validatePolicy(seed.policy, seed.configuration, resolvers).steps !== seed.allowance
+  )
+    throw new Error("Policy allowance mismatch");
   const initial = initialConversation(seed.agent, seed.allowance, seed.sessionId);
   const id = ActorIdSchema.parse(`${seed.sessionId}/turn/${seed.sequence}`);
   const conversation: ConversationState = {
@@ -83,6 +107,7 @@ export function seedConversation(raw: Seed): JournalState {
   return freeze({
     conversation,
     configuration: seed.configuration,
+    ...(seed.policy ? { policy: seed.policy, pendingInputs: [] } : {}),
     systemInputs: seed.systemInputs,
     systemVersion: seed.systemVersion,
     partial: [],
@@ -104,6 +129,7 @@ export function toSeed(state: JournalState, conversation = state.conversation): 
     systemInputs: state.systemInputs,
     systemVersion: state.systemVersion,
     configuration: state.configuration,
+    ...(state.policy ? { policy: state.policy } : {}),
   });
 }
 /** Explicit DTO projection: connection settings and credentials never enter a journal. */
@@ -151,13 +177,19 @@ export function accepts(state: JournalState, input: SessionInput): boolean {
       calls?.role === "assistant" &&
       Boolean(calls.calls?.some((call) => call.id === input.callId)) &&
       !state.partial.some(
-        (entry) => entry.callId === input.callId || entry.result.kind !== "succeeded",
+        (entry) =>
+          entry.callId === input.callId ||
+          effectiveToolResult(entry.result, state.policy).kind !== "succeeded",
       )
     );
   }
   return true;
 }
-function domainEvent(state: JournalState, event: WireEvent): ConversationEvent {
+function domainEvent(
+  state: JournalState,
+  event: WireEvent,
+  resolvers: PolicyResolvers,
+): ConversationEvent {
   if (event.type !== "child") return event;
   const child = event.event;
   if (child.type === "prepared") {
@@ -168,10 +200,26 @@ function domainEvent(state: JournalState, event: WireEvent): ConversationEvent {
       const agent = state.configuration.agents.find(([id]) => id === activeAgent)?.[1];
       if (!agent || child.result.value.model !== agent.model)
         throw new Error("Prompt model mismatch");
-      const expected = projectSessionPrompt(
-        { context: c.context, log: c.log, turn: c.turn.turn, agent },
-        state.systemInputs,
-      );
+      const projectionInput = { context: c.context, log: c.log, turn: c.turn.turn, agent };
+      const expected = state.policy
+        ? projectPolicy(projectionInput, state.systemInputs, state.policy, resolvers)
+        : projectSessionPrompt(projectionInput, state.systemInputs);
+      if (state.policy) {
+        const allowed = state.policy.tools[activeAgent]!;
+        const advertised = child.result.value.tools ?? [];
+        if (
+          advertised.length !== allowed.length ||
+          advertised.some(
+            (tool, index) =>
+              tool.function.name !== allowed[index] ||
+              JSON.stringify(tool.function.parameters) !==
+                JSON.stringify(
+                  state.configuration.tools.find(([name]) => name === tool.function.name)?.[1],
+                ),
+          )
+        )
+          throw new Error("Prompt tool permissions mismatch");
+      }
       if (JSON.stringify(expected) !== JSON.stringify(child.result.value.messages))
         throw new Error("Prompt differs from captured session projection");
     }
@@ -202,13 +250,16 @@ function domainEvent(state: JournalState, event: WireEvent): ConversationEvent {
       !state.configuration.agents.some(([id]) => id === result.agent)
     )
       throw new Error("Unknown handoff agent");
-    if (result.kind === "tools" && result.calls.some((call) => !agent?.tools.includes(call.name)))
+    if (
+      result.kind === "tools" &&
+      result.calls.some(
+        (call) => !(state.policy?.tools[activeAgent] ?? agent?.tools)?.includes(call.name),
+      )
+    )
       throw new Error("Unpermitted tool");
   }
   if (child.type !== "batch_settled") return { ...event, event: child };
-  const results = state.partial.flatMap((entry) =>
-    entry.result.kind === "succeeded" ? [{ callId: entry.callId, text: entry.result.value }] : [],
-  );
+  const results = partialResults(state);
   if (JSON.stringify(results) !== JSON.stringify(child.outcome.results))
     throw new Error("Batch results differ from committed individual results");
   if (child.outcome.kind !== "succeeded")
@@ -228,9 +279,97 @@ function domainEvent(state: JournalState, event: WireEvent): ConversationEvent {
 }
 function reduce(
   state: JournalState,
-  input: Exclude<SessionInput, { kind: "created" }>,
+  input: Exclude<JournalBody, { kind: "created" | "terminal" }>,
+  resolvers: PolicyResolvers,
 ): { state: JournalState; commands: readonly ConversationCommand[] } {
   if (!accepts(state, input)) throw new Error("Stale or uncorrelated journal input");
+  if (input.kind === "upgrade" || input.kind === "policy") {
+    const c = state.conversation;
+    if (c.turn.status !== "idle" || state.pendingInputs?.length)
+      throw new Error("Policy changes require an idle boundary");
+    const policy = validatePolicy(input.policy, state.configuration, resolvers);
+    if (input.kind === "upgrade") {
+      if (
+        state.policy ||
+        JSON.stringify(policy) !== JSON.stringify(defaultPolicy(state.configuration, c.allowance))
+      )
+        throw new Error("Invalid upgrade boundary");
+    } else if (
+      !state.policy ||
+      JSON.stringify(policy) !==
+        JSON.stringify(patchPolicy(state.policy, input.patch, state.configuration, resolvers))
+    )
+      throw new Error("Invalid policy patch/version");
+    return {
+      state: {
+        ...state,
+        policy,
+        pendingInputs: state.pendingInputs ?? [],
+        conversation: { ...c, allowance: policy.steps, turn: { ...c.turn, steps: policy.steps } },
+      },
+      commands: [],
+    };
+  }
+  if (input.kind === "queued") {
+    const c = state.conversation;
+    if (
+      !state.policy ||
+      input.policyVersion !== state.policy.version ||
+      c.turn.status === "idle" ||
+      state.records.some(
+        (record) => record.body.kind === "queued" && record.body.inputId === input.inputId,
+      )
+    )
+      throw new Error("Invalid queued input");
+    if (
+      state.policy.admission !== "queue-user" &&
+      !(
+        state.policy.admission === "abort-tools-on-user" &&
+        (c.turn.status === "executing_tools" || c.turn.status === "cancelling_tools")
+      )
+    )
+      throw new Error("Policy does not queue this input");
+    return {
+      state: {
+        ...state,
+        pendingInputs: [
+          ...(state.pendingInputs ?? []),
+          { inputId: input.inputId, text: input.text },
+        ],
+      },
+      commands: [],
+    };
+  }
+  if (input.kind === "input_cancelled") {
+    if (!state.pendingInputs?.some((entry) => entry.inputId === input.inputId))
+      throw new Error("Unknown cancelled input");
+    return {
+      state: {
+        ...state,
+        pendingInputs: state.pendingInputs.filter((entry) => entry.inputId !== input.inputId),
+      },
+      commands: [],
+    };
+  }
+  if (input.kind === "dequeued") {
+    const pending = state.pendingInputs?.[0];
+    if (
+      state.conversation.turn.status !== "idle" ||
+      !pending ||
+      pending.inputId !== input.inputId ||
+      input.policyVersion !== state.policy?.version
+    )
+      throw new Error("Invalid dequeue boundary");
+    const decision = decideConversation(state.conversation, { type: "user", text: pending.text });
+    return {
+      state: {
+        ...state,
+        conversation: decision.state,
+        pendingInputs: state.pendingInputs!.slice(1),
+      },
+      commands: decision.commands,
+    };
+  }
   if (input.kind === "system") {
     if (state.conversation.turn.status !== "idle")
       throw new Error("System inputs require idle boundary");
@@ -244,15 +383,18 @@ function reduce(
     return { state: { ...state, partial: [...state.partial, input] }, commands: [] };
   if (input.kind === "recovery") {
     const c = state.conversation;
-    if (c.turn.status === "idle" || input.turnId !== c.turnId)
-      throw new Error("Recovery requires interrupted turn");
+    if (input.turnId !== c.turnId) throw new Error("Recovery turn mismatch");
+    if (c.turn.status === "idle") {
+      if (!state.pendingInputs?.length) throw new Error("Recovery requires interrupted work");
+      return { state, commands: [] };
+    }
     const messages = MessagesSchema.parse([
       ...c.turn.turn.messages,
-      ...state.partial.flatMap((entry) =>
-        entry.result.kind === "succeeded"
-          ? [{ role: "tool", callId: entry.callId, text: entry.result.value }]
-          : [],
-      ),
+      ...partialResults(state).map((result) => ({
+        role: "tool",
+        callId: result.callId,
+        text: result.text,
+      })),
     ]);
     const recovered = decideConversation(
       {
@@ -272,7 +414,19 @@ function reduce(
     return { state: { ...state, conversation: recovered.state, partial: [] }, commands: [] };
   }
   if (input.systemVersion !== state.systemVersion) throw new Error("Turn system version mismatch");
-  const decision = decideConversation(state.conversation, domainEvent(state, input.event));
+  if (input.policyVersion !== state.policy?.version)
+    throw new Error("Turn policy version mismatch");
+  if (
+    input.event.type === "user" &&
+    state.policy &&
+    state.conversation.turn.status !== "idle" &&
+    (!state.policy.bargeIn || state.policy.admission === "queue-user")
+  )
+    throw new Error("Policy rejects barge-in");
+  const decision = decideConversation(
+    state.conversation,
+    domainEvent(state, input.event, resolvers),
+  );
   return {
     state: {
       ...state,
@@ -292,7 +446,13 @@ export function encodeRecord(record: JournalRecord): string {
 export function decodeRecord(serialized: string): JournalRecord {
   return freeze(JournalRecordSchema.parse(JSON.parse(serialized)));
 }
-export function stage(state: JournalState, input: SessionInput, appendId: AppendId) {
+export function stage(
+  state: JournalState,
+  input: SessionInput,
+  appendId: AppendId,
+  resolvers: PolicyResolvers = builtinResolvers,
+  inputId = ActorIdSchema.parse(appendId),
+) {
   if (input.kind === "created") {
     if (
       state.revision !== 0 ||
@@ -300,17 +460,72 @@ export function stage(state: JournalState, input: SessionInput, appendId: Append
       input.seed.sessionId !== state.conversation.sessionId
     )
       throw new Error("Creation requires an absent stream");
-    return stageCreation(input.seed, appendId);
+    return stageCreation(input.seed, appendId, resolvers);
   }
-  const decision = reduce(state, input);
-  const bodies: JournalBody[] = [input];
-  if (decision.state.conversation.sequence !== state.conversation.sequence)
-    bodies.push({
-      kind: "terminal",
-      turnId: state.conversation.turnId,
-      record: decision.state.conversation.log.at(-1)!,
+  let next = state;
+  const bodies: JournalBody[] = [];
+  const commands: ConversationCommand[] = [];
+  const apply = (body: Exclude<JournalBody, { kind: "created" | "terminal" }>) => {
+    const before = next;
+    const decision = reduce(next, body, resolvers);
+    next = decision.state;
+    bodies.push(body);
+    commands.push(...decision.commands);
+    if (next.conversation.sequence !== before.conversation.sequence)
+      bodies.push({
+        kind: "terminal",
+        turnId: before.conversation.turnId,
+        record: next.conversation.log.at(-1)!,
+      });
+  };
+  if (input.kind === "policy") {
+    if (!next.policy)
+      apply({
+        kind: "upgrade",
+        policy: defaultPolicy(next.configuration, next.conversation.allowance),
+      });
+    apply({
+      kind: "policy",
+      patch: PolicyPatchSchema.parse(input.patch),
+      policy: patchPolicy(next.policy!, input.patch, next.configuration, resolvers),
     });
-  return packageRecords(state, decision.state, bodies, appendId, decision.commands);
+  } else if (
+    input.kind === "event" &&
+    input.event.type === "user" &&
+    next.policy &&
+    next.conversation.turn.status !== "idle" &&
+    (next.policy.admission === "queue-user" ||
+      (next.policy.admission === "abort-tools-on-user" &&
+        ["executing_tools", "cancelling_tools"].includes(next.conversation.turn.status)))
+  ) {
+    apply({ kind: "queued", inputId, text: input.event.text, policyVersion: next.policy.version });
+    if (
+      next.policy!.admission === "abort-tools-on-user" &&
+      next.conversation.turn.status === "executing_tools"
+    )
+      apply({
+        kind: "event",
+        event: { type: "abort" },
+        systemVersion: next.systemVersion,
+        policyVersion: next.policy!.version,
+      });
+  } else {
+    apply(
+      input.kind === "event" && next.policy
+        ? { ...input, policyVersion: next.policy.version }
+        : input,
+    );
+  }
+  if (input.kind === "recovery")
+    for (const pending of next.pendingInputs ?? [])
+      apply({ kind: "input_cancelled", inputId: pending.inputId, reason: input.reason });
+  return packageRecords(state, next, bodies, appendId, commands);
+}
+function partialResults(state: JournalState) {
+  return state.partial.flatMap((entry) => {
+    const result = effectiveToolResult(entry.result, state.policy);
+    return result.kind === "succeeded" ? [{ callId: entry.callId, text: result.value }] : [];
+  });
 }
 function packageRecords(
   previous: JournalState,
@@ -321,7 +536,7 @@ function packageRecords(
 ) {
   const records = bodies.map((body, index) =>
     JournalRecordSchema.parse({
-      version: 1,
+      version: next.policy ? 2 : 1,
       sessionId: previous.conversation.sessionId,
       revision: previous.revision + index + 1,
       entryId: `${appendId}/${index}`,
@@ -336,11 +551,18 @@ function packageRecords(
     commands,
   });
 }
-export function stageCreation(seed: Seed, appendId: AppendId) {
-  const state = seedConversation(seed);
+export function stageCreation(
+  seed: Seed,
+  appendId: AppendId,
+  resolvers: PolicyResolvers = builtinResolvers,
+) {
+  const state = seedConversation(seed, resolvers);
   return packageRecords(state, state, [{ kind: "created", seed }], appendId);
 }
-export function replay(batches: readonly CommittedBatch[]): JournalState {
+export function replay(
+  batches: readonly CommittedBatch[],
+  resolvers: PolicyResolvers = builtinResolvers,
+): JournalState {
   let state: JournalState | undefined;
   let expectedTerminal: { turnId: string; record: TurnRecord } | undefined;
   const entries = new Set<string>();
@@ -369,10 +591,14 @@ export function replay(batches: readonly CommittedBatch[]): JournalState {
       if (!state) {
         if (body.kind !== "created" || body.seed.sessionId !== record.sessionId)
           throw new Error("Missing creation record");
-        state = seedConversation(body.seed);
+        if (record.version === 2 && !body.seed.policy)
+          throw new Error("Version two creation requires policy");
+        state = seedConversation(body.seed, resolvers);
       } else {
         if (record.sessionId !== state.conversation.sessionId || body.kind === "created")
           throw new Error("Invalid session identity");
+        if (record.version !== (state.policy || body.kind === "upgrade" ? 2 : 1))
+          throw new Error("Invalid journal upgrade boundary");
         if (expectedTerminal) {
           if (
             body.kind !== "terminal" ||
@@ -384,7 +610,7 @@ export function replay(batches: readonly CommittedBatch[]): JournalState {
         } else {
           if (body.kind === "terminal") throw new Error("Unexpected terminal record");
           const before = state.conversation;
-          state = reduce(state, body).state;
+          state = reduce(state, body, resolvers).state;
           if (state.conversation.sequence !== before.sequence)
             expectedTerminal = { turnId: before.turnId, record: state.conversation.log.at(-1)! };
         }
@@ -406,6 +632,12 @@ export function journalMarkdown(state: JournalState): string {
     `Origin: ${JSON.stringify(c.origin)}`,
     `System version: ${state.systemVersion}`,
     `System inputs: ${JSON.stringify(state.systemInputs)}`,
+    ...(state.policy
+      ? [
+          `Policy: ${JSON.stringify(state.policy)}`,
+          `Pending inputs: ${JSON.stringify(state.pendingInputs)}`,
+        ]
+      : []),
     `Context: ${JSON.stringify(c.context)}`,
     ...c.log.flatMap((record, index) => [
       `\n## Turn ${index + 1}: ${record.outcome.kind} (${record.agent})`,

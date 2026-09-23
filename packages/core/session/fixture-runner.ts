@@ -1,3 +1,5 @@
+import { PolicyPatchSchema } from "../policy/policy.ts";
+import type { LegacySessionOptions, SessionOptions } from "./session-runtime.ts";
 import { z } from "zod";
 import {
   createSession,
@@ -21,6 +23,7 @@ const StepSchema = z.object({
   op: z.enum([
     "input",
     "system",
+    "policy",
     "fork",
     "compact",
     "invalid-context",
@@ -38,6 +41,7 @@ const StepSchema = z.object({
   text: z.string().optional(),
   inputs: z.array(z.string()).optional(),
   context: z.unknown().optional(),
+  patch: PolicyPatchSchema.optional(),
   wait: z.boolean().default(true),
   count: z.number().int().nonnegative().optional(),
   name: z.string().optional(),
@@ -45,6 +49,8 @@ const StepSchema = z.object({
   expected: z.string().optional(),
 });
 const ScenarioSchema = z.object({
+  format: z.literal(2).optional(),
+  policy: PolicyPatchSchema.optional(),
   name: z.string().regex(/^[a-z0-9-]+$/),
   allowance: z.number().int().nonnegative().default(4),
   fault: z.enum(["reject-input", "lose-input", "lose-recovery"]).optional(),
@@ -103,6 +109,7 @@ async function runScenario(scenario: Scenario, directory: string) {
         defineTool({
           input: z.object({ text: z.string() }),
           run: ({ text }) => {
+            if (text.startsWith("error:")) throw new Error(text.slice(6));
             if (!text.startsWith("defer:")) return text;
             const work = deferred<unknown>();
             deferredWork.set(text.slice(6), work);
@@ -128,9 +135,26 @@ async function runScenario(scenario: Scenario, directory: string) {
       return outcome;
     },
   });
+  const bind = (legacy: LegacySessionOptions): SessionOptions =>
+    scenario.format === 2
+      ? {
+          persistence: legacy.persistence,
+          configuration: {
+            agent: legacy.agent,
+            agents: legacy.agents,
+            steps: legacy.steps,
+            policy: scenario.policy,
+          },
+          bindings: {
+            tools: legacy.tools,
+            id: legacy.id,
+            complete: (request, signal) => legacy.complete!({ ...request, signal }),
+          },
+        }
+      : legacy;
   let error: string | undefined;
   try {
-    sessions.set("root", await createSession(options));
+    sessions.set("root", await createSession(bind(options)));
     for (const step of scenario.steps) {
       const session = sessions.get(step.session);
       if (!session && step.op !== "join") throw new Error(`Unknown session ${step.session}`);
@@ -142,8 +166,12 @@ async function runScenario(scenario: Scenario, directory: string) {
           if (step.wait) results.push({ session: step.session, terminal: await turn.settled });
           break;
         }
+        case "policy":
         case "system": {
-          const receipt = await session!.updateSystem(step.inputs ?? []);
+          const receipt =
+            step.op === "policy"
+              ? await session!.updatePolicy(step.patch ?? {})
+              : await session!.updateSystem(step.inputs ?? []);
           if (receipt.kind !== (step.expected ?? "accepted"))
             throw new Error(`Unexpected system receipt: ${receipt.kind}`);
           results.push({ op: step.op, session: step.session, receipt });
@@ -181,14 +209,14 @@ async function runScenario(scenario: Scenario, directory: string) {
         case "restore": {
           if (!step.target) throw new Error("Restore needs target alias");
           const restored = await restoreSession(
-            {
+            bind({
               ...options,
               persistence:
                 scenario.fault === "lose-recovery" ? port : createMemoryPersistence(backing),
               complete: () => {
                 throw new Error("Restoration invoked completion");
               },
-            },
+            }),
             session!.snapshot.durable.conversation.sessionId,
           );
           sessions.set(step.target, restored);
@@ -251,14 +279,19 @@ async function runScenario(scenario: Scenario, directory: string) {
   for (const session of sessions.values()) await session.close();
   return { output, transcript, error };
 }
-export async function runFixtures(options: { update?: boolean; artifactDirectory?: string } = {}) {
+export async function runFixtures(
+  options: { update?: boolean; artifactDirectory?: string; version?: 1 | 2 } = {},
+) {
+  const suffix = options.version === 2 ? "-v2" : "";
   const scenarios = z
     .array(ScenarioSchema)
-    .parse(await Bun.file(new URL("scenarios.json", fixtureRoot)).json());
+    .parse(await Bun.file(new URL(`scenarios${suffix}.json`, fixtureRoot)).json());
   const outputs = [];
   const transcripts = [];
   const failures = [];
-  const directory = options.artifactDirectory ?? defaultArtifacts;
+  const directory =
+    options.artifactDirectory ??
+    (options.version === 2 ? `${defaultArtifacts.replace(/\/$/, "")}-v2` : defaultArtifacts);
   for (const scenario of scenarios) {
     const result = await runScenario(scenario, `${directory}/${scenario.name}`);
     outputs.push(result.output);
@@ -273,11 +306,11 @@ export async function runFixtures(options: { update?: boolean; artifactDirectory
   if (structured.includes("SECRET_SENTINEL"))
     throw new Error("Credential leaked into fixture output");
   if (options.update) {
-    await Bun.write(new URL("expected.json", fixtureRoot), structured);
-    await Bun.write(new URL("expected.md", fixtureRoot), markdown);
+    await Bun.write(new URL(`expected${suffix}.json`, fixtureRoot), structured);
+    await Bun.write(new URL(`expected${suffix}.md`, fixtureRoot), markdown);
   } else {
-    const expected = await Bun.file(new URL("expected.json", fixtureRoot)).text();
-    const readable = await Bun.file(new URL("expected.md", fixtureRoot)).text();
+    const expected = await Bun.file(new URL(`expected${suffix}.json`, fixtureRoot)).text();
+    const readable = await Bun.file(new URL(`expected${suffix}.md`, fixtureRoot)).text();
     if (structured !== expected || markdown !== readable)
       throw new Error(
         `Session fixture mismatch; inspect ${directory}/actual.json and actual.md. Baselines require explicit --update.`,
@@ -287,9 +320,12 @@ export async function runFixtures(options: { update?: boolean; artifactDirectory
 }
 if (import.meta.main) {
   const args = Bun.argv.slice(2);
-  if (args.some((arg) => arg !== "--update"))
-    throw new Error("Usage: bun run packages/core/session/fixture-runner.ts [--update]");
-  const result = await runFixtures({ update: args.includes("--update") });
+  if (args.some((arg) => arg !== "--update" && arg !== "--v2"))
+    throw new Error("Usage: bun run packages/core/session/fixture-runner.ts [--v2] [--update]");
+  const result = await runFixtures({
+    update: args.includes("--update"),
+    version: args.includes("--v2") ? 2 : 1,
+  });
   console.log(
     `${result.count} session fixtures ${args.includes("--update") ? "updated" : "matched"}.`,
   );

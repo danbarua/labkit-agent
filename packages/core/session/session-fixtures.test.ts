@@ -8,3 +8,14 @@ test("approved structured and readable fixtures match across repeated determinis
   expect(second.structured).toBe(first.structured);
   expect(second.markdown).toBe(first.markdown);
 });
+
+test("version-two policy fixtures are independent of the unchanged version-one baseline", async () => {
+  const first = await runFixtures({ version: 2, artifactDirectory: ".session-artifacts/v2-first" });
+  const second = await runFixtures({
+    version: 2,
+    artifactDirectory: ".session-artifacts/v2-second",
+  });
+  expect(first.count).toBe(8);
+  expect(second.structured).toBe(first.structured);
+  expect(second.markdown).toBe(first.markdown);
+});
