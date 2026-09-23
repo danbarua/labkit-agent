@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { ToolCallSchema } from "../agent/types.ts";
 import { advertisements, completion, jsonArguments, responseBody } from "./shared.ts";
-import { parseRequest, type CompletionProfile } from "./types.ts";
+import { parseRequest, validateThinking, type CompletionProfile } from "./types.ts";
 
 const output = z.discriminatedUnion("type", [
   z.object({
@@ -21,8 +21,10 @@ const output = z.discriminatedUnion("type", [
 ]);
 export const openaiResponses: CompletionProfile = {
   id: "openai-responses@1",
+  capabilities: { thinking: { mode: "effort", values: ["none"] }, stream: false },
   encode(raw) {
     const request = parseRequest(raw);
+    validateThinking(request.thinking, this.capabilities.thinking);
     const input: unknown[] = [];
     for (const message of request.messages) {
       if (message.role === "tool")

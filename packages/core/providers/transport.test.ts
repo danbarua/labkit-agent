@@ -30,8 +30,7 @@ test("bindings copy credentials and registries, issue one request, and keep secr
   registry.clear();
   headers.Authorization = "changed";
   expect(await port.complete(prepared, new AbortController().signal)).toEqual({
-    kind: "answer",
-    text: "done",
+    completion: { kind: "answer", text: "done" },
   });
   expect(requests).toHaveLength(1);
   expect(requests[0]!.url).toBe("https://example.invalid/v1/chat/completions");

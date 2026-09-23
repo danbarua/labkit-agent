@@ -1,13 +1,60 @@
 import { z } from "zod";
 
-import { MessagesSchema, ToolNameSchema } from "../agent/types.ts";
+import { CompletionOwnerSchema, MessagesSchema, ToolNameSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 
+export const ThinkingSchema = z.enum(["off", "low", "medium", "high", "adaptive"]);
+export type ThinkingCapability =
+  | Readonly<{ mode: "off" }>
+  | Readonly<{ mode: "effort"; values: readonly ("none" | "low" | "medium" | "high")[] }>
+  | Readonly<{ mode: "budget"; maxTokens: number }>
+  | Readonly<{ mode: "adaptive" }>;
+export const ContinuationPayloadSchema = z
+  .json()
+  .refine((payload) => JSON.stringify(payload).length <= 65536, "Continuation exceeds 64 KiB");
+export const ContinuationSchema = z
+  .strictObject({
+    provider: z.string().regex(/^.+@\d+$/),
+    owner: CompletionOwnerSchema,
+    payload: ContinuationPayloadSchema,
+  })
+  .readonly();
+export type Continuation = z.infer<typeof ContinuationSchema>;
+export type DecodedCompletion = Readonly<{ completion: unknown; continuationPayload?: unknown }>;
+export function validateThinking(
+  thinking: z.infer<typeof ThinkingSchema> | undefined,
+  capability: ThinkingCapability,
+) {
+  if (thinking === undefined || thinking === "off") return;
+  if (
+    thinking === "adaptive"
+      ? capability.mode === "adaptive"
+      : capability.mode === "effort" && capability.values.includes(thinking)
+  )
+    return;
+  throw new Error("Unsupported thinking setting");
+}
+export function matchingContinuations(
+  messages: readonly { role: string; owner?: z.infer<typeof CompletionOwnerSchema> }[],
+  continuations: readonly Continuation[],
+  provider?: string,
+) {
+  return continuations.filter(
+    (entry) =>
+      entry.provider === provider &&
+      messages.some(
+        (message) =>
+          message.role === "assistant" &&
+          message.owner?.turnId === entry.owner.turnId &&
+          message.owner.generation === entry.owner.generation,
+      ),
+  );
+}
 /** Data only. More thinking modes can be added with a journal/metadata migration. */
 export const ProviderSettingsSchema = z
   .strictObject({
     provider: z.string().regex(/^.+@\d+$/),
-    thinking: z.literal("off").optional(),
+    thinking: ThinkingSchema.optional(),
     stream: z.literal(false).optional(),
     maxOutputTokens: z.number().int().positive().optional(),
   })
@@ -24,8 +71,9 @@ export const CompletionRequestSchema = z
   .strictObject({
     model: z.string().min(1),
     messages: MessagesSchema,
+    continuations: z.array(ContinuationSchema).readonly().optional(),
     tools: z.array(ToolAdvertisementSchema).readonly(),
-    thinking: z.literal("off").optional(),
+    thinking: ThinkingSchema.optional(),
     stream: z.literal(false).optional(),
     temperature: z.number().finite().optional(),
     maxOutputTokens: z.number().int().positive().optional(),
@@ -43,11 +91,21 @@ export type HttpRequest = Readonly<{
 export type HttpResponse = Readonly<{ status: number; headers: Headers; body: unknown }>;
 export type CompletionProfile = Readonly<{
   id: string;
+  capabilities: Readonly<{ thinking: ThinkingCapability; stream: false }>;
   encode(request: CompletionRequest): HttpRequest;
-  decode(response: HttpResponse): unknown;
+  decode(response: HttpResponse): DecodedCompletion;
 }>;
 export function parseRequest(raw: unknown): CompletionRequest {
   const request = freeze(CompletionRequestSchema.parse(raw));
+  const owners = request.messages.flatMap((message) =>
+    message.role === "assistant" && message.owner ? [JSON.stringify(message.owner)] : [],
+  );
+  if (new Set(owners).size !== owners.length) throw new Error("Duplicate assistant owner");
+  const continuationOwners = (request.continuations ?? []).map((entry) =>
+    JSON.stringify(entry.owner),
+  );
+  if (new Set(continuationOwners).size !== continuationOwners.length)
+    throw new Error("Duplicate continuation owner");
   const pending = new Set<string>();
   let conversationStarted = false;
   for (const message of request.messages) {

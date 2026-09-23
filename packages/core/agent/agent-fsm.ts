@@ -1,6 +1,7 @@
-import { z } from "zod";
+import type { z } from "zod";
 
 import { defineMachine, stay, type Decision } from "../fsm/fsm.ts";
+import type { Continuation } from "../providers/types.ts";
 import type { PreparedModel } from "./agent.ts";
 import type { BatchOutcome } from "./tool-batch.ts";
 import {
@@ -53,7 +54,12 @@ export type TurnEvent =
   | { type: "user"; text: string }
   | { type: "abort" }
   | { type: "prepared"; child: Ref<"prepare">; result: Result<PreparedModel> }
-  | { type: "model_settled"; child: Ref<"completion">; result: Result<AdmittedCompletion> }
+  | {
+      type: "model_settled";
+      child: Ref<"completion">;
+      result: Result<AdmittedCompletion>;
+      continuation?: Continuation;
+    }
   | { type: "handoff_prepared"; child: Ref<"handoff">; result: Result<readonly AgentMessage[]> }
   | { type: "batch_settled"; child: Ref<"batch">; outcome: BatchOutcome }
   | { type: "failed"; child: ChildRef; error: Failure };

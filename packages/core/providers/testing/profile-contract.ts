@@ -39,18 +39,20 @@ export function profileContract(profile: CompletionProfile, vector: ProfileVecto
       expect(JSON.stringify(request)).toBe(before);
     });
     test("decodes answer, ordered parallel calls, and reserved handoff", () => {
-      expect(CompletionSchema.parse(profile.decode(response(vector.answer)))).toEqual({
+      expect(CompletionSchema.parse(profile.decode(response(vector.answer)).completion)).toEqual({
         kind: "answer",
         text: "done",
       });
-      expect(CompletionSchema.parse(profile.decode(response(vector.calls)))).toMatchObject({
+      expect(
+        CompletionSchema.parse(profile.decode(response(vector.calls)).completion),
+      ).toMatchObject({
         kind: "tools",
         calls: [
           { id: "c1", name: "lookup", args: { query: "a" } },
           { id: "c2", name: "lookup", args: { query: "b" } },
         ],
       });
-      expect(CompletionSchema.parse(profile.decode(response(vector.handoff)))).toEqual(
+      expect(CompletionSchema.parse(profile.decode(response(vector.handoff)).completion)).toEqual(
         CompletionSchema.parse({ kind: "handoff", text: "", agent: "b" }),
       );
     });

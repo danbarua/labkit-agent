@@ -99,6 +99,7 @@ function normalizeOptions(options: SessionOptions, restoring = false) {
   const providers = bindings.providers ? bindProviders(bindings.providers) : undefined;
   const resolvers = copyResolvers({
     ...copyResolvers(bindings.policies),
+    providerCapabilities: providers?.capabilities,
     providerIds: providers ? new Set(providers.ids) : undefined,
   });
   const initialPolicy = restoring
@@ -278,6 +279,7 @@ function configure(raw: SessionOptions, restoring = false) {
         allowedTools: prompt?.agent.tools,
         toolFailure: policy?.toolFailure,
         provider: policy,
+        continuations: durable.continuations,
         projectPrompt: (value) =>
           policy
             ? projectPolicy(value, durable.systemInputs, policy, resolvers)

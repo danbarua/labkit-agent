@@ -2,8 +2,8 @@ import { z } from "zod";
 
 import { openaiChat } from "../providers/openai-chat.ts";
 import { canonicalRequest, httpTransport } from "../providers/transport.ts";
-import { ProviderSettingsSchema } from "../providers/types.ts";
-import { CompletionSchema, type Completion } from "./types.ts";
+import { ContinuationSchema, ProviderSettingsSchema } from "../providers/types.ts";
+import { CompletionOwnerSchema, CompletionSchema, type Completion } from "./types.ts";
 
 const ChatToolCallSchema = z
   .strictObject({
@@ -20,6 +20,7 @@ export const ChatMessageSchema = z
     z.strictObject({
       role: z.literal("assistant"),
       content: z.string(),
+      owner: CompletionOwnerSchema.optional(),
       tool_calls: z.array(ChatToolCallSchema).min(1).readonly().optional(),
     }),
     z.strictObject({
@@ -47,6 +48,7 @@ export const PreparedModelSchema = z
   .strictObject({
     model: z.string().min(1),
     messages: z.array(ChatMessageSchema).readonly(),
+    continuations: z.array(ContinuationSchema).readonly().optional(),
     tools: z.array(ChatToolSchema).readonly().optional(),
     temperature: z.number().finite().optional(),
     ...ProviderSettingsSchema.unwrap().partial().shape,
@@ -105,5 +107,5 @@ export async function createChatCompletion(
       agent: message.handoff,
     });
   }
-  return CompletionSchema.parse(openaiChat.decode(response));
+  return CompletionSchema.parse(openaiChat.decode(response).completion);
 }

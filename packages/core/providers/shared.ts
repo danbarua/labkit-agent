@@ -31,11 +31,13 @@ export function completion(text: string, calls: readonly ToolCall[]) {
   if (handoffs.length) {
     if (calls.length !== 1) throw new Error("Handoff cannot be mixed with other calls");
     const args = z.strictObject({ agent: z.string().min(1) }).parse(handoffs[0]!.args);
-    return CompletionSchema.parse({ kind: "handoff", text, agent: args.agent });
+    return { completion: CompletionSchema.parse({ kind: "handoff", text, agent: args.agent }) };
   }
-  return CompletionSchema.parse(
-    calls.length ? { kind: "tools", text, calls } : { kind: "answer", text },
-  );
+  return {
+    completion: CompletionSchema.parse(
+      calls.length ? { kind: "tools", text, calls } : { kind: "answer", text },
+    ),
+  };
 }
 export function jsonArguments(raw: string): unknown {
   try {

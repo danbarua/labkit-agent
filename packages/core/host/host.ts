@@ -27,6 +27,11 @@ import {
 import { Actor, freeze } from "../fsm/fsm.ts";
 import { diagnostic } from "../logging/index.ts";
 import { effectiveToolResult, type Policy } from "../policy/policy.ts";
+import {
+  ContinuationSchema,
+  matchingContinuations,
+  type Continuation,
+} from "../providers/types.ts";
 import { copyRegistries, type ExecutionBindings } from "./ports.ts";
 
 export type HostToolOutcome = Readonly<{
@@ -37,6 +42,7 @@ export type HostToolOutcome = Readonly<{
 }>;
 export type ExecutionContext = Readonly<{
   prompt?: PromptInput;
+  continuations?: readonly Continuation[];
   allowedTools?: readonly string[];
   toolFailure?: Policy["toolFailure"];
   provider?: Pick<Policy, "provider" | "model" | "thinking" | "stream" | "maxOutputTokens">;
@@ -159,7 +165,18 @@ export function createHost(
                 },
               })),
             }),
-            parseOutput: PreparedModelSchema.parseAsync,
+            parseOutput: (raw) => {
+              const prepared = PreparedModelSchema.parse(raw);
+              const continuations = matchingContinuations(
+                prepared.messages,
+                context.continuations ?? [],
+                prepared.provider,
+              );
+              return PreparedModelSchema.parse({
+                ...prepared,
+                ...(continuations.length ? { continuations } : {}),
+              });
+            },
           },
           (result) => post(turnId, { type: "prepared", child: command.child, result }),
         );
@@ -180,9 +197,40 @@ export function createHost(
             input: command.request,
             parseInput: PreparedModelSchema.parseAsync,
             run: (request, signal) => bindings.complete(request, signal),
-            parseOutput: admitted.parseAsync,
+            parseOutput: async (raw) => {
+              const wrapped = raw !== null && typeof raw === "object" && "completion" in raw;
+              const output = wrapped
+                ? z
+                    .strictObject({
+                      completion: z.unknown(),
+                      continuationPayload: z.unknown().optional(),
+                    })
+                    .parse(raw)
+                : { completion: raw };
+              const completion = await admitted.parseAsync(output.completion);
+              const continuation =
+                output.continuationPayload === undefined
+                  ? undefined
+                  : ContinuationSchema.parse({
+                      provider: command.request.provider,
+                      owner: { turnId, generation: command.turn.generation },
+                      payload: output.continuationPayload,
+                    });
+              return { completion, continuation };
+            },
           },
-          (result) => post(turnId, { type: "model_settled", child: command.child, result }),
+          (result) =>
+            post(turnId, {
+              type: "model_settled",
+              child: command.child,
+              result:
+                result.kind === "succeeded"
+                  ? { kind: "succeeded", value: result.value.completion }
+                  : result,
+              ...(result.kind === "succeeded" && result.value.continuation
+                ? { continuation: result.value.continuation }
+                : {}),
+            }),
         );
         break;
       }

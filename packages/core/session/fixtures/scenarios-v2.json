@@ -124,5 +124,155 @@
       { "op": "input", "text": "Go" },
       { "op": "restore", "target": "restored" }
     ]
+  },
+  {
+    "format": 2,
+    "name": "thinking-continuation-branches-switch",
+    "providerResponses": true,
+    "policy": {
+      "provider": "anthropic-messages@2",
+      "thinking": "adaptive",
+      "maxOutputTokens": 2048
+    },
+    "completions": [
+      {
+        "role": "assistant",
+        "stop_reason": "tool_use",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "private",
+            "signature": "signature-0"
+          },
+          {
+            "type": "tool_use",
+            "id": "c0",
+            "name": "echo",
+            "input": {
+              "text": "result-0"
+            }
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "stop_reason": "tool_use",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "private",
+            "signature": "signature-1"
+          },
+          {
+            "type": "tool_use",
+            "id": "c1",
+            "name": "echo",
+            "input": {
+              "text": "result-1"
+            }
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "private",
+            "signature": "signature-2"
+          },
+          {
+            "type": "text",
+            "text": "Done"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "private",
+            "signature": "signature-3"
+          },
+          {
+            "type": "text",
+            "text": "Done"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "private",
+            "signature": "signature-4"
+          },
+          {
+            "type": "text",
+            "text": "Done"
+          }
+        ]
+      },
+      {
+        "candidates": [
+          {
+            "finishReason": "STOP",
+            "content": {
+              "role": "model",
+              "parts": [
+                {
+                  "text": "Google answer"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "steps": [
+      {
+        "op": "input",
+        "text": "Think and use tools twice"
+      },
+      {
+        "op": "restore",
+        "target": "restored"
+      },
+      {
+        "op": "fork",
+        "target": "fork"
+      },
+      {
+        "op": "input",
+        "session": "fork",
+        "text": "Continue inherited context"
+      },
+      {
+        "op": "compact",
+        "target": "compact",
+        "context": []
+      },
+      {
+        "op": "input",
+        "session": "compact",
+        "text": "Fresh context"
+      },
+      {
+        "op": "policy",
+        "patch": {
+          "provider": "google-generate@1",
+          "thinking": "off"
+        }
+      },
+      {
+        "op": "input",
+        "text": "Switch provider"
+      }
+    ]
   }
 ]

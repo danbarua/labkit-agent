@@ -53,7 +53,11 @@ function completedExchanges(
     output.push(
       calls.length
         ? { ...message, calls: ToolCallsSchema.parse(calls) }
-        : { role: "assistant", text: message.text },
+        : {
+            role: "assistant",
+            text: message.text,
+            ...(message.owner ? { owner: message.owner } : {}),
+          },
     );
     output.push(...results);
   }
@@ -97,13 +101,18 @@ export function projectConversationPrompt({
         return {
           role: "assistant",
           content: message.text,
+          ...(message.owner ? { owner: message.owner } : {}),
           tool_calls: message.calls.map((call) => ({
             id: call.id,
             type: "function",
             function: { name: call.name, arguments: JSON.stringify(call.args) },
           })),
         };
-      return { role: message.role, content: message.text };
+      return {
+        role: message.role,
+        content: message.text,
+        ...(message.role === "assistant" && message.owner ? { owner: message.owner } : {}),
+      };
     }),
   ];
 }

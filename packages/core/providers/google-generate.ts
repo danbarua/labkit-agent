@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { ToolCallSchema } from "../agent/types.ts";
 import { advertisements, completion, responseBody, systemAndMessages } from "./shared.ts";
-import { parseRequest, type CompletionProfile } from "./types.ts";
+import { parseRequest, validateThinking, type CompletionProfile } from "./types.ts";
 
 const part = z.union([
   z.strictObject({
@@ -21,8 +21,10 @@ const part = z.union([
 ]);
 export const googleGenerate: CompletionProfile = {
   id: "google-generate@1",
+  capabilities: { thinking: { mode: "off" }, stream: false },
   encode(raw) {
     const request = parseRequest(raw);
+    validateThinking(request.thinking, this.capabilities.thinking);
     const split = systemAndMessages(request);
     const contents: { role: string; parts: unknown[] }[] = [];
     const calls = new Map<string, string>();

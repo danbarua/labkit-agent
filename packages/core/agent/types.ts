@@ -8,6 +8,12 @@ export const ToolCallIdSchema = z.string().min(1).brand<"ToolCallId">();
 export const SessionIdSchema = z.string().uuid().brand<"SessionId">();
 export type SessionId = z.infer<typeof SessionIdSchema>;
 export const ActorIdSchema = z.string().min(1).brand<"ActorId">();
+export const CompletionOwnerSchema = z
+  .strictObject({
+    turnId: ActorIdSchema,
+    generation: z.number().int().nonnegative(),
+  })
+  .readonly();
 export const StepsSchema = z.number().int().nonnegative().brand<"Steps">();
 export const PositiveStepsSchema = StepsSchema.refine(
   (steps) => steps > 0,
@@ -51,6 +57,7 @@ export const MessageSchema = z
       role: z.literal("assistant"),
       text: z.string(),
       calls: ToolCallsSchema.optional(),
+      owner: CompletionOwnerSchema.optional(),
     }),
     z.strictObject({ role: z.literal("tool"), text: z.string(), callId: ToolCallIdSchema }),
   ])

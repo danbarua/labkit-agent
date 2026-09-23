@@ -2,6 +2,7 @@ import { format } from "prettier";
 import { z } from "zod";
 
 import { PolicyPatchSchema } from "../policy/policy.ts";
+import { anthropicMessagesV2, googleGenerate } from "../providers/index.ts";
 import { journalJSONL, journalMarkdown } from "./session-log.ts";
 import type { LegacySessionOptions, SessionOptions } from "./session-runtime.ts";
 import {
@@ -52,6 +53,7 @@ const StepSchema = z.object({
 });
 const ScenarioSchema = z.object({
   format: z.literal(2).optional(),
+  providerResponses: z.literal(true).optional(),
   policy: PolicyPatchSchema.optional(),
   name: z.string().regex(/^[a-z0-9-]+$/),
   allowance: z.number().int().nonnegative().default(4),
@@ -150,13 +152,36 @@ async function runScenario(scenario: Scenario, directory: string) {
           bindings: {
             tools: legacy.tools,
             id: legacy.id,
-            complete: (request, signal) =>
-              legacy.complete!({
-                ...request,
-                baseUrl: legacy.baseUrl,
-                apiKey: legacy.apiKey,
-                signal,
-              }),
+            ...(scenario.providerResponses
+              ? {
+                  providers: new Map(
+                    [anthropicMessagesV2, googleGenerate].map((profile) => [
+                      profile.id,
+                      {
+                        profile,
+                        transport: {
+                          baseUrl: "https://example.invalid",
+                          fetch: (async (_url, init) => {
+                            requests.push(JSON.parse(String(init?.body)));
+                            const response = scenario.completions[completionIndex++];
+                            if (response === undefined)
+                              throw new Error("Fixture provider script exhausted");
+                            return Response.json(response);
+                          }) as typeof fetch,
+                        },
+                      },
+                    ]),
+                  ),
+                }
+              : {
+                  complete: (request, signal) =>
+                    legacy.complete!({
+                      ...request,
+                      baseUrl: legacy.baseUrl,
+                      apiKey: legacy.apiKey,
+                      signal,
+                    }),
+                }),
           },
         }
       : legacy;

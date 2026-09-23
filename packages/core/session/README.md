@@ -196,3 +196,15 @@ bun test packages/core/host packages/core/policy packages/core/environment packa
 
 `--v2` compares `fixtures/expected-v2.json` and `fixtures/expected-v2.md`, emitting under
 `.session-artifacts/latest-v2`. Neither command without `--update` changes an approved baseline.
+
+## Journal v4 continuations
+
+Non-off thinking and completion continuation envelopes require v4. An envelope is committed
+with its successful model_settled event and keyed by completion owner `{ turnId, generation }`.
+Replay checks the owner against the active child and validates its provider and 64 KiB JSON
+character limit. Assistant owner metadata survives prompt projection; prepared envelopes must
+match the stored set for projected owners and the captured provider. Array order is irrelevant.
+Restore reconstructs this state without executing completions. Fork seeds retain envelopes for
+copied assistant messages; compaction seeds drop envelopes. Switching providers preserves stored
+envelopes but removes them from the next request to another provider. Indeterminate appends use
+the existing stable append-ID reconciliation, including the envelope bytes.

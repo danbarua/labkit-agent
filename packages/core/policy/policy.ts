@@ -8,7 +8,11 @@ import {
 } from "../agent/prompt.ts";
 import { StepsSchema, ToolNameSchema, type AgentMessage, type Result } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
-import { ProviderSettingsSchema } from "../providers/types.ts";
+import {
+  ProviderSettingsSchema,
+  validateThinking,
+  type ThinkingCapability,
+} from "../providers/types.ts";
 
 export const PolicyVersionSchema = z.number().int().nonnegative().brand<"PolicyVersion">();
 const PolicyObjectSchema = z.strictObject({
@@ -45,9 +49,11 @@ export type HandoffProjection = (
   input: PromptInput & { from: string; to: string },
 ) => readonly AgentMessage[];
 export type PolicyPack = Readonly<
-  Pick<Policy, "admission" | "bargeIn" | "toolFailure" | "project" | "handoff">
+  Pick<Policy, "admission" | "bargeIn" | "toolFailure" | "project" | "handoff"> &
+    Partial<Pick<Policy, "thinking">>
 >;
 export type PolicyResolvers = Readonly<{
+  providerCapabilities?: ReadonlyMap<string, ThinkingCapability>;
   providerIds?: ReadonlySet<string>;
   packs?: ReadonlyMap<string, PolicyPack>;
   projections: ReadonlyMap<string, Projection>;
@@ -98,6 +104,14 @@ export const builtinResolvers: PolicyResolvers = {
 };
 export function copyResolvers(resolvers: PolicyResolvers = builtinResolvers): PolicyResolvers {
   return {
+    providerCapabilities: resolvers.providerCapabilities
+      ? new Map(
+          [...resolvers.providerCapabilities].map(([id, value]) => [
+            id,
+            freeze(structuredClone(value)),
+          ]),
+        )
+      : undefined,
     providerIds: resolvers.providerIds ? new Set(resolvers.providerIds) : undefined,
     projections: new Map(resolvers.projections),
     handoffs: new Map(resolvers.handoffs),
@@ -139,6 +153,11 @@ export function validatePolicy(
     capabilities.agents.some(([, agent]) => agent.tools.includes("handoff_to"))
   )
     throw new Error("Reserved handoff tool name");
+  if (policy.provider && resolvers.providerCapabilities) {
+    const capability = resolvers.providerCapabilities.get(policy.provider);
+    if (!capability) throw new Error("Missing provider capabilities");
+    validateThinking(policy.thinking, capability);
+  }
   const agents = new Map(capabilities.agents);
   if (
     Object.keys(policy.tools).length !== agents.size ||

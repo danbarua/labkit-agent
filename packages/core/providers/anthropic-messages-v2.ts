@@ -2,9 +2,25 @@ import { z } from "zod";
 
 import { ToolCallSchema } from "../agent/types.ts";
 import { advertisements, completion, responseBody, systemAndMessages } from "./shared.ts";
-import { parseRequest, validateThinking, type CompletionProfile } from "./types.ts";
+import {
+  ContinuationPayloadSchema,
+  matchingContinuations,
+  parseRequest,
+  validateThinking,
+  type CompletionProfile,
+} from "./types.ts";
 
+const thinkingBlock = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("thinking"),
+    thinking: z.string(),
+    signature: z.string().min(1),
+  }),
+  z.strictObject({ type: z.literal("redacted_thinking"), data: z.string().min(1) }),
+]);
+const payloadSchema = z.strictObject({ blocks: z.array(thinkingBlock).min(1) });
 const block = z.discriminatedUnion("type", [
+  ...thinkingBlock.options,
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({
     type: z.literal("tool_use"),
@@ -13,12 +29,17 @@ const block = z.discriminatedUnion("type", [
     input: z.record(z.string(), z.json()),
   }),
 ]);
-export const anthropicMessages: CompletionProfile = {
-  id: "anthropic-messages@1",
-  capabilities: { thinking: { mode: "off" }, stream: false },
+export const anthropicMessagesV2: CompletionProfile = {
+  id: "anthropic-messages@2",
+  capabilities: { thinking: { mode: "adaptive" }, stream: false },
   encode(raw) {
     const request = parseRequest(raw);
     validateThinking(request.thinking, this.capabilities.thinking);
+    if (
+      request.thinking === "adaptive" &&
+      (request.maxOutputTokens === undefined || request.maxOutputTokens <= 1024)
+    )
+      throw new Error("Adaptive thinking requires maxOutputTokens > 1024");
     const split = systemAndMessages(request);
     const messages: { role: string; content: unknown[] }[] = [];
     for (const message of split.messages) {
@@ -27,6 +48,11 @@ export const anthropicMessages: CompletionProfile = {
         message.role === "tool"
           ? [{ type: "tool_result", tool_use_id: message.callId, content: message.text }]
           : [
+              ...matchingContinuations(
+                [message],
+                request.continuations ?? [],
+                "anthropic-messages@2",
+              ).flatMap((entry) => payloadSchema.parse(entry.payload).blocks),
               ...(message.text ? [{ type: "text", text: message.text }] : []),
               ...(message.role === "assistant"
                 ? (message.calls ?? []).map((call) => ({
@@ -38,8 +64,13 @@ export const anthropicMessages: CompletionProfile = {
                 : []),
             ];
       const previous = messages.at(-1);
-      if (previous?.role === role) previous.content.push(...content);
-      else messages.push({ role, content });
+      if (previous?.role === role) {
+        const merged = [...previous.content, ...content];
+        previous.content = [
+          ...merged.filter((part) => thinkingBlock.safeParse(part).success),
+          ...merged.filter((part) => !thinkingBlock.safeParse(part).success),
+        ];
+      } else messages.push({ role, content });
     }
     return {
       path: "/messages",
@@ -54,7 +85,10 @@ export const anthropicMessages: CompletionProfile = {
           ...tool,
           input_schema: parameters,
         })),
-        thinking: { type: "disabled" },
+        thinking:
+          request.thinking === "adaptive"
+            ? { type: "enabled", budget_tokens: 1024 }
+            : { type: "disabled" },
         stream: false,
         ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
       },
@@ -68,7 +102,7 @@ export const anthropicMessages: CompletionProfile = {
         content: z.array(block).min(1),
       })
       .parse(responseBody(res));
-    return completion(
+    const decoded = completion(
       body.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
       body.content.flatMap((part) =>
         part.type === "tool_use"
@@ -76,5 +110,14 @@ export const anthropicMessages: CompletionProfile = {
           : [],
       ),
     );
+    const blocks = body.content.filter(
+      (part) => part.type === "thinking" || part.type === "redacted_thinking",
+    );
+    return {
+      ...decoded,
+      ...(blocks.length
+        ? { continuationPayload: ContinuationPayloadSchema.parse({ blocks }) }
+        : {}),
+    };
   },
 };

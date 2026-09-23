@@ -94,8 +94,8 @@ origin and credentials and makes one HTTP attempt. There are no retries or SDK d
 Decode rejects malformed, truncated, refused, built-in-tool, and unsupported continuation
 data where exposed by the dialect. The host validates completion shape and permissions.
 
-The four built-in IDs are openai-chat@1, openai-responses@1, anthropic-messages@1, and
-google-generate@1. Responses sends the complete projected input with store:false and
+The built-in IDs are openai-chat@1, openai-responses@1, anthropic-messages@1,
+anthropic-messages@2, and google-generate@1. Responses sends the complete projected input with store:false and
 never sends previous_response_id or a server conversation reference. Anthropic combines
 tool results into user content blocks. Google emits function declarations using
 parametersJsonSchema and pairs function responses with call IDs and names. When Google
@@ -128,24 +128,34 @@ the old custom-server message.handoff field and retains the old HTTP error-body 
 New profiles use the reserved tool and status-only HTTP errors. Legacy callback connection
 fields exist only at the callback adapter boundary, not in prepared snapshots.
 
-## Thinking and streaming follow-up
+## Thinking and continuation envelopes
 
-This increment accepts only stream:false and thinking:"off" (or omitted settings).
-Anthropic explicitly disables thinking; Google sends thinkingBudget:0, which requires
-a model that supports disabling thinking. Responses reasoning items and Anthropic/Google
-thinking/signature blocks are rejected instead of losing replay-required information.
-For OpenAI profiles, explicit thinking:"off" maps to effort "none"; omission leaves that
-parameter absent for compatibility. It does not promise that every model disables thinking.
+Profiles declare `capabilities.thinking` and `capabilities.stream`. Policy validation and
+transport both reject unsupported thinking before HTTP. OpenAI Chat accepts low, medium,
+and high effort; explicit off maps to none and omission leaves the parameter absent.
+Responses supports off only and still rejects reasoning items. Google and Anthropic @1
+remain off-only. Streaming remains unsupported.
 
-Thinking support will require versioned assistant continuation metadata that survives
-admission, journaling, projection, fork, compaction, and restore. It is not a new turn phase.
-Do not enable thinking merely by deleting the response-validation checks.
+`anthropic-messages@2` accepts policy `thinking:"adaptive"`. Its frozen wire behavior targets
+models supporting manual extended thinking (for example Claude Sonnet 4.5):
+`thinking:{type:"enabled",budget_tokens:1024}` and an explicit `maxOutputTokens > 1024`.
+The off/omitted path sends disabled thinking and defaults max_tokens to 1024. Models requiring
+native adaptive thinking need a separate versioned profile; this profile never switches wire
+shapes based on model names. See [Anthropic extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking).
 
-Streaming can later add transport accumulation and an optional composition-root notification
-sink. Incremental text, thinking, and usage notifications will be non-authoritative; one
-assembled response still goes through decode and produces one settled completion.
-Cancellation and incomplete streams stay operation/transport concerns. Neither extension
-requires a second tool loop.
+Decode returns `{ completion, continuationPayload? }`; transport freezes and validates it.
+The host admits only completion and stamps the opaque payload with the profile ID and the
+active completion child's `{ turnId, generation }`. Signed thinking and redacted blocks are
+preserved, limited to 65,536 JSON characters, and inserted before text/tool-use blocks on
+that owner's assistant message. Unsigned or oversized payloads fail the completion.
+
+One model_settled event commits the completion and envelope in the same append. No sidecar,
+extra turn phase, server conversation ID, Responses replay, or Google signatures are involved.
+Session replay retains envelopes; preparation joins by owner and exact provider ID, filtering
+out messages removed by projection. Provider switches retain stored envelopes without injecting
+them into another profile. Forks copy envelopes for inherited messages; compaction drops them.
+Journal v4 is required for continuations and non-off thinking. Existing v1/v2/v3 bytes remain
+compatible. Prepared replay compares envelopes as a keyed set, independent of array order.
 
 ## Verification and sources
 

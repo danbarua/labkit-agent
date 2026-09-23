@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { ToolCallSchema } from "../agent/types.ts";
 import { advertisements, completion, jsonArguments, responseBody } from "./shared.ts";
-import { parseRequest, type CompletionProfile } from "./types.ts";
+import { parseRequest, validateThinking, type CompletionProfile } from "./types.ts";
 
 const response = z.object({
   choices: z
@@ -31,8 +31,13 @@ const response = z.object({
 });
 export const openaiChat: CompletionProfile = {
   id: "openai-chat@1",
+  capabilities: {
+    thinking: { mode: "effort", values: ["none", "low", "medium", "high"] },
+    stream: false,
+  },
   encode(raw) {
     const request = parseRequest(raw);
+    validateThinking(request.thinking, this.capabilities.thinking);
     const tools = advertisements(request);
     return {
       path: "/chat/completions",
@@ -62,7 +67,9 @@ export const openaiChat: CompletionProfile = {
         ...(request.maxOutputTokens === undefined
           ? {}
           : { max_completion_tokens: request.maxOutputTokens }),
-        ...(request.thinking === undefined ? {} : { reasoning_effort: "none" }),
+        ...(request.thinking === undefined
+          ? {}
+          : { reasoning_effort: request.thinking === "off" ? "none" : request.thinking }),
         // Omit stream for compatibility with minimal OpenAI-shaped local servers.
       },
     };

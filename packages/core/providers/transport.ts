@@ -5,9 +5,12 @@ import { CompletionSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import { HANDOFF_TOOL } from "./shared.ts";
 import {
+  ContinuationPayloadSchema,
   parseRequest,
   ProviderSettingsSchema,
+  validateThinking,
   type CompletionProfile,
+  type DecodedCompletion,
   type HttpRequest,
   type HttpResponse,
 } from "./types.ts";
@@ -72,14 +75,20 @@ export function canonicalRequest(prepared: PreparedModel) {
         return {
           role: "assistant",
           text: message.content,
+          ...(message.owner ? { owner: message.owner } : {}),
           calls: message.tool_calls.map((call) => ({
             id: call.id,
             name: call.function.name,
             args: JSON.parse(call.function.arguments),
           })),
         };
-      return { role: message.role, text: message.content };
+      return {
+        role: message.role,
+        text: message.content,
+        ...(message.role === "assistant" && message.owner ? { owner: message.owner } : {}),
+      };
     }),
+    continuations: prepared.continuations,
     tools: (prepared.tools ?? []).map((tool) => tool.function),
     temperature: prepared.temperature,
     thinking: prepared.thinking,
@@ -99,13 +108,25 @@ export function bindProviders(bindings: ProviderBindings) {
       if (id !== binding.profile.id) throw new Error("Provider binding identity mismatch");
       return [
         id,
-        { profile: Object.freeze({ ...binding.profile }), http: httpTransport(binding.transport) },
+        {
+          profile: Object.freeze({
+            ...binding.profile,
+            capabilities: freeze(structuredClone(binding.profile.capabilities)),
+          }),
+          http: httpTransport(binding.transport),
+        },
       ] as const;
     }),
   );
   return Object.freeze({
     ids: Object.freeze([...bound.keys()]),
-    complete: async (request: PreparedModel, signal: AbortSignal): Promise<unknown> => {
+    capabilities: new Map(
+      [...bound].map(([id, binding]) => [
+        id,
+        freeze(structuredClone(binding.profile.capabilities.thinking)),
+      ]),
+    ),
+    complete: async (request: PreparedModel, signal: AbortSignal): Promise<DecodedCompletion> => {
       if (!request.provider) throw new Error("Prepared request has no provider");
       ProviderSettingsSchema.parse({
         provider: request.provider,
@@ -115,14 +136,21 @@ export function bindProviders(bindings: ProviderBindings) {
       });
       const binding = bound.get(request.provider);
       if (!binding) throw new Error("Missing versioned provider binding");
+      validateThinking(request.thinking, binding.profile.capabilities.thinking);
       const input = canonicalRequest(request);
       const response = await binding.http(binding.profile.encode(input), signal);
-      const result = CompletionSchema.parse(binding.profile.decode(response));
+      const decoded = binding.profile.decode(response);
+      const result = CompletionSchema.parse(decoded.completion);
       if (result.kind === "handoff" && !input.successors.includes(result.agent))
         throw new Error("Unpermitted handoff target");
       if (result.kind === "tools" && result.calls.some((call) => call.name === HANDOFF_TOOL))
         throw new Error("Reserved handoff tool cannot be executed");
-      return freeze(result);
+      return freeze({
+        completion: result,
+        ...(decoded.continuationPayload === undefined
+          ? {}
+          : { continuationPayload: ContinuationPayloadSchema.parse(decoded.continuationPayload) }),
+      });
     },
   });
 }

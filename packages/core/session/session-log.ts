@@ -8,7 +8,13 @@ import {
 import { PreparedModelSchema } from "../agent/agent.ts";
 import { projectConversationPrompt } from "../agent/prompt.ts";
 import { completeResults } from "../agent/tool-batch.ts";
-import { ActorIdSchema, MessagesSchema, type TurnRecord } from "../agent/types.ts";
+import {
+  ActorIdSchema,
+  MessagesSchema,
+  type AgentMessage,
+  type TurnData,
+  type TurnRecord,
+} from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import {
   builtinResolvers,
@@ -21,6 +27,11 @@ import {
   type Policy,
   type PolicyResolvers,
 } from "../policy/policy.ts";
+import {
+  ContinuationSchema,
+  matchingContinuations,
+  type Continuation,
+} from "../providers/types.ts";
 import {
   INITIAL_REVISION,
   RevisionSchema,
@@ -45,6 +56,7 @@ import {
 export type ToolEntry = Extract<JournalBody, { kind: "tool" }>;
 export type JournalState = Readonly<{
   conversation: ConversationState;
+  continuations?: readonly Continuation[];
   policy?: Policy;
   pendingInputs?: readonly Readonly<{
     inputId: ReturnType<typeof ActorIdSchema.parse>;
@@ -78,6 +90,26 @@ export function seedConversation(
     validatePolicy(seed.policy, seed.configuration, resolvers).steps !== seed.allowance
   )
     throw new Error("Policy allowance mismatch");
+  if (seed.continuations) {
+    const owners = new Set<string>();
+    for (const entry of seed.continuations) {
+      if (resolvers.providerIds && !resolvers.providerIds.has(entry.provider))
+        throw new Error("Missing continuation provider binding");
+      const key = JSON.stringify(entry.owner);
+      if (
+        seed.origin.kind !== "fork" ||
+        owners.has(key) ||
+        ![...seed.context, ...seed.log.flatMap((record) => record.messages)].some(
+          (message) =>
+            message.role === "assistant" &&
+            message.owner?.turnId === entry.owner.turnId &&
+            message.owner.generation === entry.owner.generation,
+        )
+      )
+        throw new Error("Invalid inherited continuation owner");
+      owners.add(key);
+    }
+  }
   const initial = initialConversation(seed.agent, seed.allowance, seed.sessionId);
   const id = ActorIdSchema.parse(`${seed.sessionId}/turn/${seed.sequence}`);
   const conversation: ConversationState = {
@@ -105,6 +137,7 @@ export function seedConversation(
   });
   return freeze({
     conversation,
+    ...(seed.continuations?.length ? { continuations: seed.continuations } : {}),
     configuration: seed.configuration,
     ...(seed.policy ? { policy: seed.policy, pendingInputs: [] } : {}),
     systemInputs: seed.systemInputs,
@@ -129,6 +162,21 @@ export function toSeed(state: JournalState, conversation = state.conversation): 
     systemVersion: state.systemVersion,
     configuration: state.configuration,
     ...(state.policy ? { policy: state.policy } : {}),
+    ...(state.continuations?.length && conversation.origin.kind !== "compaction"
+      ? {
+          continuations: state.continuations.filter((entry) =>
+            [
+              ...conversation.context,
+              ...conversation.log.flatMap((record) => record.messages),
+            ].some(
+              (message) =>
+                message.role === "assistant" &&
+                message.owner?.turnId === entry.owner.turnId &&
+                message.owner.generation === entry.owner.generation,
+            ),
+          ),
+        }
+      : {}),
   });
 }
 /** Explicit DTO projection: connection settings and credentials never enter a journal. */
@@ -156,6 +204,7 @@ export function wireEvent(event: ConversationEvent): WireEvent {
       stream,
       maxOutputTokens,
       successors,
+      continuations,
     } = event.event.result.value;
     return WireEventSchema.parse({
       ...event,
@@ -168,6 +217,7 @@ export function wireEvent(event: ConversationEvent): WireEvent {
             messages,
             tools,
             temperature,
+            ...(continuations ? { continuations } : {}),
             ...(provider ? { provider, thinking, stream, maxOutputTokens, successors } : {}),
           },
         },
@@ -247,6 +297,30 @@ function domainEvent(
       const expected = state.policy
         ? projectPolicy(projectionInput, state.systemInputs, state.policy, resolvers)
         : projectSessionPrompt(projectionInput, state.systemInputs);
+      const expectedContinuations = matchingContinuations(
+        expected,
+        state.continuations ?? [],
+        captured.provider,
+      );
+      const canonical = (value: unknown): unknown =>
+        Array.isArray(value)
+          ? value.map(canonical)
+          : value !== null && typeof value === "object"
+            ? Object.fromEntries(
+                Object.entries(value)
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([key, item]) => [key, canonical(item)]),
+              )
+            : value;
+      const keyed = (entries: readonly Continuation[]) =>
+        entries
+          .map((entry) => [JSON.stringify(entry.owner), entry.provider, canonical(entry.payload)])
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+      if (
+        JSON.stringify(keyed(expectedContinuations)) !==
+        JSON.stringify(keyed(captured.continuations ?? []))
+      )
+        throw new Error("Prompt continuation mismatch");
       if (state.policy) {
         const allowed = state.policy.tools[activeAgent]!;
         const advertised = child.result.value.tools ?? [];
@@ -465,14 +539,82 @@ function reduce(
     (!state.policy.bargeIn || state.policy.admission === "queue-user")
   )
     throw new Error("Policy rejects barge-in");
-  const decision = decideConversation(
-    state.conversation,
-    domainEvent(state, input.event, resolvers),
-  );
+  const settled =
+    input.event.type === "child" && input.event.event.type === "model_settled"
+      ? input.event.event
+      : undefined;
+  const envelope = settled?.continuation;
+  if (envelope) {
+    ContinuationSchema.parse(envelope);
+    const active = state.conversation.turn;
+    if (
+      settled?.result.kind !== "succeeded" ||
+      active.status !== "awaiting_model" ||
+      envelope.owner.turnId !== state.conversation.turnId ||
+      envelope.owner.generation !== active.turn.generation ||
+      envelope.provider !== state.policy?.provider ||
+      state.continuations?.some(
+        (entry) =>
+          entry.owner.turnId === envelope.owner.turnId &&
+          entry.owner.generation === envelope.owner.generation,
+      )
+    )
+      throw new Error("Continuation owner/provider mismatch");
+  }
+  let decision = decideConversation(state.conversation, domainEvent(state, input.event, resolvers));
+  if (envelope) {
+    const c = decision.state;
+    const messages = c.turn.status === "idle" ? c.log.at(-1)!.messages : c.turn.turn.messages;
+    const target = messages.at(-1)!;
+    if (target.role !== "assistant") throw new Error("Completion did not produce an assistant");
+    const attachMessages = (items: readonly AgentMessage[]) =>
+      items.map((message) =>
+        message === target ? { ...message, owner: envelope.owner } : message,
+      );
+    const attachTurn = (turn: TurnData): TurnData => ({
+      ...turn,
+      messages: attachMessages(turn.messages),
+      view:
+        turn.view.kind === "handoff"
+          ? { ...turn.view, messages: attachMessages(turn.view.messages) }
+          : turn.view,
+    });
+    const attachLog = (log: readonly TurnRecord[]) =>
+      log.map((record) => ({ ...record, messages: attachMessages(record.messages) }));
+    // Preserve the owner's assistant in committed history and pending branch/handoff commands.
+    decision = {
+      state: {
+        ...c,
+        log: attachLog(c.log),
+        turn:
+          c.turn.status === "idle"
+            ? c.turn
+            : ({ ...c.turn, turn: attachTurn(c.turn.turn) } as typeof c.turn),
+      },
+      commands: decision.commands.map((effect): ConversationCommand =>
+        effect.type === "reply"
+          ? {
+              ...effect,
+              result: {
+                ...effect.result,
+                state: { ...effect.result.state, log: attachLog(effect.result.state.log) },
+              },
+            }
+          : {
+              ...effect,
+              command:
+                "turn" in effect.command
+                  ? { ...effect.command, turn: attachTurn(effect.command.turn) }
+                  : effect.command,
+            },
+      ),
+    };
+  }
   return {
     state: {
       ...state,
       conversation: decision.state,
+      ...(envelope ? { continuations: [...(state.continuations ?? []), envelope] } : {}),
       partial:
         (input.event.type === "child" && input.event.event.type === "batch_settled") ||
         decision.state.sequence !== state.conversation.sequence
@@ -582,6 +724,18 @@ function packageRecords(
     if (body.kind === "policy" && body.policy.provider) version = 3;
     if (body.kind === "created")
       version = body.seed.policy?.provider ? 3 : body.seed.policy ? 2 : 1;
+    const policy =
+      body.kind === "created" ? body.seed.policy : body.kind === "policy" ? body.policy : undefined;
+    if (
+      (policy?.thinking !== undefined && policy.thinking !== "off") ||
+      (body.kind === "created" && body.seed.continuations !== undefined) ||
+      (body.kind === "event" &&
+        body.event.type === "child" &&
+        body.event.event.type === "model_settled" &&
+        body.event.event.continuation) ||
+      previous.records.at(-1)?.version === 4
+    )
+      version = 4;
     return JournalRecordSchema.parse({
       version,
       sessionId: previous.conversation.sessionId,
@@ -638,7 +792,17 @@ export function replay(
       if (!state) {
         if (body.kind !== "created" || body.seed.sessionId !== record.sessionId)
           throw new Error("Missing creation record");
-        if (record.version !== (body.seed.policy?.provider ? 3 : body.seed.policy ? 2 : 1))
+        if (
+          record.version !==
+          (body.seed.continuations !== undefined ||
+          (body.seed.policy?.thinking !== undefined && body.seed.policy.thinking !== "off")
+            ? 4
+            : body.seed.policy?.provider
+              ? 3
+              : body.seed.policy
+                ? 2
+                : 1)
+        )
           throw new Error("Creation version does not match policy");
         state = seedConversation(body.seed, resolvers);
       } else {
@@ -646,11 +810,20 @@ export function replay(
           throw new Error("Invalid session identity");
         if (
           record.version !==
-          (state.policy?.provider || (body.kind === "policy" && body.policy.provider)
-            ? 3
-            : state.policy || body.kind === "upgrade"
-              ? 2
-              : 1)
+          (state.records.at(-1)?.version === 4 ||
+          (body.kind === "policy" &&
+            body.policy.thinking !== undefined &&
+            body.policy.thinking !== "off") ||
+          (body.kind === "event" &&
+            body.event.type === "child" &&
+            body.event.event.type === "model_settled" &&
+            body.event.event.continuation)
+            ? 4
+            : state.policy?.provider || (body.kind === "policy" && body.policy.provider)
+              ? 3
+              : state.policy || body.kind === "upgrade"
+                ? 2
+                : 1)
         )
           throw new Error("Invalid journal upgrade boundary");
         if (expectedTerminal) {

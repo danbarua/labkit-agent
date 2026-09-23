@@ -378,3 +378,103 @@ Outcome: {"kind":"completed"}
 
 - user: {"role":"user","text":"Go"}
 - assistant: {"role":"assistant","text":"Once"}
+
+---
+
+# thinking-continuation-branches-switch: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":1,"provider":"google-generate@1","thinking":"off","maxOutputTokens":2048,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Think and use tools twice"}
+- assistant: {"role":"assistant","text":"","calls":[{"id":"c0","name":"echo","args":{"text":"result-0"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"result-0","callId":"c0"}
+- assistant: {"role":"assistant","text":"","calls":[{"id":"c1","name":"echo","args":{"text":"result-1"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+- tool: {"role":"tool","text":"result-1","callId":"c1"}
+- assistant: {"role":"assistant","text":"Done","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":8}}
+
+## Turn 2: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Switch provider"}
+- assistant: {"role":"assistant","text":"Google answer"}
+
+# thinking-continuation-branches-switch: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"anthropic-messages@2","thinking":"adaptive","maxOutputTokens":2048,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Think and use tools twice"}
+- assistant: {"role":"assistant","text":"","calls":[{"id":"c0","name":"echo","args":{"text":"result-0"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"result-0","callId":"c0"}
+- assistant: {"role":"assistant","text":"","calls":[{"id":"c1","name":"echo","args":{"text":"result-1"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+- tool: {"role":"tool","text":"result-1","callId":"c1"}
+- assistant: {"role":"assistant","text":"Done","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":8}}
+
+# thinking-continuation-branches-switch: fork
+
+# Session 00000000-0000-4000-8000-000000000014
+
+Origin: {"kind":"fork","parent":"00000000-0000-4000-8000-000000000001","sequence":2}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"anthropic-messages@2","thinking":"adaptive","maxOutputTokens":2048,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Think and use tools twice"}
+- assistant: {"role":"assistant","text":"","calls":[{"id":"c0","name":"echo","args":{"text":"result-0"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"result-0","callId":"c0"}
+- assistant: {"role":"assistant","text":"","calls":[{"id":"c1","name":"echo","args":{"text":"result-1"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+- tool: {"role":"tool","text":"result-1","callId":"c1"}
+- assistant: {"role":"assistant","text":"Done","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":8}}
+
+## Turn 2: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Continue inherited context"}
+- assistant: {"role":"assistant","text":"Done","owner":{"turnId":"00000000-0000-4000-8000-000000000014/turn/2","generation":2}}
+
+# thinking-continuation-branches-switch: compact
+
+# Session 00000000-0000-4000-8000-000000000020
+
+Origin: {"kind":"compaction","parent":"00000000-0000-4000-8000-000000000001","sequence":2}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"anthropic-messages@2","thinking":"adaptive","maxOutputTokens":2048,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Fresh context"}
+- assistant: {"role":"assistant","text":"Done","owner":{"turnId":"00000000-0000-4000-8000-000000000020/turn/1","generation":2}}

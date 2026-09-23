@@ -16,7 +16,7 @@ import {
   TurnRecordSchema,
 } from "../agent/types.ts";
 import { PolicyPatchSchema, PolicySchema, PolicyVersionSchema } from "../policy/policy.ts";
-import { ProviderSettingsSchema } from "../providers/types.ts";
+import { ContinuationSchema, ProviderSettingsSchema } from "../providers/types.ts";
 import { AppendIdSchema, RevisionSchema } from "./persistence.ts";
 
 export const SystemInputsSchema = z.array(z.string()).readonly();
@@ -70,6 +70,7 @@ export const SeedSchema = z
     systemVersion: SystemVersionSchema,
     configuration: ConfigurationSchema,
     policy: PolicySchema.optional(),
+    continuations: z.array(ContinuationSchema).readonly().optional(),
   })
   .readonly();
 export type Seed = z.infer<typeof SeedSchema>;
@@ -79,6 +80,7 @@ export const PromptViewSchema = z
     successors: z.array(AgentIdSchema).readonly().optional(),
     model: z.string().min(1),
     messages: z.array(ChatMessageSchema).readonly(),
+    continuations: z.array(ContinuationSchema).readonly().optional(),
     tools: z.array(ChatToolSchema).readonly().optional(),
     temperature: z.number().finite().optional(),
   })
@@ -129,6 +131,7 @@ export const WireEventSchema = z.discriminatedUnion("type", [
       }),
       z.strictObject({
         type: z.literal("model_settled"),
+        continuation: ContinuationSchema.optional(),
         child: child("completion"),
         result: result(CompletionSchema.brand<"AdmittedCompletion">()),
       }),
@@ -201,7 +204,7 @@ export const BodySchema = z.discriminatedUnion("kind", [
 export type JournalBody = z.infer<typeof BodySchema>;
 export const JournalRecordSchema = z
   .strictObject({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
     sessionId: SessionIdSchema,
     revision: RevisionSchema,
     entryId: z.string().min(1),
@@ -223,6 +226,21 @@ export const JournalRecordSchema = z
       body.event.event.result.kind === "succeeded"
         ? body.event.event.result.value
         : undefined;
+    if (
+      record.version < 4 &&
+      ((policy?.thinking !== undefined && policy.thinking !== "off") ||
+        (body.kind === "policy" &&
+          body.patch.thinking !== undefined &&
+          body.patch.thinking !== "off") ||
+        (prompt?.thinking !== undefined && prompt.thinking !== "off") ||
+        prompt?.continuations !== undefined ||
+        (body.kind === "created" && body.seed.continuations !== undefined) ||
+        (body.kind === "event" &&
+          body.event.type === "child" &&
+          body.event.event.type === "model_settled" &&
+          body.event.event.continuation !== undefined))
+    )
+      return false;
     if (
       record.version < 3 &&
       (policy?.provider !== undefined ||

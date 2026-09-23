@@ -34,3 +34,10 @@ Malformed tool-call arguments in a custom projection are prompt-preparation fail
 tool failures. Malformed provider arguments are rejected during completion decoding. Neither case
 synthesizes a tool result for an unadmitted call; tool-error continuation applies to admitted tool
 operations, including their output-validation failures.
+
+Provider bindings supply `providerCapabilities` to policy validation. Thinking may be omitted,
+`off`, `low`, `medium`, `high`, or `adaptive`. Off/omitted is always legal; effort values require
+an effort capability listing that value, and adaptive requires an adaptive capability. Budget
+capabilities have no enabled policy value yet. Unsupported settings fail closed during policy
+validation and again before transport fetch. Policy packs may supply the same thinking field.
+Provider switches must explicitly patch thinking to a supported value when necessary.

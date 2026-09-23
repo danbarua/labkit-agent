@@ -302,3 +302,13 @@ flowchart LR
   transport -->|decode with selected profile| admission
   admission --> outcome --> gate
 ```
+
+## Completion continuation envelopes
+
+Provider thinking support crosses the host/session boundary through one model_settled event.
+Profiles decode an owner-free payload; the host admits the completion and stamps the payload
+with provider ID and completion-child turn/generation identity. The session commits both in the
+same journal append (v4), then releases dependent work. Turn decisions do not inspect envelopes.
+Session projection retains assistant owner metadata and attaches only matching provider envelopes.
+Replay validates the keyed set against projected owners. Fork seeds copy applicable envelopes;
+compaction drops them, and restore rebuilds them without calling a completion port.
