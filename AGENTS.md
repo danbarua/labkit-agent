@@ -11,7 +11,7 @@ experiments. It is a TypeScript ES module project with Bun workspaces under `pac
   The console currently calls the completion transport directly rather than exposing
   the full agent runtime.
 - `docs/core-runtime.md`: runtime architecture and validation guidance.
-  before treating them as requirements or outstanding defects.
+- `docs/agent-flow-diagrams.md`: core runtime flow diagrams.
 - `CLAUDE.md`: additional Bun conventions.
 
 ## Commands
