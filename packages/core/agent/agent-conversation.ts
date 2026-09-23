@@ -1,86 +1,88 @@
-import {
-	createAgentMachine,
-	type AgentContext,
-	type AgentEvent,
-	type AgentMachine,
-} from "./agent-fsm.ts";
+import { type AgentContext, type AgentEvent, type AgentMachine } from "./agent-fsm.ts";
+import type { CompletionStatus } from "./types.ts";
 
 export type ConversationEvent =
-	| { type: "user"; text: string }
-	| { type: "agent"; event: AgentEvent };
+  | { type: "user"; text: string }
+  | { type: "abort" }
+  | { type: "agent"; turnId: number; operationId?: number; event: AgentEvent };
 
 export type TurnRecord = Readonly<{
-	agent: AgentContext["agent"];
-	messages: ReadonlyArray<Readonly<AgentContext["messages"][number]>>;
-	completion: "completed" | "aborted";
+  agent: string;
+  messages: ReadonlyArray<Readonly<AgentContext["messages"][number]>>;
+  completion: CompletionStatus;
+  error?: string;
 }>;
 
-export type ConversationActions = {
-	createAgentMachine: (nextContext: AgentContext) => AgentMachine;
-};
-
 export type ConversationSnapshot = Readonly<{
-	child: AgentMachine;
-	agentContext: AgentContext;
-	log: ReadonlyArray<TurnRecord>;
+  turnId: number;
+  child: AgentMachine;
+  agentContext: AgentContext;
+  log: ReadonlyArray<TurnRecord>;
 }>;
 
 export type ConversationMachine = {
-	readonly snapshot: ConversationSnapshot;
-	fire(event: ConversationEvent): Promise<ConversationSnapshot>;
+  readonly snapshot: ConversationSnapshot;
+  fire(event: ConversationEvent): Promise<ConversationSnapshot>;
 };
 
-function copyContext(context: AgentContext): AgentContext {
-	return {
-		...context,
-		messages: context.messages.map((message) => ({ ...message })),
-		pendingTools: context.pendingTools.map((tool) => ({ ...tool })),
-		budget: { ...context.budget },
-	};
-}
+export type ConversationActions = {
+  createAgentMachine: (context: AgentContext, turnId: number) => AgentMachine;
+};
 
-function copyTurn(context: AgentContext, completion: TurnRecord["completion"]): TurnRecord {
-	const messages = context.messages.map((message) => Object.freeze({ ...message }));
-	return Object.freeze({
-		agent: context.agent,
-		messages: Object.freeze(messages),
-		completion,
-	});
+function freezeDeep<T>(value: T): T {
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value)) freezeDeep(item);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 export function createConversationMachine(
-	initialContext: AgentContext,
-	actions: Partial<ConversationActions> = {},
+  initialContext: AgentContext,
+  actions: ConversationActions,
 ): ConversationMachine {
-	const createChild = actions.createAgentMachine ?? ((nextContext: AgentContext) => createAgentMachine(nextContext));
-	let child = createChild(copyContext(initialContext));
-	let log: ReadonlyArray<TurnRecord> = Object.freeze([]);
+  const budget = { ...initialContext.budget };
+  let turnId = 1;
+  const fresh = (agent: string): AgentContext => ({
+    agent, messages: [], pendingTools: [], budget: { ...budget },
+  });
+  let child = actions.createAgentMachine({
+    ...fresh(initialContext.agent), messages: structuredClone(initialContext.messages),
+  }, turnId);
+  let log: ReadonlyArray<TurnRecord> = Object.freeze([]);
+  let tail: Promise<unknown> = Promise.resolve();
+  const snapshot = (): ConversationSnapshot => ({ turnId, child, agentContext: child.snapshot.ctx, log });
 
-	const snapshot = (): ConversationSnapshot => ({
-		child,
-		agentContext: child.snapshot.ctx,
-		log,
-	});
-
-	return {
-		get snapshot() {
-			return snapshot();
-		},
-		async fire(event) {
-			if (event.type === "user") {
-				await child.fire("user", event);
-			} else {
-				await child.fire(event.event.type, event.event);
-			}
-
-			if (child.snapshot.state === "done") {
-				const completion = event.type === "agent" && event.event.type === "abort" ? "aborted" : "completed";
-				const nextContext = copyContext(child.snapshot.ctx);
-				log = Object.freeze([...log, copyTurn(nextContext, completion)]);
-				child = createChild({ ...nextContext, messages: [], pendingTools: [] });
-			}
-
-			return snapshot();
-		},
-	};
+  async function dispatch(event: ConversationEvent) {
+    if (event.type === "agent") {
+      // Check at dequeue time, after any preceding cancellation or child replacement.
+      if (event.turnId !== turnId || (event.operationId !== undefined &&
+          event.operationId !== child.snapshot.ctx.operation?.id)) return snapshot();
+      const childEvent = event.event;
+      if (childEvent.type === "tool_done" &&
+          !child.snapshot.ctx.pendingTools.some(call => call.id === childEvent.id)) return snapshot();
+      await child.fire(event.event.type, event.event);
+    } else {
+      await child.fire(event.type, event);
+    }
+    if (child.snapshot.state === "done") {
+      const ctx = child.snapshot.ctx;
+      if (!ctx.completion) throw new Error("Terminal turn has no completion reason");
+      const record: TurnRecord = freezeDeep({
+        agent: ctx.agent, messages: structuredClone(ctx.messages), completion: ctx.completion,
+        ...(ctx.error === undefined ? {} : { error: ctx.error }),
+      });
+      log = Object.freeze([...log, record]);
+      child = actions.createAgentMachine(fresh(ctx.agent), ++turnId);
+    }
+    return snapshot();
+  }
+  return {
+    get snapshot() { return snapshot(); },
+    fire(event) {
+      const result = tail.then(() => dispatch(event));
+      tail = result.catch(() => {});
+      return result;
+    },
+  };
 }

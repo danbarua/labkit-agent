@@ -1,107 +1,68 @@
 import { configure, type Machine } from "../fsm";
+import { appendMessage, type AgentContext, type AgentEvent } from "./types.ts";
+export type { AgentContext, AgentEvent, AgentMessage, ToolCall } from "./types.ts";
 
-export type Phase = "idle" | "awaiting_model" | "executing_tools" | "handed_off" | "done";
-
+export type Phase = "idle" | "awaiting_model" | "executing_tools" | "done";
 export type AgentId = string;
-
-export type ToolCall = {
-  id: string;
-  name: string;
-  args: unknown;
-};
-
-export type AgentEvent =
-  | { type: "user"; text: string }
-  | { type: "model_delta"; text: string }
-  | { type: "model_done"; toolCalls?: ToolCall[]; handoff?: AgentId }
-  | { type: "tool_done"; id: string; result: unknown }
-  | { type: "abort" };
-
-export type AgentMessage = {
-  role: "system" | "user" | "assistant" | "tool";
-  text: string;
-};
-
-export type AgentContext = {
-  agent: AgentId;
-  messages: AgentMessage[];
-  inflight?: AbortController;
-  pendingTools: ToolCall[];
-  budget: { steps: number; usd: number };
-};
-
-export type AgentActions = {
-  startCompletion?: (ctx: AgentContext) => AgentContext | Promise<AgentContext>;
-  cancelHttp?: (ctx: AgentContext) => AgentContext | Promise<AgentContext>;
-  cancelTools?: (ctx: AgentContext) => AgentContext | Promise<AgentContext>;
-  swapAgent?: (ctx: AgentContext, agent: AgentId) => AgentContext | Promise<AgentContext>;
-};
-
 export type AgentMachine = Machine<Phase, AgentContext>;
 
-const unchanged = (ctx: AgentContext) => ctx;
+/** Actions launch work and return context; they never await completion or posted events. */
+export type AgentActions = {
+  startCompletion: (ctx: AgentContext) => AgentContext;
+  runTools: (ctx: AgentContext) => AgentContext;
+  cancel: (ctx: AgentContext) => AgentContext;
+  canHandoff: (agent: AgentId) => boolean;
+  canRunTools: (ctx: AgentContext) => boolean;
+  swapAgent: (ctx: AgentContext, agent: AgentId) => AgentContext;
+};
 
-export function createAgentMachine(ctx: AgentContext, actions: AgentActions = {}): AgentMachine {
-  const startCompletion = actions.startCompletion ?? unchanged;
-  const cancelHttp = actions.cancelHttp ?? unchanged;
-  const cancelTools = actions.cancelTools ?? unchanged;
-
-  const appendUser = (current: AgentContext, event: AgentEvent) => {
-    if (event.type !== "user") return current;
-    return {
-      ...current,
-      messages: [...current.messages, { role: "user" as const, text: event.text }],
-    };
-  };
-
-  const startForUser = async (current: AgentContext, event: AgentEvent) =>
-    startCompletion(appendUser(current, event));
-
-  const setPendingTools = (current: AgentContext, event: AgentEvent) =>
-    event.type === "model_done" ? { ...current, pendingTools: event.toolCalls ?? [] } : current;
-
-  const appendToolResult = (current: AgentContext, event: AgentEvent) => {
-    if (event.type !== "tool_done") return current;
-    return {
-      ...current,
-      messages: [...current.messages, { role: "tool" as const, text: String(event.result) }],
-      pendingTools: current.pendingTools.filter((tool) => tool.id !== event.id),
-    };
-  };
-
-  const allToolsSettled = (current: AgentContext, event: AgentEvent) =>
-    event.type === "tool_done" && current.pendingTools.some((tool) => tool.id === event.id) && current.pendingTools.length === 1;
+export function createAgentMachine(ctx: AgentContext, actions: AgentActions): AgentMachine {
+  const appendUser = (current: AgentContext, event: Extract<AgentEvent, { type: "user" }>) =>
+    appendMessage(current, { role: "user", text: event.text });
+  const appendAssistant = (current: AgentContext, event: Extract<AgentEvent, { type: "model_done" }>) =>
+    appendMessage(current, {
+      role: "assistant", text: event.text,
+      ...(event.toolCalls?.length ? { toolCalls: structuredClone(event.toolCalls) } : {}),
+    });
+  const pending = (current: AgentContext, event: Extract<AgentEvent, { type: "tool_done" }>) =>
+    current.pendingTools.some((call) => call.id === event.id);
+  const appendTool = (current: AgentContext, event: Extract<AgentEvent, { type: "tool_done" }>) => ({
+    ...appendMessage(current, { role: "tool", text: event.result, toolCallId: event.id }),
+    pendingTools: current.pendingTools.filter((call) => call.id !== event.id),
+  });
+  const aborted = (current: AgentContext): AgentContext => ({ ...current, completion: "aborted" });
+  const failed = (current: AgentContext, event: Extract<AgentEvent, { type: "failed" }>): AgentContext =>
+    ({ ...current, completion: "failed", error: event.error });
 
   return configure<AgentContext, Phase>("idle")
-    .state("idle", (state) =>
-      state
-        .on("user", "awaiting_model", undefined, startForUser)
-        .on("abort", "done"),
-    )
-    .state("awaiting_model", (state) =>
-      state
-        .on("abort", "done")
-        .on("user", "awaiting_model", undefined, async (current, event) =>
-          startCompletion(appendUser(await cancelHttp(current), event)),
-        )
-        .on("model_done", "executing_tools", (current, event) =>
-          event.type === "model_done" && Boolean(event.toolCalls?.length), setPendingTools)
-        .on("model_done", "handed_off", (current, event) =>
-          event.type === "model_done" && Boolean(event.handoff), async (current, event) =>
-           actions.swapAgent ? actions.swapAgent(current, (event as Extract<AgentEvent, { type: "model_done" }>).handoff!) : current,
-        )
-        .on("model_done", "done")
-        .onExit(cancelHttp),
-    )
-    .state("executing_tools", (state) =>
-      state
-        .on("abort", "done", undefined, cancelTools)
-        .on("tool_done", "awaiting_model", allToolsSettled, appendToolResult)
-        .on("tool_done", "executing_tools", undefined, appendToolResult),
-    )
-    .state("handed_off", (state) =>
-      state.on("model_done", "idle", undefined, startCompletion),
-    )
+    .state("idle", state => state
+      .on("user", "awaiting_model", appendUser)
+      .on("abort", "done", aborted))
+    .state("awaiting_model", state => state
+      .onEntry(actions.startCompletion)
+      .onExit(actions.cancel)
+      .on("user", "awaiting_model", appendUser)
+      .on("abort", "done", aborted)
+      .on("failed", "done", failed)
+      .on("exhausted", "done", current => ({ ...current, completion: "exhausted" }))
+      .onIf("model_done", "executing_tools", (current, event) =>
+        !event.handoff && Boolean(event.toolCalls?.length) &&
+        actions.canRunTools({ ...current, pendingTools: event.toolCalls }),
+        (current, event) => ({ ...appendAssistant(current, event), pendingTools: structuredClone(event.toolCalls) }))
+      .onIf("model_done", "awaiting_model", (_, event) =>
+        Boolean(event.handoff) && !event.toolCalls?.length && actions.canHandoff(event.handoff),
+        (current, event) => ({ ...actions.swapAgent(appendAssistant(current, event), event.handoff),
+          promptMessages: event.handoffMessages }))
+      .onIf("model_done", "done", (_, event) => !event.handoff && !event.toolCalls?.length,
+        (current, event) => ({ ...appendAssistant(current, event), completion: "completed" })))
+    .state("executing_tools", state => state
+      .onEntry(actions.runTools)
+      .onExit(actions.cancel)
+      .on("abort", "done", aborted)
+      .on("failed", "done", failed)
+      .onIf("tool_done", "awaiting_model", (current, event) =>
+        pending(current, event) && current.pendingTools.length === 1, appendTool)
+      .internal("tool_done", appendTool, pending))
     .final("done")
     .build(ctx);
 }

@@ -1,95 +1,68 @@
 import { expect, test } from "bun:test";
-import { createAgentMachine, type AgentContext, type AgentEvent } from "./agent-fsm.ts";
+import { createAgentMachine, type AgentEvent } from "./agent-fsm.ts";
+import { actions, context } from "./test-support.ts";
 
-function context(): AgentContext {
-	return {
-		agent: "writer",
-		messages: [],
-		pendingTools: [],
-		budget: { steps: 3, usd: 1 },
-	};
-}
+const fire = (machine: ReturnType<typeof createAgentMachine>, event: AgentEvent) => machine.fire(event.type, event);
 
-async function fire(machine: ReturnType<typeof createAgentMachine>, event: AgentEvent) {
-	return machine.fire(event.type, event);
-}
-
-test("builds the agent FSM with the fluent state-scoped builder", async () => {
-	let started = 0;
-	const machine = createAgentMachine(context(), {
-		startCompletion: (ctx) => {
-			started++;
-			return ctx;
-		},
-	});
-
-	await fire(machine, { type: "user", text: "hello" });
-
-	expect(machine.snapshot.state).toBe("awaiting_model");
-	expect(machine.snapshot.ctx.messages).toEqual([{ role: "user", text: "hello" }]);
-	expect(started).toBe(1);
+test("barge-in reenters thinking and cancels exactly once", async () => {
+  let started = 0, cancelled = 0;
+  const machine = createAgentMachine(context(), actions({
+    startCompletion: ctx => { started++; return ctx; },
+    cancel: ctx => { cancelled++; return ctx; },
+  }));
+  await fire(machine, { type: "user", text: "hello" });
+  await fire(machine, { type: "user", text: "actually" });
+  expect(started).toBe(2);
+  expect(cancelled).toBe(1);
+  expect(machine.snapshot.ctx.messages.map(message => message.text)).toEqual(["hello", "actually"]);
 });
 
-test("routes model tool calls and completes after all tools settle", async () => {
-	const machine = createAgentMachine(context());
-
-	await fire(machine, {
-		type: "user",
-		text: "hello",
-	});
-	await fire(machine, {
-		type: "model_done",
-		toolCalls: [{ id: "1", name: "search", args: {} }],
-	});
-
-	expect(machine.snapshot.state).toBe("executing_tools");
-	await fire(machine, { type: "tool_done", id: "1", result: "ok" });
-
-	expect(machine.snapshot.state).toBe("awaiting_model");
-	expect(machine.snapshot.ctx.pendingTools).toEqual([]);
+test("intermediate tool results do not rerun entry and the final result resumes thinking", async () => {
+  let started = 0, batches = 0;
+  const machine = createAgentMachine(context(), actions({
+    startCompletion: ctx => { started++; return ctx; },
+    runTools: ctx => { batches++; return ctx; },
+  }));
+  await fire(machine, { type: "user", text: "hello" });
+  await fire(machine, { type: "model_done", text: "searching", toolCalls: [
+    { id: "1", name: "search", args: {} }, { id: "2", name: "search", args: {} },
+  ] });
+  await fire(machine, { type: "tool_done", id: "2", result: "two" });
+  await expect(fire(machine, { type: "tool_done", id: "2", result: "duplicate" })).rejects.toThrow("No legal");
+  await expect(fire(machine, { type: "tool_done", id: "unknown", result: "bad" })).rejects.toThrow("No legal");
+  expect(batches).toBe(1);
+  expect(started).toBe(1);
+  await fire(machine, { type: "tool_done", id: "1", result: "one" });
+  expect(started).toBe(2);
+  expect(machine.snapshot.ctx.pendingTools).toEqual([]);
+  expect(machine.snapshot.ctx.messages.at(-1)).toEqual({ role: "tool", text: "one", toolCallId: "1" });
 });
 
-test("treats done as terminal while handoff remains resumable", async () => {
-	const machine = createAgentMachine(context());
-
-	await fire(machine, { type: "user", text: "hello" });
-	await fire(machine, { type: "model_done", handoff: "reviewer" });
-
-	expect(machine.snapshot.state).toBe("handed_off");
-	await fire(machine, { type: "model_done" });
-
-	expect(machine.snapshot.state).toBe("idle");
-
-	const done = createAgentMachine(context());
-	await fire(done, { type: "user", text: "hello" });
-	await fire(done, { type: "model_done" });
-
-	expect(done.snapshot.state).toBe("done");
-	expect(fire(done, {type: "user", text: "after completion"})).rejects.toThrow(
-        "final state",
-    );
+test("handoff changes the agent and starts its completion immediately", async () => {
+  const agents: string[] = [];
+  const machine = createAgentMachine(context(), actions({ startCompletion: ctx => { agents.push(ctx.agent); return ctx; } }));
+  await fire(machine, { type: "user", text: "hello" });
+  await fire(machine, { type: "model_done", text: "review this", handoff: "reviewer" });
+  expect(machine.snapshot.state).toBe("awaiting_model");
+  expect(agents).toEqual(["writer", "reviewer"]);
+  await fire(machine, { type: "model_done", text: "approved" });
+  expect(machine.snapshot.ctx.completion).toBe("completed");
+  await expect(fire(machine, { type: "user", text: "too late" })).rejects.toThrow("final state");
 });
 
-test("finishes active work when it is aborted", async () => {
-	const machine = createAgentMachine(context());
-
-	await fire(machine, { type: "user", text: "hello" });
-	await fire(machine, { type: "abort" });
-
-	expect(machine.snapshot.state).toBe("done");
+test("unknown handoffs and tools have no permit", async () => {
+  const machine = createAgentMachine(context(), actions());
+  await fire(machine, { type: "user", text: "hello" });
+  await expect(fire(machine, { type: "model_done", text: "", handoff: "unknown" })).rejects.toThrow("No legal");
+  await expect(fire(machine, { type: "model_done", text: "", toolCalls: [{ id: "1", name: "unknown", args: {} }] })).rejects.toThrow("No legal");
+  expect(machine.snapshot.state).toBe("awaiting_model");
 });
 
-test("cancels HTTP once when aborting model work", async () => {
-	let cancellations = 0;
-	const machine = createAgentMachine(context(), {
-		cancelHttp: (current) => {
-			cancellations++;
-			return current;
-		},
-	});
-
-	await fire(machine, { type: "user", text: "hello" });
-	await fire(machine, { type: "abort" });
-
-	expect(cancellations).toBe(1);
+test("abort records its reason and cancels work once", async () => {
+  let cancellations = 0;
+  const machine = createAgentMachine(context(), actions({ cancel: ctx => { cancellations++; return ctx; } }));
+  await fire(machine, { type: "user", text: "hello" });
+  await fire(machine, { type: "abort" });
+  expect(machine.snapshot.ctx.completion).toBe("aborted");
+  expect(cancellations).toBe(1);
 });

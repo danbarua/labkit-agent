@@ -2,6 +2,7 @@ export type Trigger = string;
 
 export type Transition<S extends string, C> = {
   to: S | ((ctx: C, event: any) => S);
+  internal?: boolean;
   guard?: (ctx: C, event: any) => boolean | Promise<boolean>;
   effect?: (ctx: C, event: any) => C | Promise<C>;
 };
@@ -15,6 +16,7 @@ export type Rule<S extends string, C> = {
 export type RuleSet<S extends string, C> = Record<S, Rule<S, C>>;
 
 export class Machine<S extends string, C> {
+  private tail: Promise<unknown> = Promise.resolve();
   constructor(
     private state: S,
     private ctx: C,
@@ -26,7 +28,21 @@ export class Machine<S extends string, C> {
     return { state: this.state, ctx: this.ctx };
   }
 
-  async fire<E>(trigger: Trigger, event?: E) {
+  /**
+   * Enqueues one transition. Lifecycle failures reject this call without rollback:
+   * exit/effect context updates remain committed; an entry failure also leaves the
+   * target state selected. In-place mutations and external side effects persist.
+   * Later queued events run against that partial snapshot. Actions should return
+   * new contexts and convert expected I/O failures into explicit domain events.
+   */
+  fire<E>(trigger: Trigger, event?: E) {
+    const result = this.tail.then(() => this.transition(trigger, event));
+    // A rejected event must not poison later events in the mailbox.
+    this.tail = result.catch(() => {});
+    return result;
+  }
+
+  private async transition<E>(trigger: Trigger, event?: E) {
     if (this.finalStates.has(this.state)) {
       throw new Error(`Cannot fire ${trigger} from final state ${this.state}`);
     }
@@ -38,6 +54,12 @@ export class Machine<S extends string, C> {
         typeof transition.to === "function"
           ? transition.to(this.ctx, event)
           : transition.to;
+      if (!this.table[next]) throw new Error(`Undeclared target state ${next}`);
+      if (transition.internal) {
+        this.ctx = (await transition.effect?.(this.ctx, event)) ?? this.ctx;
+        return this.snapshot;
+      }
+      // Commit each lifecycle step as it succeeds; see fire() for failure semantics.
       this.ctx = (await this.table[this.state].exit?.(this.ctx)) ?? this.ctx;
       this.ctx = (await transition.effect?.(this.ctx, event)) ?? this.ctx;
       this.state = next;
@@ -51,15 +73,21 @@ export class Machine<S extends string, C> {
 type StateName = string;
 
 export class StateBuilder<C, S extends string = StateName> {
-  constructor(private rule: Rule<S, C>) {}
+  constructor(private rule: Rule<S, C>, private name: S) {}
 
-  on(
-    trigger: Trigger,
-    target: S,
-    guard?: (ctx: C, event: any) => boolean | Promise<boolean>,
-    effect?: (ctx: C, event: any) => C | Promise<C>,
-  ) {
+  /** A self-target is explicit reentry: exit, effect, then entry. */
+  on(trigger: Trigger, target: S, effect?: Transition<S, C>["effect"]) {
+    this.addTransition(trigger, { to: target, effect });
+    return this;
+  }
+
+  onIf(trigger: Trigger, target: S, guard: NonNullable<Transition<S, C>["guard"]>, effect?: Transition<S, C>["effect"]) {
     this.addTransition(trigger, { to: target, guard, effect });
+    return this;
+  }
+
+  internal(trigger: Trigger, effect?: Transition<S, C>["effect"], guard?: Transition<S, C>["guard"]) {
+    this.addTransition(trigger, { to: () => this.name, internal: true, guard, effect });
     return this;
   }
 
@@ -123,7 +151,7 @@ export class MachineBuilder<C, S extends string = StateName> {
     const rule: Rule<S, C> = { on: {} };
     this.rules.set(name, rule);
     if (isFinal) this.finalStates.add(name);
-    configure?.(new StateBuilder(rule));
+    configure?.(new StateBuilder(rule, name));
   }
 
   private validate() {

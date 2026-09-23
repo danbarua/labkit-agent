@@ -39,11 +39,11 @@ test("sends a chat completion request and returns the assistant message", async 
     ],
     temperature: 0.2,
   });
-  expect(result).toBe("Hi there.");
+  expect(result).toEqual({ text: "Hi there." });
 });
 
 test("includes the API error body when the completion request fails", async () => {
-  expect(
+  await expect(
     createChatCompletion(
       {
         baseUrl: "http://localhost:8000/v1",
@@ -54,4 +54,27 @@ test("includes the API error body when the completion request fails", async () =
         new Response("model is unavailable", { status: 503 })) as typeof fetch
     )
   ).rejects.toThrow("OpenAI-compatible API request failed (503): model is unavailable");
+});
+
+test("passes the signal to fetch and decodes tool-only responses", async () => {
+  const controller = new AbortController();
+  let receivedSignal: AbortSignal | null | undefined;
+  const result = await createChatCompletion({
+    baseUrl: "http://localhost/v1", model: "local", messages: [], signal: controller.signal,
+  }, (async (_, init) => {
+    receivedSignal = init?.signal;
+    return Response.json({ choices: [{ message: { content: null, tool_calls: [
+      { id: "call-1", type: "function", function: { name: "search", arguments: '{"query":"science"}' } },
+    ] } }] });
+  }) as typeof fetch);
+  expect(receivedSignal).toBe(controller.signal);
+  expect(result).toEqual({ text: "", toolCalls: [{ id: "call-1", name: "search", args: { query: "science" } }] });
+});
+
+test("rejects malformed responses instead of completing an empty turn", async () => {
+  for (const response of ["invalid json", "null", JSON.stringify({ choices: [{ message: { content: null } }] }),
+    JSON.stringify({ choices: [{ message: { tool_calls: [{ id: "1", type: "function", function: { name: "search", arguments: "invalid" } }] } }] })]) {
+    await expect(createChatCompletion({ baseUrl: "http://localhost", model: "local", messages: [] },
+      (async (_input, _init) => new Response(response)) as typeof fetch)).rejects.toThrow();
+  }
 });
