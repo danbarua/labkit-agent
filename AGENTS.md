@@ -11,7 +11,6 @@ experiments. It is a TypeScript ES module project with Bun workspaces under `pac
   The console currently calls the completion transport directly rather than exposing
   the full agent runtime.
 - `docs/core-runtime.md`: runtime architecture and validation guidance.
-- `docs/code_review.md`: historical review; verify its claims against current code
   before treating them as requirements or outstanding defects.
 - `CLAUDE.md`: additional Bun conventions.
 
@@ -70,32 +69,3 @@ Documentation-only changes need a content/diff review, not an application test r
   organization. Avoid unrelated formatting changes.
 - Do not edit generated output in `dist/` or dependencies in `node_modules/`.
 
-<!-- jbcontext-instructions-start -->
-## Code discovery
-
-Use `jbcontext search` for semantic discovery in unfamiliar code before planning,
-editing, or exact text searches when the relevant implementation is unknown.
-Use one focused, descriptive natural-language query per search:
-
-```sh
-jbcontext search "Where are tool outcomes correlated with an active agent turn?"
-jbcontext search -p packages/core "How does the runtime cancel an active operation?"
-```
-
-The `-p` path must be relative to the project root. Once a relevant hit is found,
-read the files directly; use exact text search for known symbols and paths.
-
-For broader or multi-step discovery, delegate to a read-only `context_explorer`
-agent instead of repeating exploratory searches in the main thread. Give it the
-intent with no inherited conversation when supported. Ask it to run semantic
-queries, read promising files, and return concrete file/line references, inline
-snippets, and a confidence note. If an initial search is insufficient, delegate
-the follow-up exploration to this agent.
-
-While it works, inspect only already-known relevant files or the environment;
-do not duplicate its exploration. Call `wait_agent` after that independent work.
-If the tool has no named agent types, use a general subagent with this read-only role.
-
-If semantic search reports that the repository has no index, state that limitation
-and use file listing, direct reads, and exact searches as a fallback.
-<!-- jbcontext-instructions-end -->
