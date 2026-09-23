@@ -91,7 +91,7 @@ sequenceDiagram
   O->>P: append(records, expected revision)
   P-->>O: committed(receipt)
   O-->>S: appended(committed)
-  S->>S: validate receipt; durable := pending.next
+  S->>S: validate receipt(durable becomes pending.next)
   S->>H: dispatch deferred conversation commands
   S-->>C: accepted
 
@@ -146,7 +146,7 @@ sequenceDiagram
 
   T-->>H: tool outcome
   H->>S: submit tool(turnId, batchId, callId, result)
-  S->>S: validate identities; stage tool record
+  S->>S: validate identities(stage tool record)
   S->>P: append(tool record)
   P-->>S: committed
   S->>S: promote durable journal state
@@ -258,13 +258,13 @@ sequenceDiagram
   C->>P: fork or compact
   P->>PS: append parent request and boundary
   PS-->>P: committed
-  P->>P: commit parent transition; capture exact boundary
+  P->>P: commit parent transition(capture exact boundary)
   P->>CS: append initialize(childId, seed)
   CS-->>P: committed
   P->>R: build from committed child seed
   P-->>C: publish child session
 
-  Note over PS,CS: Separate streams; no cross-stream atomic transaction
+  Note over PS,CS: Separate streams(no cross-stream atomic transaction)
   Note over P,R: Child inherits neither live work nor pending inputs
 ```
 
@@ -272,22 +272,22 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-  host[Host completion operation actor]
-  port[Bound CompletionPort]
-  select{request.provider}
+  host["Host completion operation actor"]
+  port["Bound CompletionPort"]
+  select{"request.provider"}
 
-  subgraph profiles[Pure versioned profiles]
-    openai_chat[openai-chat@1]
-    openai_responses[openai-responses@1]
-    anthropic[anthropic-messages@1]
-    google[google-generate@1]
+  subgraph profiles["Pure versioned profiles"]
+    openai_chat["openai-chat@1"]
+    openai_responses["openai-responses@1"]
+    anthropic["anthropic-messages@1"]
+    google["google-generate@1"]
   end
 
-  transport[HTTP transport]
-  fetch[fetch: one attempt + AbortSignal]
-  admission[Host completion admission]
-  outcome[model_settled]
-  gate[Session journal append gate]
+  transport["HTTP transport"]
+  fetch["fetch: one attempt + AbortSignal"]
+  admission["Host completion admission"]
+  outcome["model_settled"]
+  gate["Session journal append gate"]
 
   host --> port --> select
   select --> openai_chat
