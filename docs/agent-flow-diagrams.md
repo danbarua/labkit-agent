@@ -162,14 +162,14 @@ sequenceDiagram
   B->>T1: spawn_tool / start
   B->>T2: spawn_tool / start
   T1-->>B: tool_settled(A, succeeded)
-  B->>B: retain result A; B remains pending
+  B->>B: retain result A; #B remains pending
   U->>C: abort
   C->>C: executing_tools → cancelling_tools
   C->>B: cancel
   B->>T2: cancel_tool / cancel
   B->>B: settle cancelled with result A
   B-->>C: batch_settled(cancelled, partial results)
-  C->>C: append result A; record aborted turn
+  C->>C: append result A; #record aborted turn
 ```
 
 ## Fork publication boundary
