@@ -1,3 +1,4 @@
+import { diagnostic } from "../logging/index.ts";
 import type { SessionId } from "../agent/types.ts";
 import { Actor, type Decision } from "../fsm/fsm.ts";
 import {
@@ -19,6 +20,7 @@ function operation<T>(
   ref: StorageRef,
   run: (signal: AbortSignal) => Promise<T>,
   failed: (error: unknown) => T,
+  sessionId: SessionId,
 ) {
   type Event = { type: "start" } | { type: "cancel" } | { type: "settled"; result: T };
   type Command = { type: "run" } | { type: "cancel" } | { type: "notify"; result: T };
@@ -47,7 +49,14 @@ function operation<T>(
     { status: "ready", ref, cancellationRequested: false },
     decide,
     (command) => {
-      if (command.type === "cancel") controller.abort();
+      if (command.type === "cancel") {
+        diagnostic("persistence", "debug", "storage.cancellation_requested", {
+          sessionId,
+          operation: ref.kind,
+          appendId: ref.kind === "append" ? ref.id : undefined,
+        });
+        controller.abort();
+      }
       if (command.type === "notify") resolve(command.result);
       if (command.type === "run")
         void Promise.resolve()
@@ -71,15 +80,55 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 export function appendOperation(port: SessionPersistence, request: AppendRequest) {
   return operation<AppendResult>(
     { kind: "append", id: request.appendId },
-    async (signal) => AppendResultSchema.parse(await port.append(request, signal)),
-    (error) => ({ kind: "indeterminate", message: message(error) }),
+    async (signal) => {
+      diagnostic("persistence", "debug", "append.started", {
+        sessionId: request.sessionId,
+        appendId: request.appendId,
+        expectedRevision: request.expectedRevision,
+        count: request.records.length,
+      });
+      const result = AppendResultSchema.parse(await port.append(request, signal));
+      diagnostic(
+        "persistence",
+        result.kind === "committed" ? "debug" : "warning",
+        "append.settled",
+        {
+          sessionId: request.sessionId,
+          appendId: request.appendId,
+          outcome: result.kind,
+          revision: result.kind === "committed" ? result.receipt.revision : undefined,
+        },
+      );
+      return result;
+    },
+    (error) => {
+      diagnostic("persistence", "warning", "append.indeterminate", {
+        sessionId: request.sessionId,
+        appendId: request.appendId,
+      });
+      return { kind: "indeterminate", message: message(error) };
+    },
+    request.sessionId,
   );
 }
 export function loadOperation(port: SessionPersistence, sessionId: SessionId) {
   return operation<LoadResult>(
     { kind: "load", id: sessionId },
-    async (signal) => LoadResultSchema.parse(await port.load(sessionId, signal)),
-    (error) => ({ kind: "failed", message: message(error) }),
+    async (signal) => {
+      diagnostic("persistence", "debug", "load.started", { sessionId });
+      const result = LoadResultSchema.parse(await port.load(sessionId, signal));
+      diagnostic("persistence", result.kind === "failed" ? "warning" : "debug", "load.settled", {
+        sessionId,
+        outcome: result.kind,
+        revision: result.kind === "loaded" ? result.revision : undefined,
+      });
+      return result;
+    },
+    (error) => {
+      diagnostic("persistence", "warning", "load.failed", { sessionId });
+      return { kind: "failed", message: message(error) };
+    },
+    sessionId,
   );
 }
 export async function loadSession(port: SessionPersistence, sessionId: SessionId) {

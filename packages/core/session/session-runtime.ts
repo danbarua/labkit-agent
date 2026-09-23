@@ -19,6 +19,7 @@ import {
   type TurnData,
   type TurnRecord,
 } from "../agent/types.ts";
+import { diagnostic } from "../logging/index.ts";
 import { Actor, freeze } from "../fsm/fsm.ts";
 import { createHost } from "../host/host.ts";
 import type { CompletionPort } from "../host/ports.ts";
@@ -171,6 +172,7 @@ function configure(raw: SessionOptions, restoring = false) {
     return built.runtime;
   }
   function build(initial: JournalState) {
+    const sessionId = initial.conversation.sessionId;
     if (initial.policy) validatePolicy(initial.policy, initial.configuration, resolvers);
     if (JSON.stringify(initial.configuration) !== JSON.stringify(configuration))
       throw new Error("Session configuration does not match persisted registry");
@@ -198,6 +200,17 @@ function configure(raw: SessionOptions, restoring = false) {
     });
     function send(event: SessionEvent) {
       return session.send(event).then((snapshot) => {
+        diagnostic(
+          "session",
+          snapshot.status === "failed" ? "error" : "debug",
+          "session.observed",
+          {
+            sessionId,
+            status: snapshot.status,
+            revision: snapshot.durable.revision,
+            operation: event.type,
+          },
+        );
         try {
           const result = observe?.(snapshot);
           if (result instanceof Promise) void result.catch(() => {});
@@ -218,6 +231,7 @@ function configure(raw: SessionOptions, restoring = false) {
       {
         agents,
         tools,
+        sessionId,
         baseUrl,
         apiKey,
         complete: (request, signal) => complete({ ...request, signal }),
@@ -289,6 +303,10 @@ function configure(raw: SessionOptions, restoring = false) {
       });
     }
     function stop() {
+      diagnostic("session", "info", "session.stopped", {
+        sessionId,
+        status: session.snapshot.status,
+      });
       host.close();
       for (const actor of storage) void actor.cancel();
       const result: TerminalResult =
@@ -317,6 +335,10 @@ function configure(raw: SessionOptions, restoring = false) {
           break;
         }
         case "load": {
+          diagnostic("session", "warning", "append.reconciling", {
+            sessionId,
+            appendId: command.appendId,
+          });
           const actor = loadOperation(port, initial.conversation.sessionId);
           storage.add(actor);
           void actor.start();
@@ -361,6 +383,17 @@ function configure(raw: SessionOptions, restoring = false) {
           afterCommit.get(command.submission.id)?.();
           afterCommit.delete(command.submission.id);
           if (terminal?.kind === "terminal") {
+            diagnostic(
+              "session",
+              terminal.record.outcome.kind === "failed" ? "warning" : "info",
+              "turn.settled",
+              {
+                sessionId,
+                turnId: terminal.turnId,
+                outcome: terminal.record.outcome.kind,
+                revision: command.durable.revision,
+              },
+            );
             for (const settle of waiters.get(terminal.turnId) ?? [])
               settle({ kind: "terminal", turnId: terminal.turnId, record: terminal.record });
             waiters.delete(terminal.turnId);
@@ -385,6 +418,16 @@ function configure(raw: SessionOptions, restoring = false) {
           break;
         }
         case "reply": {
+          diagnostic(
+            "session",
+            command.result.kind === "failed" ? "error" : "debug",
+            "submission.receipt",
+            {
+              sessionId,
+              requestId: command.id,
+              outcome: command.result.kind,
+            },
+          );
           receipts.get(command.id)?.(command.result);
           receipts.delete(command.id);
           afterCommit.delete(command.id);
@@ -442,6 +485,7 @@ function configure(raw: SessionOptions, restoring = false) {
     function dispatch(raw: unknown): EnvCommandHandle;
     function dispatch(raw: unknown): EnvCommandHandle {
       const event = EnvEventSchema.parse(raw);
+      diagnostic("session", "debug", "event.received", { sessionId, operation: event.type });
       if (event.type === "user") {
         let settle!: (result: TerminalResult) => void;
         const settled = new Promise<TerminalResult>((resolve) => {
@@ -564,6 +608,7 @@ export async function restoreSession(
 ): Promise<SessionRuntime> {
   const configured = configure(options, true);
   const sessionId = SessionIdSchema.parse(rawSessionId);
+  diagnostic("session", "info", "session.restoring", { sessionId });
   const loaded = await loadSession(options.persistence, sessionId);
   if (loaded.kind !== "loaded")
     throw new Error(loaded.kind === "not_found" ? "Session not found" : loaded.message);
@@ -574,6 +619,10 @@ export async function restoreSession(
     freeze({ ...journal, conversation: { ...journal.conversation, pending: [] } }),
   );
   if (journal.conversation.turn.status !== "idle" || journal.pendingInputs?.length) {
+    diagnostic("session", "warning", "session.recovering", {
+      sessionId,
+      turnId: journal.conversation.turnId,
+    });
     const receipt = await built.submit(
       {
         kind: "recovery",
@@ -589,5 +638,9 @@ export async function restoreSession(
       throw new Error(receipt.kind === "failed" ? receipt.message : `Recovery ${receipt.kind}`);
     }
   }
+  diagnostic("session", "info", "session.restored", {
+    sessionId,
+    revision: built.runtime.snapshot.durable.revision,
+  });
   return built.runtime;
 }

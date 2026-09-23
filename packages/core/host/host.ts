@@ -24,6 +24,7 @@ import {
   type Result,
   type ToolCall,
 } from "../agent/types.ts";
+import { diagnostic } from "../logging/index.ts";
 import { Actor, freeze } from "../fsm/fsm.ts";
 import { effectiveToolResult, type Policy } from "../policy/policy.ts";
 import { copyRegistries, type ExecutionBindings } from "./ports.ts";
@@ -50,7 +51,7 @@ type Child = {
 };
 /** An execution adapter, not another state machine or persistence gate. */
 export function createHost(
-  bindings: ExecutionBindings & { baseUrl?: string; apiKey?: string },
+  bindings: ExecutionBindings & { baseUrl?: string; apiKey?: string; sessionId?: string },
   sinks: {
     turn: (turnId: ActorId, event: TurnEvent) => void;
     tool: (outcome: HostToolOutcome) => void;
@@ -79,12 +80,33 @@ export function createHost(
   ) {
     const actor = createOperationActor(child, operation, (result) => {
       children.delete(child.id);
+      diagnostic(
+        child.kind === "completion" ? "provider" : "host",
+        result.kind === "failed" ? "warning" : "debug",
+        "child.settled",
+        {
+          sessionId: bindings.sessionId,
+          childId: child.id,
+          operation: child.kind,
+          outcome: result.kind,
+        },
+      );
       if (!closed) settled(result);
+    });
+    diagnostic(child.kind === "completion" ? "provider" : "host", "debug", "child.started", {
+      sessionId: bindings.sessionId,
+      childId: child.id,
+      operation: child.kind,
     });
     children.set(child.id, { ref: child, actor });
     void actor.start();
   }
   const cancel = (child: ChildRef) => {
+    diagnostic("host", "debug", "child.cancellation_requested", {
+      sessionId: bindings.sessionId,
+      childId: child.id,
+      operation: child.kind,
+    });
     void children.get(child.id)?.actor.cancel();
   };
   const dispatch = (
@@ -98,6 +120,12 @@ export function createHost(
       allowedTools: context.allowedTools?.slice(),
     });
     const { turnId, command } = effect;
+    diagnostic("host", "debug", "command.dispatched", {
+      sessionId: bindings.sessionId,
+      turnId,
+      childId: command.child.id,
+      operation: command.type,
+    });
     switch (command.type) {
       case "cancel":
         cancel(command.child);
@@ -257,6 +285,12 @@ export function createHost(
       const pending = pendingTools.get(key);
       if (!pending || pending.outcome !== outcome) return;
       pendingTools.delete(key);
+      diagnostic("host", "debug", "tool.released", {
+        sessionId: bindings.sessionId,
+        turnId: outcome.turnId,
+        batchId: outcome.batchId,
+        callId: outcome.callId,
+      });
       void pending.batch.send({
         type: "tool_settled",
         callId: outcome.callId,
@@ -267,6 +301,7 @@ export function createHost(
       });
     },
     close() {
+      diagnostic("host", "debug", "host.closed", { sessionId: bindings.sessionId });
       closed = true;
       for (const { actor } of children.values()) void actor.cancel();
       pendingTools.clear();

@@ -10,26 +10,26 @@ import { ref, SessionIdSchema, type Ref } from "./types.ts";
 // Typechecked by tsc, never executed: each directive must correspond to a compiler error.
 function invalidStates() {
   const turn = context();
-  // @ts-expect-error idle cannot carry active work
   const idle: TurnState = {
     status: "idle",
     id: turn.id,
     agent: turn.agent,
     steps: turn.steps,
+    // @ts-expect-error idle cannot carry active work
     child: ref("completion", "request"),
   };
-  // @ts-expect-error preparation requires a validated positive allowance
   const preparing: TurnState = {
     status: "preparing_model",
+    // @ts-expect-error preparation requires a validated positive allowance
     turn,
     child: ref("prepare", "request"),
   };
   // @ts-expect-error done requires an outcome
   const done: TurnState = { status: "done", record: { agent: turn.agent, messages: [] } };
-  // @ts-expect-error executing tools requires a batch reference
   const executing: TurnState = {
     status: "executing_tools",
     turn,
+    // @ts-expect-error executing tools requires a batch reference
     child: ref("completion", "request"),
   };
   // @ts-expect-error running batch must have a validated nonempty pending set
@@ -45,8 +45,8 @@ function invalidStates() {
   const sessionId = SessionIdSchema.parse(crypto.randomUUID());
   // @ts-expect-error compaction messages must pass the context constructor
   const compact: SessionRequest = { kind: "compact", id: turn.id, sessionId, context: [] };
-  // @ts-expect-error a published fork cannot carry an active child
   const activeFork: ForkSnapshot["turn"] = {
+    // @ts-expect-error a published fork cannot carry an active child
     status: "awaiting_model",
     turn,
     child: ref("completion", "request"),
