@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { ProviderSettingsSchema } from "../providers/types.ts";
 
 import { ChatMessageSchema, ChatToolSchema } from "../agent/agent.ts";
 import { parseSessionContext } from "../agent/prompt.ts";
@@ -17,6 +16,7 @@ import {
   TurnRecordSchema,
 } from "../agent/types.ts";
 import { PolicyPatchSchema, PolicySchema, PolicyVersionSchema } from "../policy/policy.ts";
+import { ProviderSettingsSchema } from "../providers/types.ts";
 import { AppendIdSchema, RevisionSchema } from "./persistence.ts";
 
 export const SystemInputsSchema = z.array(z.string()).readonly();

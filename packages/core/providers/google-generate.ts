@@ -1,7 +1,9 @@
 import { z } from "zod";
+
 import { ToolCallSchema } from "../agent/types.ts";
 import { advertisements, completion, responseBody, systemAndMessages } from "./shared.ts";
 import { parseRequest, type CompletionProfile } from "./types.ts";
+
 const part = z.union([
   z.strictObject({
     text: z.string(),

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { completeResults, toolBatchMachine, type BatchState } from "./tool-batch.ts";
 import { ref, ToolCallIdSchema, ToolCallsSchema } from "./types.ts";

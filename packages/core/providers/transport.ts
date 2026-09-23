@@ -1,7 +1,9 @@
 import { z } from "zod";
+
 import type { PreparedModel } from "../agent/agent.ts";
 import { CompletionSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
+import { HANDOFF_TOOL } from "./shared.ts";
 import {
   parseRequest,
   ProviderSettingsSchema,
@@ -9,7 +11,6 @@ import {
   type HttpRequest,
   type HttpResponse,
 } from "./types.ts";
-import { HANDOFF_TOOL } from "./shared.ts";
 
 /** Origin/version prefix and credentials are environment-owned, never journaled. */
 export type TransportBinding = Readonly<{

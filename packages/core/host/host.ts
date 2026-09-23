@@ -24,8 +24,8 @@ import {
   type Result,
   type ToolCall,
 } from "../agent/types.ts";
-import { diagnostic } from "../logging/index.ts";
 import { Actor, freeze } from "../fsm/fsm.ts";
+import { diagnostic } from "../logging/index.ts";
 import { effectiveToolResult, type Policy } from "../policy/policy.ts";
 import { copyRegistries, type ExecutionBindings } from "./ports.ts";
 

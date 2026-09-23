@@ -11,7 +11,7 @@ This example assumes an injected SessionPersistence and tool registry:
 
 ```ts
 import { createSession } from "../session/index.ts";
-import { openaiResponses, anthropicMessages } from "./index.ts";
+import { anthropicMessages, openaiResponses } from "./index.ts";
 
 const session = await createSession({
   persistence,

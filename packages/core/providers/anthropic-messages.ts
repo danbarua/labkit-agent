@@ -1,7 +1,9 @@
 import { z } from "zod";
+
 import { ToolCallSchema } from "../agent/types.ts";
 import { advertisements, completion, responseBody, systemAndMessages } from "./shared.ts";
 import { parseRequest, type CompletionProfile } from "./types.ts";
+
 const block = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({

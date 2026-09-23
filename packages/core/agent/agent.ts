@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { canonicalRequest, httpTransport } from "../providers/transport.ts";
 import { openaiChat } from "../providers/openai-chat.ts";
+import { canonicalRequest, httpTransport } from "../providers/transport.ts";
 import { ProviderSettingsSchema } from "../providers/types.ts";
 import { CompletionSchema, type Completion } from "./types.ts";
 

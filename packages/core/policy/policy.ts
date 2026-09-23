@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { ProviderSettingsSchema } from "../providers/types.ts";
 
 import { ChatMessageSchema, type ChatMessage } from "../agent/agent.ts";
 import {
@@ -9,6 +8,7 @@ import {
 } from "../agent/prompt.ts";
 import { StepsSchema, ToolNameSchema, type AgentMessage, type Result } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
+import { ProviderSettingsSchema } from "../providers/types.ts";
 
 export const PolicyVersionSchema = z.number().int().nonnegative().brand<"PolicyVersion">();
 const PolicyObjectSchema = z.strictObject({
