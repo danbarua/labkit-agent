@@ -29,11 +29,11 @@ Read from Air's logs on 2026-09-23 (`~/Library/Logs/JetBrains/Air/air.log`, thre
 this repository):
 
 - Air's `AcpAgentFrontend` records every tool call as it is reported: `ToolCall(toolCallId=exec-bf9b…,
-  title="Read file '…/docs/code_review.md'", kind=READ, status=IN_PROGRESS,
-  locations=[ToolCallLocation(path=…)], content=[])`, then the same id with `status=COMPLETED`.
+title="Read file '…/docs/code_review.md'", kind=READ, status=IN_PROGRESS,
+locations=[ToolCallLocation(path=…)], content=[])`, then the same id with `status=COMPLETED`.
 - A task is a UUID with `launch_type`, an `AgentId` (`codex` in the log) and a permission mode
   (`ManualApproval`). Its lifecycle in the log: `task.draftCreated` → tool calls → `task.stateChanged:
-  startState=Launching, endState=Finished, execTime=241548ms`.
+startState=Launching, endState=Finished, execTime=241548ms`.
 - "Files in scope" is not a record Air keeps. It is the union of `locations` reported by the task's tool
   calls. The agent reads the file itself, on the operating system; what passes through the host is the
   declaration.

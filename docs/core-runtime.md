@@ -4,16 +4,16 @@ The domain is a composition of typed state machines. A synchronous, pure decisio
 
 ## Ownership and state invariants
 
-| Component | Responsibility |
-| --- | --- |
-| `fsm/fsm.ts` | Typed transition tables, serialized mailboxes, immutable state and post-commit command dispatch |
-| `agent/agent-fsm.ts` | Turn decisions, typed active child references, required terminal outcomes |
-| `agent/agent-conversation.ts` | Atomic turn reduction, terminal recording and next-turn initialization |
-| `agent/operation-actor.ts` | Input validation, I/O execution, output validation, failure and cancellation |
-| `agent/tool-batch.ts` | Child tool commands, nonempty outstanding calls and correlated batch outcomes |
-| `agent/agent-runtime.ts` | Registries, adapter resources, spawning children and routing private outcomes |
-| `agent/agent.ts` | HTTP transport and provider-response decoding |
-| `agent/prompt.ts` | History validation and provider-message projection |
+| Component                     | Responsibility                                                                                  |
+| ----------------------------- | ----------------------------------------------------------------------------------------------- |
+| `fsm/fsm.ts`                  | Typed transition tables, serialized mailboxes, immutable state and post-commit command dispatch |
+| `agent/agent-fsm.ts`          | Turn decisions, typed active child references, required terminal outcomes                       |
+| `agent/agent-conversation.ts` | Atomic turn reduction, terminal recording and next-turn initialization                          |
+| `agent/operation-actor.ts`    | Input validation, I/O execution, output validation, failure and cancellation                    |
+| `agent/tool-batch.ts`         | Child tool commands, nonempty outstanding calls and correlated batch outcomes                   |
+| `agent/agent-runtime.ts`      | Registries, adapter resources, spawning children and routing private outcomes                   |
+| `agent/agent.ts`              | HTTP transport and provider-response decoding                                                   |
+| `agent/prompt.ts`             | History validation and provider-message projection                                              |
 
 `TurnState` is a discriminated union. Idle contains its identity, agent and step allowance. Preparation, completion, handoff and tool phases require their own distinct child-reference kinds. Done requires a complete turn record with an outcome. There is no independent phase/context pair or optional active operation.
 
@@ -35,6 +35,7 @@ Types enforce payload structure. Zod constructors and mailbox checks enforce fac
 
 ```ts
 import { z } from "zod";
+
 import { createAgentRuntime, defineTool } from "../packages/core/agent/agent-runtime.ts";
 
 const runtime = createAgentRuntime({
@@ -44,15 +45,20 @@ const runtime = createAgentRuntime({
     ["reviewer", { model: "local-model", systemPrompt: "Review the supplied draft." }],
   ]),
   tools: new Map([
-    ["lookup", defineTool({
-      description: "Look up a reference",
-      input: z.object({ id: z.string().min(1) }),
-      async run({ id }, signal) {
-        const response = await fetch(`https://example.com/references/${encodeURIComponent(id)}`, { signal });
-        if (!response.ok) throw new Error(`Lookup failed: ${response.status}`);
-        return response.json();
-      },
-    })],
+    [
+      "lookup",
+      defineTool({
+        description: "Look up a reference",
+        input: z.object({ id: z.string().min(1) }),
+        async run({ id }, signal) {
+          const response = await fetch(`https://example.com/references/${encodeURIComponent(id)}`, {
+            signal,
+          });
+          if (!response.ok) throw new Error(`Lookup failed: ${response.status}`);
+          return response.json();
+        },
+      }),
+    ],
   ]),
   baseUrl: "http://localhost:8000/v1",
   steps: 6,
