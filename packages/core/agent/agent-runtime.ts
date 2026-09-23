@@ -99,9 +99,7 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
       {
         agents,
         tools,
-        baseUrl,
-        apiKey,
-        complete: (request, signal) => complete({ ...request, signal }),
+        complete: (request, signal) => complete({ ...request, baseUrl, apiKey, signal }),
       },
       {
         turn: post,

@@ -30,7 +30,12 @@ export function testOptions(overrides: Partial<SessionOptions> = {}): SessionOpt
 }
 export function scriptedCompletion(outcomes: readonly unknown[], requests: unknown[] = []) {
   let index = 0;
-  return (request: Parameters<NonNullable<SessionOptions["complete"]>>[0]) => {
+  return (
+    request: Pick<
+      Parameters<NonNullable<SessionOptions["complete"]>>[0],
+      "model" | "messages" | "tools"
+    >,
+  ) => {
     requests.push(
       structuredClone({ model: request.model, messages: request.messages, tools: request.tools }),
     );

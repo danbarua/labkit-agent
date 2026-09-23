@@ -1,3 +1,4 @@
+import { format } from "prettier";
 import { z } from "zod";
 
 import { PolicyPatchSchema } from "../policy/policy.ts";
@@ -149,7 +150,13 @@ async function runScenario(scenario: Scenario, directory: string) {
           bindings: {
             tools: legacy.tools,
             id: legacy.id,
-            complete: (request, signal) => legacy.complete!({ ...request, signal }),
+            complete: (request, signal) =>
+              legacy.complete!({
+                ...request,
+                baseUrl: legacy.baseUrl,
+                apiKey: legacy.apiKey,
+                signal,
+              }),
           },
         }
       : legacy;
@@ -299,8 +306,13 @@ export async function runFixtures(
     transcripts.push(result.transcript);
     if (result.error) failures.push(`${scenario.name}: ${result.error}`);
   }
-  const structured = json(outputs);
-  const markdown = transcripts.join("\n---\n\n");
+  // Match the repository formatter without changing approved content or ordering.
+  const structured = await format(json(outputs), { parser: "json", printWidth: 100, tabWidth: 2 });
+  const markdown = await format(transcripts.join("\n---\n\n"), {
+    parser: "markdown",
+    printWidth: 100,
+    tabWidth: 2,
+  });
   await Bun.write(`${directory}/actual.json`, structured);
   await Bun.write(`${directory}/actual.md`, markdown);
   if (failures.length) throw new Error(failures.join("\n"));

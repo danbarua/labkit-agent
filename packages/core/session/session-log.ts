@@ -146,12 +146,31 @@ export function wireEvent(event: ConversationEvent): WireEvent {
     event.event.type === "prepared" &&
     event.event.result.kind === "succeeded"
   ) {
-    const { model, messages, tools, temperature } = event.event.result.value;
+    const {
+      model,
+      messages,
+      tools,
+      temperature,
+      provider,
+      thinking,
+      stream,
+      maxOutputTokens,
+      successors,
+    } = event.event.result.value;
     return WireEventSchema.parse({
       ...event,
       event: {
         ...event.event,
-        result: { kind: "succeeded", value: { model, messages, tools, temperature } },
+        result: {
+          kind: "succeeded",
+          value: {
+            model,
+            messages,
+            tools,
+            temperature,
+            ...(provider ? { provider, thinking, stream, maxOutputTokens, successors } : {}),
+          },
+        },
       },
     });
   }
@@ -197,8 +216,33 @@ function domainEvent(
       if (c.turn.status !== "preparing_model") throw new Error("Prompt outside preparation phase");
       const activeAgent = c.turn.turn.agent;
       const agent = state.configuration.agents.find(([id]) => id === activeAgent)?.[1];
-      if (!agent || child.result.value.model !== agent.model)
+      if (!agent || child.result.value.model !== (state.policy?.model ?? agent.model))
         throw new Error("Prompt model mismatch");
+      const selection = state.policy?.provider
+        ? {
+            provider: state.policy.provider,
+            thinking: state.policy.thinking,
+            stream: state.policy.stream,
+            maxOutputTokens: state.policy.maxOutputTokens,
+            successors: agent.successors ?? state.configuration.agents.map(([id]) => id),
+          }
+        : {};
+      const captured = child.result.value;
+      if (
+        JSON.stringify(selection) !==
+        JSON.stringify(
+          captured.provider
+            ? {
+                provider: captured.provider,
+                thinking: captured.thinking,
+                stream: captured.stream,
+                maxOutputTokens: captured.maxOutputTokens,
+                successors: captured.successors,
+              }
+            : {},
+        )
+      )
+        throw new Error("Prompt provider selection mismatch");
       const projectionInput = { context: c.context, log: c.log, turn: c.turn.turn, agent };
       const expected = state.policy
         ? projectPolicy(projectionInput, state.systemInputs, state.policy, resolvers)
@@ -232,7 +276,6 @@ function domainEvent(
                 kind: "succeeded",
                 value: PreparedModelSchema.parse({
                   ...child.result.value,
-                  baseUrl: "https://journal.invalid",
                 }),
               }
             : child.result,
@@ -246,7 +289,7 @@ function domainEvent(
     const agent = state.configuration.agents.find(([id]) => id === activeAgent)?.[1];
     if (
       result.kind === "handoff" &&
-      !state.configuration.agents.some(([id]) => id === result.agent)
+      !(agent?.successors ?? state.configuration.agents.map(([id]) => id)).includes(result.agent)
     )
       throw new Error("Unknown handoff agent");
     if (
@@ -533,16 +576,21 @@ function packageRecords(
   appendId: AppendId,
   commands: readonly ConversationCommand[] = [],
 ) {
-  const records = bodies.map((body, index) =>
-    JournalRecordSchema.parse({
-      version: next.policy ? 2 : 1,
+  let version = previous.policy?.provider ? 3 : previous.policy ? 2 : 1;
+  const records = bodies.map((body, index) => {
+    if (body.kind === "upgrade") version = 2;
+    if (body.kind === "policy" && body.policy.provider) version = 3;
+    if (body.kind === "created")
+      version = body.seed.policy?.provider ? 3 : body.seed.policy ? 2 : 1;
+    return JournalRecordSchema.parse({
+      version,
       sessionId: previous.conversation.sessionId,
       revision: previous.revision + index + 1,
       entryId: `${appendId}/${index}`,
       appendId,
       body,
-    }),
-  );
+    });
+  });
   const revision = RevisionSchema.parse(previous.revision + records.length);
   return freeze({
     state: { ...next, revision, records: [...previous.records, ...records] },
@@ -590,13 +638,20 @@ export function replay(
       if (!state) {
         if (body.kind !== "created" || body.seed.sessionId !== record.sessionId)
           throw new Error("Missing creation record");
-        if (record.version === 2 && !body.seed.policy)
-          throw new Error("Version two creation requires policy");
+        if (record.version !== (body.seed.policy?.provider ? 3 : body.seed.policy ? 2 : 1))
+          throw new Error("Creation version does not match policy");
         state = seedConversation(body.seed, resolvers);
       } else {
         if (record.sessionId !== state.conversation.sessionId || body.kind === "created")
           throw new Error("Invalid session identity");
-        if (record.version !== (state.policy || body.kind === "upgrade" ? 2 : 1))
+        if (
+          record.version !==
+          (state.policy?.provider || (body.kind === "policy" && body.policy.provider)
+            ? 3
+            : state.policy || body.kind === "upgrade"
+              ? 2
+              : 1)
+        )
           throw new Error("Invalid journal upgrade boundary");
         if (expectedTerminal) {
           if (

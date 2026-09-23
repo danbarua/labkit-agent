@@ -7,6 +7,7 @@ type State =
 type Event =
   { type: "start" } | { type: "add" } | { type: "bad" } | { type: "failed"; error: string };
 type Command = { type: "work" };
+
 const decide = defineMachine<State, Event, Command>({
   idle: { start: () => ({ state: { status: "running", value: 0 }, commands: [{ type: "work" }] }) },
   running: {
@@ -18,6 +19,7 @@ const decide = defineMachine<State, Event, Command>({
   },
   failed: {},
 });
+
 test("commits a complete frozen state before dispatching commands or reentrant events", async () => {
   const seen: State[] = [];
   const actor = new Actor<State, Event, Command>(
@@ -36,6 +38,7 @@ test("commits a complete frozen state before dispatching commands or reentrant e
   expect(seen).toEqual([{ status: "running", value: 0 }]);
   expect(actor.snapshot).toEqual({ status: "running", value: 2 });
 });
+
 test("a rejected decision preserves state and dispatches nothing; the mailbox recovers", async () => {
   let commands = 0;
   const actor = new Actor<State, Event, Command>(
@@ -55,6 +58,7 @@ test("a rejected decision preserves state and dispatches nothing; the mailbox re
   await Promise.all([actor.send({ type: "add" }), actor.send({ type: "add" })]);
   expect(actor.snapshot).toEqual({ status: "running", value: 2 });
 });
+
 test("command failure is another event and does not undo the committed transition", async () => {
   let observed: State | undefined;
   const actor = new Actor<State, Event, Command>(

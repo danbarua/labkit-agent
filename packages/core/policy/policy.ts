@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProviderSettingsSchema } from "../providers/types.ts";
 
 import { ChatMessageSchema, type ChatMessage } from "../agent/agent.ts";
 import {
@@ -13,6 +14,8 @@ export const PolicyVersionSchema = z.number().int().nonnegative().brand<"PolicyV
 const PolicyObjectSchema = z.strictObject({
   id: z.string().regex(/^.+@\d+$/),
   version: PolicyVersionSchema,
+  ...ProviderSettingsSchema.unwrap().partial().shape,
+  model: z.string().min(1).optional(),
   steps: StepsSchema,
   admission: z.enum(["reject-during-tools", "abort-tools-on-user", "queue-user"]),
   bargeIn: z.boolean(),
@@ -26,7 +29,13 @@ export const PolicySchema = PolicyObjectSchema.refine(
   "queue-user requires bargeIn=false",
 ).readonly();
 export type Policy = z.infer<typeof PolicySchema>;
-export const PolicyPatchSchema = PolicyObjectSchema.omit({ version: true }).partial().strict();
+export const PolicyPatchSchema = PolicyObjectSchema.omit({ version: true })
+  .partial()
+  .strict()
+  .refine(
+    (patch) => Object.values(patch).every((value) => value !== undefined),
+    "Omit undefined policy fields",
+  );
 export type PolicyPatch = z.input<typeof PolicyPatchSchema>;
 export type Capabilities = Readonly<{
   agents: readonly (readonly [string, Readonly<{ tools: readonly string[] }>])[];
@@ -39,6 +48,7 @@ export type PolicyPack = Readonly<
   Pick<Policy, "admission" | "bargeIn" | "toolFailure" | "project" | "handoff">
 >;
 export type PolicyResolvers = Readonly<{
+  providerIds?: ReadonlySet<string>;
   packs?: ReadonlyMap<string, PolicyPack>;
   projections: ReadonlyMap<string, Projection>;
   handoffs: ReadonlyMap<string, HandoffProjection>;
@@ -88,6 +98,7 @@ export const builtinResolvers: PolicyResolvers = {
 };
 export function copyResolvers(resolvers: PolicyResolvers = builtinResolvers): PolicyResolvers {
   return {
+    providerIds: resolvers.providerIds ? new Set(resolvers.providerIds) : undefined,
     projections: new Map(resolvers.projections),
     handoffs: new Map(resolvers.handoffs),
     packs: new Map(
@@ -114,6 +125,20 @@ export function validatePolicy(
   resolvers: PolicyResolvers = builtinResolvers,
 ): Policy {
   const policy = PolicySchema.parse(raw);
+  if (policy.provider && !resolvers.providerIds?.has(policy.provider))
+    throw new Error("Missing versioned provider binding");
+  if (
+    !policy.provider &&
+    [policy.model, policy.thinking, policy.stream, policy.maxOutputTokens].some(
+      (value) => value !== undefined,
+    )
+  )
+    throw new Error("Provider settings require a provider id");
+  if (
+    policy.provider &&
+    capabilities.agents.some(([, agent]) => agent.tools.includes("handoff_to"))
+  )
+    throw new Error("Reserved handoff tool name");
   const agents = new Map(capabilities.agents);
   if (
     Object.keys(policy.tools).length !== agents.size ||

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProviderSettingsSchema } from "../providers/types.ts";
 
 import { ChatMessageSchema, ChatToolSchema } from "../agent/agent.ts";
 import { parseSessionContext } from "../agent/prompt.ts";
@@ -23,6 +24,7 @@ export const SystemVersionSchema = z.number().int().nonnegative().brand<"SystemV
 export const AgentDefinitionSchema = z
   .strictObject({
     model: z.string().min(1),
+    successors: z.array(AgentIdSchema).readonly().optional(),
     systemPrompt: z.string().optional(),
     tools: z.array(ToolNameSchema).default([]).readonly(),
   })
@@ -41,6 +43,7 @@ export const ConfigurationSchema = z
       configuration.agents.every(
         ([, agent]) =>
           new Set(agent.tools).size === agent.tools.length &&
+          (agent.successors ?? []).every((id) => agents.has(id)) &&
           agent.tools.every((name) => tools.has(name)),
       )
     );
@@ -72,6 +75,8 @@ export const SeedSchema = z
 export type Seed = z.infer<typeof SeedSchema>;
 export const PromptViewSchema = z
   .strictObject({
+    ...ProviderSettingsSchema.unwrap().partial().shape,
+    successors: z.array(AgentIdSchema).readonly().optional(),
     model: z.string().min(1),
     messages: z.array(ChatMessageSchema).readonly(),
     tools: z.array(ChatToolSchema).readonly().optional(),
@@ -196,7 +201,7 @@ export const BodySchema = z.discriminatedUnion("kind", [
 export type JournalBody = z.infer<typeof BodySchema>;
 export const JournalRecordSchema = z
   .strictObject({
-    version: z.union([z.literal(1), z.literal(2)]),
+    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
     sessionId: SessionIdSchema,
     revision: RevisionSchema,
     entryId: z.string().min(1),
@@ -205,6 +210,33 @@ export const JournalRecordSchema = z
   })
   .refine((record) => {
     const body = record.body;
+    const policy =
+      body.kind === "created"
+        ? body.seed.policy
+        : body.kind === "policy" || body.kind === "upgrade"
+          ? body.policy
+          : undefined;
+    const prompt =
+      body.kind === "event" &&
+      body.event.type === "child" &&
+      body.event.event.type === "prepared" &&
+      body.event.event.result.kind === "succeeded"
+        ? body.event.event.result.value
+        : undefined;
+    if (
+      record.version < 3 &&
+      (policy?.provider !== undefined ||
+        policy?.model !== undefined ||
+        policy?.thinking !== undefined ||
+        policy?.stream !== undefined ||
+        policy?.maxOutputTokens !== undefined ||
+        prompt?.provider !== undefined ||
+        prompt?.thinking !== undefined ||
+        prompt?.stream !== undefined ||
+        prompt?.maxOutputTokens !== undefined ||
+        prompt?.successors !== undefined)
+    )
+      return false;
     if (record.version === 1)
       return (
         !["upgrade", "policy", "queued", "dequeued", "input_cancelled"].includes(body.kind) &&

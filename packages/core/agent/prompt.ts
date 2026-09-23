@@ -11,7 +11,12 @@ export type PromptInput = Readonly<{
   context?: readonly AgentMessage[];
   log: readonly TurnRecord[];
   turn: TurnData;
-  agent: Readonly<{ model: string; systemPrompt?: string; tools: readonly string[] }>;
+  agent: Readonly<{
+    successors?: readonly string[];
+    model: string;
+    systemPrompt?: string;
+    tools: readonly string[];
+  }>;
 }>;
 
 function completedExchanges(

@@ -19,7 +19,6 @@ function awaiting() {
     result: {
       kind: "succeeded",
       value: PreparedModelSchema.parse({
-        baseUrl: "http://localhost",
         model: "writer",
         messages: [],
       }),

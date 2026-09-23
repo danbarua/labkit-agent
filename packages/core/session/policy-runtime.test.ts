@@ -20,7 +20,8 @@ export function boundOptions(): BoundSessionOptions {
     bindings: {
       tools: legacy.tools,
       id: legacy.id,
-      complete: (request, signal) => legacy.complete!({ ...request, signal }),
+      complete: (request, signal) =>
+        legacy.complete!({ ...request, baseUrl: legacy.baseUrl, apiKey: legacy.apiKey, signal }),
     },
   };
 }

@@ -13,7 +13,6 @@ export function completionContract(
 ) {
   describe(name, () => {
     const request = PreparedModelSchema.parse({
-      baseUrl: "https://journal.invalid",
       model: "test",
       messages: [{ role: "user", content: "hello" }],
     });

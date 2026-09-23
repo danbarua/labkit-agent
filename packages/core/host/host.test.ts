@@ -74,7 +74,6 @@ test("transport binding supplies credentials outside the serializable request", 
     }) as typeof fetch,
   });
   const request = PreparedModelSchema.parse({
-    baseUrl: "https://journal.invalid",
     model: "m",
     messages: [{ role: "user", content: "hello" }],
   });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { bindProviders, type ProviderBindings } from "../providers/transport.ts";
 
 import type { ConversationCommand, SessionRequest } from "../agent/agent-conversation.ts";
 import type { TurnEvent } from "../agent/agent-fsm.ts";
@@ -70,7 +71,8 @@ export type SessionConfiguration = Readonly<{
   policy?: PolicyPatch;
 }>;
 export type SessionBindings = Readonly<{
-  complete: CompletionPort;
+  complete?: CompletionPort;
+  providers?: ProviderBindings;
   tools?: ReadonlyMap<string, Tool>;
   policies?: PolicyResolvers;
   id?: () => string;
@@ -92,11 +94,19 @@ function normalizeOptions(options: SessionOptions, restoring = false) {
       ([name, agent]) => [name, { ...agent, tools: agent.tools ?? [] }] as const,
     ),
   };
-  const resolvers = copyResolvers(bindings.policies);
+  if (Boolean(bindings.complete) === Boolean(bindings.providers))
+    throw new Error("Bind exactly one completion port or provider registry");
+  const providers = bindings.providers ? bindProviders(bindings.providers) : undefined;
+  const resolvers = copyResolvers({
+    ...copyResolvers(bindings.policies),
+    providerIds: providers ? new Set(providers.ids) : undefined,
+  });
   const initialPolicy = restoring
     ? undefined
     : resolveInitialPolicy(capabilities, configuration.steps, configuration.policy, resolvers);
-  const completePort = bindings.complete;
+  if (!restoring && providers && !initialPolicy?.provider)
+    throw new Error("Provider-bound sessions require an explicit provider policy");
+  const completePort = providers?.complete ?? bindings.complete!;
   const normalized: LegacySessionOptions = {
     ...configuration,
     steps: initialPolicy?.steps ?? configuration.steps,
@@ -106,7 +116,7 @@ function normalizeOptions(options: SessionOptions, restoring = false) {
     id: bindings.id,
     baseUrl: "https://journal.invalid",
     complete: (request) => {
-      const { signal, ...prepared } = request;
+      const { signal, baseUrl: _baseUrl, apiKey: _apiKey, ...prepared } = request;
       return completePort(PreparedModelSchema.parse(prepared), signal!);
     },
   };
@@ -232,9 +242,7 @@ function configure(raw: SessionOptions, restoring = false) {
         agents,
         tools,
         sessionId,
-        baseUrl,
-        apiKey,
-        complete: (request, signal) => complete({ ...request, signal }),
+        complete: (request, signal) => complete({ ...request, baseUrl, apiKey, signal }),
       },
       {
         turn: post,
@@ -269,6 +277,7 @@ function configure(raw: SessionOptions, restoring = false) {
         prompt,
         allowedTools: prompt?.agent.tools,
         toolFailure: policy?.toolFailure,
+        provider: policy,
         projectPrompt: (value) =>
           policy
             ? projectPolicy(value, durable.systemInputs, policy, resolvers)

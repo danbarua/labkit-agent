@@ -32,6 +32,7 @@ export function defineTool<S extends z.ZodType>(definition: {
 export const AgentDefinitionSchema = z
   .strictObject({
     model: z.string().min(1),
+    successors: z.array(AgentIdSchema).readonly().optional(),
     systemPrompt: z.string().optional(),
     tools: z.array(ToolNameSchema).default([]).readonly(),
   })
@@ -70,6 +71,9 @@ export function copyRegistries(bindings: Pick<ExecutionBindings, "agents" | "too
       Object.freeze({ ...tool, parameters: freeze(structuredClone(tool.parameters)) }),
     ]),
   );
+  for (const agent of agents.values())
+    for (const successor of agent.successors ?? [])
+      if (!agents.has(successor)) throw new Error("Unknown successor agent");
   for (const agent of agents.values())
     for (const name of agent.tools) if (!tools.has(name)) throw new Error(`Unknown tool: ${name}`);
   return { agents, tools };

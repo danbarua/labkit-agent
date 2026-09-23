@@ -39,6 +39,7 @@ export type ExecutionContext = Readonly<{
   prompt?: PromptInput;
   allowedTools?: readonly string[];
   toolFailure?: Policy["toolFailure"];
+  provider?: Pick<Policy, "provider" | "model" | "thinking" | "stream" | "maxOutputTokens">;
   projectPrompt: (input: PromptInput, signal: AbortSignal) => unknown | Promise<unknown>;
   projectHandoff?: (
     input: PromptInput & { from: string; to: string },
@@ -51,15 +52,13 @@ type Child = {
 };
 /** An execution adapter, not another state machine or persistence gate. */
 export function createHost(
-  bindings: ExecutionBindings & { baseUrl?: string; apiKey?: string; sessionId?: string },
+  bindings: ExecutionBindings & { sessionId?: string },
   sinks: {
     turn: (turnId: ActorId, event: TurnEvent) => void;
     tool: (outcome: HostToolOutcome) => void;
   },
 ) {
   const { agents, tools } = copyRegistries(bindings);
-  const baseUrl = bindings.baseUrl ?? "https://journal.invalid";
-  const apiKey = bindings.apiKey;
   const children = new Map<ActorId, { ref: ChildRef; actor: Child }>();
   const pendingTools = new Map<
     string,
@@ -140,9 +139,16 @@ export function createHost(
             input: null,
             parseInput: z.null().parse,
             run: async (_, signal) => ({
-              baseUrl,
-              apiKey,
-              model: agent.model,
+              model: context.provider?.model ?? agent.model,
+              ...(context.provider?.provider
+                ? {
+                    provider: context.provider.provider,
+                    thinking: context.provider.thinking,
+                    stream: context.provider.stream,
+                    maxOutputTokens: context.provider.maxOutputTokens,
+                    successors: agent.successors ?? [...agents.keys()],
+                  }
+                : {}),
               messages: await context.projectPrompt(prompt, signal),
               tools: agent.tools.map((name) => ({
                 type: "function",
@@ -161,13 +167,17 @@ export function createHost(
       }
       case "complete": {
         const admitted = admittedCompletionSchema(
-          new Set(agents.keys()),
+          new Set(
+            command.request.successors ??
+              agents.get(command.turn.agent)!.successors ??
+              agents.keys(),
+          ),
           new Set(context.allowedTools ?? agents.get(command.turn.agent)!.tools),
         );
         spawn(
           command.child,
           {
-            input: { ...command.request, baseUrl, apiKey },
+            input: command.request,
             parseInput: PreparedModelSchema.parseAsync,
             run: (request, signal) => bindings.complete(request, signal),
             parseOutput: admitted.parseAsync,
