@@ -1,5 +1,4 @@
-import { expect, spyOn, test } from "bun:test";
-
+import { expect, spyOn, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
 
 import * as sessionLog from "./session-log.ts";

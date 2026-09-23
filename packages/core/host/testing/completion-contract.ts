@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "@logtape/testing-bun/autoload";
 
 import { PreparedModelSchema } from "../../agent/agent.ts";
 import { createOperationActor } from "../../agent/operation-actor.ts";

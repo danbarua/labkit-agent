@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
+
 import { PreparedModelSchema } from "../agent/agent.ts";
 import { deferred } from "../agent/test-support.ts";
 import { openaiChat } from "./openai-chat.ts";

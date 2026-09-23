@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { runFixtures } from "./fixture-runner.ts";
 

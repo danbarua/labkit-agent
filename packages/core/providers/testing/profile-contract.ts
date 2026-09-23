@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "@logtape/testing-bun/autoload";
+
 import { CompletionSchema } from "../../agent/types.ts";
 import { CompletionRequestSchema, type CompletionProfile } from "../types.ts";
 

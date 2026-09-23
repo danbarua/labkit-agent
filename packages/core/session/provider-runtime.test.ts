@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
+
 import { builtinResolvers } from "../policy/policy.ts";
 import {
   anthropicMessages,
@@ -8,16 +9,16 @@ import {
   openaiResponses,
   type CompletionProfile,
 } from "../providers/index.ts";
-import { createMemoryPersistence } from "./testing/memory-persistence.ts";
+import type { SessionPersistence } from "./persistence.ts";
+import { decodeRecord, journalJSONL, replay } from "./session-log.ts";
 import {
   createSession,
-  restoreSession,
   defineTool,
+  restoreSession,
   type BoundSessionOptions,
 } from "./session-runtime.ts";
-import { deterministicIds, deferred, until, testOptions } from "./test-support.ts";
-import { decodeRecord, journalJSONL, replay } from "./session-log.ts";
-import type { SessionPersistence } from "./persistence.ts";
+import { deferred, deterministicIds, testOptions, until } from "./test-support.ts";
+import { createMemoryPersistence } from "./testing/memory-persistence.ts";
 
 function answer(profile: CompletionProfile, text = "done") {
   switch (profile.id) {

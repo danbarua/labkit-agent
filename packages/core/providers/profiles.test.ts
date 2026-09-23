@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
-import { openaiChat } from "./openai-chat.ts";
-import { openaiResponses } from "./openai-responses.ts";
+import { expect, test } from "@logtape/testing-bun/autoload";
+
 import { anthropicMessages } from "./anthropic-messages.ts";
 import { googleGenerate } from "./google-generate.ts";
+import { openaiChat } from "./openai-chat.ts";
+import { openaiResponses } from "./openai-responses.ts";
 import { profileContract, request } from "./testing/profile-contract.ts";
 
 const parameters = {

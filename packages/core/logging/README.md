@@ -86,6 +86,46 @@ be dropped. Existing journal fixtures remain the behavioral contract.
 
 Tests use in-memory LogTape sinks to verify runtime reconfiguration, routing, sink
 failure isolation, shared lifetime, correlation, and payload exclusion:
+
 ```sh
 bun test packages/core/logging
 ```
+
+## Inspect logs from tests
+
+Tests and reusable contract suites import Bun-compatible helpers from
+`@logtape/testing-bun/autoload`. It configures async-local capture automatically;
+no application logger setup or Bun preload is required.
+
+```sh
+# Default: show info-and-higher records only for failing tests.
+bun test
+
+# Show captured debug-and-higher records for every test.
+LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test
+bun run test:with-logs
+
+# Limit the run using ordinary Bun test arguments.
+bun run test:with-logs packages/core/session/provider-runtime.test.ts
+
+# Suppress captured logs, including for failing tests.
+LOGTAPE_TEST_MODE=never bun test
+```
+
+Modes are `on-failure` (default), `always`, and `never`. The default threshold is
+`info`; `LOGTAPE_TEST_LOWEST_LEVEL` accepts LogTape levels such as `debug`, `info`,
+and `warning`. Records are buffered for each test callback and printed when it
+settles, rather than streamed live. Hooks are outside that callback capture.
+
+New tests should import `test` or `it` from the autoload entry point. Other helpers
+such as `expect` and `describe` are re-exported there unchanged. Importing only
+`bun:test` does not opt a test into capture.
+
+The logging-configuration tests deliberately use raw `bun:test` callbacks: they
+replace and reset global routing to assert custom sink behavior. Those records go
+to their assertion sinks instead of the failure reporter. Their cleanup restores
+the async-local test configuration so subsequent wrapped tests still capture logs.
+
+This is a development-only dependency. It does not configure application logging
+or change journal records. See the [LogTape testing guide](https://logtape.org/manual/testing)
+for reporter customization.

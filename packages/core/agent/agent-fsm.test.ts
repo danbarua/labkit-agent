@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { admittedCompletionSchema, decideTurn, type TurnState } from "./agent-fsm.ts";
 import { PreparedModelSchema } from "./agent.ts";

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { RevisionSchema, type CommittedBatch } from "./persistence.ts";
 import { decodeRecord, encodeRecord, replay } from "./session-log.ts";

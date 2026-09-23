@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { createChatCompletion } from "./agent.ts";
 import { CompletionSchema } from "./types.ts";

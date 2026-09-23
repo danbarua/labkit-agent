@@ -1,6 +1,6 @@
-import { diagnostic } from "../logging/index.ts";
 import type { SessionId } from "../agent/types.ts";
 import { Actor, type Decision } from "../fsm/fsm.ts";
+import { diagnostic } from "../logging/index.ts";
 import {
   AppendResultSchema,
   LoadResultSchema,

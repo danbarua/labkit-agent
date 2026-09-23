@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { AppendIdSchema, RevisionSchema } from "./persistence.ts";
 import { decideSession, type SessionEvent, type SessionState } from "./session-fsm.ts";

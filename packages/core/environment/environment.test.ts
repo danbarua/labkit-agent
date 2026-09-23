@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { deferred } from "../agent/test-support.ts";
 import type { EnvEvent } from "../session/events.ts";

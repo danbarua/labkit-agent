@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import type { ForkSnapshot, SessionRequest } from "./agent-conversation.ts";
 import type { TurnState } from "./agent-fsm.ts";

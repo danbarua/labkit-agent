@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import type { PolicyPatch } from "../policy/policy.ts";
 import type { EnvEvent } from "./events.ts";

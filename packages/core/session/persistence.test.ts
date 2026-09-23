@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { createSession } from "./session-runtime.ts";
 import { lostAcknowledgement, testOptions } from "./test-support.ts";

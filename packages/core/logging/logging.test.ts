@@ -1,10 +1,20 @@
+// These tests replace global routing, so they must not run inside a scoped log reporter.
+import "@logtape/testing-bun/autoload";
+
 import { afterEach, expect, test } from "bun:test";
+
+import { getConfig } from "@logtape/logtape";
+
 import { createSession, restoreSession } from "../session/session-runtime.ts";
 import { lostAcknowledgement, scriptedCompletion, testOptions } from "../session/test-support.ts";
 import { createMemoryPersistence } from "../session/testing/memory-persistence.ts";
 import { configure, diagnostic, reset, type LogRecord, type Sink } from "./index.ts";
 
-afterEach(() => reset());
+const testLoggingConfig = getConfig()!;
+afterEach(async () => {
+  await reset();
+  await configure(testLoggingConfig);
+});
 
 async function capture(sink: Sink, level: "debug" | "warning" = "debug") {
   await configure({

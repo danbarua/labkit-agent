@@ -1,5 +1,4 @@
-import { describe, expect, test } from "bun:test";
-
+import { describe, expect, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
 
 import { createOperationActor } from "../../agent/operation-actor.ts";

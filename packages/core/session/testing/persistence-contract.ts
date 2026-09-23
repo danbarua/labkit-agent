@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "@logtape/testing-bun/autoload";
 
 import { SessionIdSchema } from "../../agent/types.ts";
 import {

@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { bindProviders, type ProviderBindings } from "../providers/transport.ts";
 
 import type { ConversationCommand, SessionRequest } from "../agent/agent-conversation.ts";
 import type { TurnEvent } from "../agent/agent-fsm.ts";
@@ -20,11 +19,11 @@ import {
   type TurnData,
   type TurnRecord,
 } from "../agent/types.ts";
-import { diagnostic } from "../logging/index.ts";
 import { Actor, freeze } from "../fsm/fsm.ts";
 import { createHost } from "../host/host.ts";
 import type { CompletionPort } from "../host/ports.ts";
 import { copyRegistries } from "../host/ports.ts";
+import { diagnostic } from "../logging/index.ts";
 import {
   copyResolvers,
   projectPolicy,
@@ -33,6 +32,7 @@ import {
   type PolicyPatch,
   type PolicyResolvers,
 } from "../policy/policy.ts";
+import { bindProviders, type ProviderBindings } from "../providers/transport.ts";
 import { EnvEventSchema, type EnvEvent } from "./events.ts";
 import { AppendIdSchema, type AppendId, type SessionPersistence } from "./persistence.ts";
 import {

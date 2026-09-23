@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { projectConversationPrompt } from "./prompt.ts";
 import { context as turnData } from "./test-support.ts";

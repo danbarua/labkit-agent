@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { ActorIdSchema, AgentIdSchema, StepsSchema } from "../agent/types.ts";
 import { projectSessionPrompt } from "./session-prompt.ts";
