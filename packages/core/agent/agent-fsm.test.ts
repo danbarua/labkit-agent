@@ -65,9 +65,9 @@ test("treats done as terminal while handoff remains resumable", async () => {
 	await fire(done, { type: "model_done" });
 
 	expect(done.snapshot.state).toBe("done");
-	await expect(fire(done, { type: "user", text: "after completion" })).rejects.toThrow(
-		"final state",
-	);
+	expect(fire(done, {type: "user", text: "after completion"})).rejects.toThrow(
+        "final state",
+    );
 });
 
 test("finishes active work when it is aborted", async () => {
