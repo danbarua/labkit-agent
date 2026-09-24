@@ -326,3 +326,12 @@ completion operation reloads bytes and supplies a BlobId-keyed resolver to the p
 No bytes or resolver functions enter the journal or snapshots. Replay is structurally validating
 and I/O-free. Fork and compaction copy their cited subset before publishing the child.
 See [journal and blob persistence](session-persistence.md) for the storage contract.
+
+## Non-authoritative tool display
+
+The shared host exposes an optional `toolUpdate` sink, bound through session bindings or legacy
+runtime options. After the tools completion commits and run_tools is released, spawn emits a
+pending tool_call. Parsed-input locations arrive before tool.run, followed by operation status
+updates. Completed is a display status, not a persistence receipt: per-tool result append and
+releaseTool still control batch progression. Notifications never enter session reduction or the
+journal, and restore does not replay them. Observer failures cannot fail the session.

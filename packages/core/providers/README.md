@@ -146,7 +146,8 @@ plain text and markdown attachments; additional media and replay support are ver
 | `anthropic-messages@1` | None                         | Rejects thinking blocks     | None                  |
 | `anthropic-messages@2` | adaptive → 1024-token budget | Signed/redacted thinking    | PNG, JPEG, PDF        |
 
-Streaming and ACP are **not done**. No profile starts a server conversation or uses a Files API.
+Streaming and the ACP permission/JSON-RPC adapter are **not done**.
+The shared host now provides in-process tool lifecycle notifications (ACP steps 1–2). No profile starts a server conversation or uses a Files API.
 OpenAI Chat remains unchanged: off maps to none; omission leaves effort absent.
 
 `google-generate@2` declares `{ mode: "budget", maxTokens: 1024 }`. Policy adaptive enables the

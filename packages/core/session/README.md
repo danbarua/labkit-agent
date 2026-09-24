@@ -253,3 +253,14 @@ and verifies these blobs; missing bytes fail completion before HTTP. Forks copy 
 retained owners before child creation; compaction drops continuation refs. Idle restore does no
 blob I/O. Write failure/cancellation prevents settlement and tool release; append failure may leave
 an unreferenced blob. The existing 8 MiB cap also applies to continuation blobs.
+
+## Tool lifecycle display
+
+`bindings.toolUpdate(notification)` receives non-authoritative `tool_call` / `tool_call_update`
+notifications from the shared host. Flat legacy options also accept `toolUpdate`. Tools can declare
+`kind` and pure `locations(parsedArgs)` metadata. Locations arrive before execution; the pending
+notification cannot occur until the admitted tools completion's append receipt releases run_tools.
+Completed/failed display notifications do not certify persistence: the existing per-tool result
+receipt still gates batch release. Notifications are not journaled or replayed, cannot decide turn
+state, and callback failures are isolated. Forks inherit the captured sink and report their own
+session/operation IDs. See [host notification contract](../host/README.md#tool-display-notifications).

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { Actor, freeze } from "../fsm/fsm.ts";
-import { createHost } from "../host/host.ts";
+import { createHost, type ToolUpdateSink } from "../host/host.ts";
 import { copyRegistries, type AgentDefinition, type Tool } from "../host/ports.ts";
 import {
   decideConversation,
@@ -35,10 +35,13 @@ export type { PromptInput } from "./prompt.ts";
 export { defineTool } from "../host/ports.ts";
 
 export type { Tool, AgentDefinition };
+export type { HostToolNotification, ToolUpdateSink } from "../host/host.ts";
+export type { ToolKind, ToolLocation } from "../host/ports.ts";
 export type RuntimeOptions = {
   agent: string;
   agents: ReadonlyMap<string, AgentDefinition>;
   tools?: ReadonlyMap<string, Tool>;
+  toolUpdate?: ToolUpdateSink;
   steps: number;
   baseUrl: string;
   apiKey?: string;
@@ -77,6 +80,7 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
   const apiKey = options.apiKey;
   const fetcher = options.fetch;
   const projectHandoff = options.projectHandoff;
+  const toolUpdate = options.toolUpdate;
   const complete =
     options.complete ??
     ((request: ChatCompletionRequest) => createChatCompletion(request, fetcher));
@@ -99,10 +103,12 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
       {
         agents,
         tools,
+        sessionId: initial.sessionId,
         complete: (request, signal) => complete({ ...request, baseUrl, apiKey, signal }),
       },
       {
         turn: post,
+        toolUpdate,
         tool: (outcome) => host.releaseTool(outcome),
       },
     );

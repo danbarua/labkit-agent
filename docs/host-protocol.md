@@ -49,9 +49,10 @@ startState=Launching, endState=Finished, execTime=241548ms`.
 
 `packages/core/host/host.ts` and `ports.ts`. `createHost(bindings, sinks)` is an execution adapter:
 `dispatch` runs the conversation's turn commands (`prepare_model`, `complete`, `prepare_handoff`,
-`run_tools`, `cancel`) through operation actors and a tool batch. Two sinks report back: `turn` posts
+`run_tools`, `cancel`) through operation actors and a tool batch. Three sinks report back: `turn` posts
 typed `TurnEvent`s; `tool` posts a `HostToolOutcome` — `turnId`, `batchId`, `callId`, `result` — for
-each tool call **after it has run**. That outcome is held in `pendingTools` until the caller invokes
+each tool call **after it has run**. Optional `toolUpdate` emits non-authoritative display
+notifications before execution and on operation transitions. That outcome is held in `pendingTools` until the caller invokes
 `releaseTool(outcome)`, which passes it to the batch as `tool_settled` through the `toolFailure` policy
 (`fail-turn` or `return-error-and-continue`). `close()` cancels everything held. `ExecutionContext.
 allowedTools` narrows which tools a completion may be admitted with, per turn.
@@ -60,17 +61,22 @@ Against ACP, that is: the outcome carries what a `tool_call_update` with `status
 and `content` needs; `releaseTool` is a host-side hold on a result the agent has already produced,
 which ACP has no message for; `allowedTools` is a standing allow-list per turn, the effect of
 `allow_always` decided before the turn rather than per call. `defineTool` carries `description`, an
-input schema, its JSON Schema and `run`; it has no `kind` and no way to derive `locations`.
+input schema, its JSON Schema and `run`, plus optional `kind` and `locations(parsedArgs)`.
+
+The toolUpdate sink reports `tool_call` at spawn with pending status, name/title, kind and rawInput.
+After input validation, a `tool_call_update` supplies locations before execution. Running maps to
+in_progress; output validation stays in_progress; succeeded maps to completed, and failed/cancelled
+map to failed. Terminal updates carry normalized result text or an error as rawOutput. Notifications
+include correlation fields and use the operation child ID as toolCallId to avoid batch-local call
+ID collisions. Fields that have not changed are omitted from updates.
+
+The sink is available through both public runtimes and is captured at construction. It never
+certifies a journal commit or releases tools. Observer failures are isolated; no updates are
+replayed on restore. Invalid location metadata is diagnostic only and does not change execution.
+See [host contract](../packages/core/host/README.md#tool-display-notifications).
 
 ## What is not implemented
 
-- **Nothing is reported before a tool runs.** The batch's `spawn_tool` holds `call.id`, `call.name` and
-  `call.args` before `tool.run`, which is an ACP `tool_call` minus `kind` and `locations`, but no event
-  leaves the host at that point. Emitting `tool_call` there, and `tool_call_update` on the operation
-  actor's transitions (ready and validating to `pending`, running to `in_progress`, succeeded to
-  `completed`, failed and cancelled to `failed`), is the first change.
-- **`defineTool` does not declare `kind` or how to derive `locations`** from parsed input. Without it a
-  `tool_call` cannot carry the fields a host uses to build scope.
 - **No `session/request_permission`.** The only gate is after execution (`releaseTool`). A pre-execution
   gate is a phase between admission of a `tools` completion and `run_tools`: the batch does not start
   until the host's option arrives, and `reject_*` becomes a batch outcome the turn records. It is not a
@@ -83,17 +89,22 @@ input schema, its JSON Schema and `run`; it has no `kind` and no way to derive `
 Once a `tool_call` is emitted before the effect, the pre-tool context surface is a subscriber rather
 than a special case: keyed on the event's `locations`, it looks up what is recorded about those paths
 and returns it to the turn as context before the tool result. The lookup is a read of a store, not a
-model call, and nothing in the prompt asks the agent to remember anything. It depends on the first
-two items above and does not exist yet. Measured on the same file with two stores (exo-ledger,
+model call, and nothing in the prompt asks the agent to remember anything. The notification prerequisites now exist, but the lookup integration does not exist yet. Measured on the same file with two stores (exo-ledger,
 `tools/hindsight/FINDINGS.md` §11–12): a file-keyed read of settled and contested positions changed an
 agent's proposal; a file-keyed read of session narration did not.
 
 ## Order of work
 
-1. `kind` and `locations` in `defineTool`.
-2. `tool_call` on `spawn_tool` and `tool_call_update` on operation-actor transitions, as a third sink
-   beside `turn` and `tool`.
-3. `request_permission` as a phase before `run_tools`.
-4. A JSON-RPC transport that carries the sinks as `session/update` and the permission request as a call.
+1. **Implemented:** `kind` and `locations` in `defineTool`.
+2. **Implemented:** `tool_call` on spawn and `tool_call_update` from operation-actor transitions,
+   as the third, non-authoritative sink beside `turn` and `tool`.
+3. **Next separate slice:** streaming as a fourth sink, profile streaming support and transport
+   assembly. Enable policy stream:true only after that sink exists. Decode one assembled body and
+   retain one model_settled outcome; incomplete streams fail/cancel without partial settlement.
+4. `request_permission` as a new phase between admitted tools and run_tools.
+5. A JSON-RPC ACP adapter carrying notifications and permission requests across the process boundary.
 
-Not planned: streaming text updates, `switch_mode`, and any file-system daemon of the host's own.
+These core slices are sequential because they share the host, ports and sink list. Attachment
+preview is independent UI work: journaled BlobRefs plus getBlob already support markdown/image/PDF
+rendering. Tool file scope comes from locations, not attachment chips. Mode switching and a host
+file-system daemon remain unimplemented.

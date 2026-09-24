@@ -1,9 +1,32 @@
+import { isAbsolute } from "node:path";
+
 import { z } from "zod";
 
 import { createChatCompletion, type PreparedModel } from "../agent/agent.ts";
 import type { BlobResolver } from "../agent/content.ts";
 import { AgentIdSchema, ToolNameSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
+
+export const ToolKindSchema = z.enum([
+  "read",
+  "edit",
+  "delete",
+  "move",
+  "search",
+  "execute",
+  "think",
+  "fetch",
+  "switch_mode",
+  "other",
+]);
+export type ToolKind = z.infer<typeof ToolKindSchema>;
+export const ToolLocationSchema = z
+  .strictObject({
+    path: z.string().refine(isAbsolute, "Tool location must be an absolute path"),
+    line: z.number().int().nonnegative().optional(),
+  })
+  .readonly();
+export type ToolLocation = z.infer<typeof ToolLocationSchema>;
 
 /**
  * Existential tool adapter: defineTool retains input-schema inference at the authoring boundary.
@@ -13,6 +36,8 @@ import { freeze } from "../fsm/fsm.ts";
  */
 export type Tool = Readonly<{
   description?: string;
+  kind?: ToolKind;
+  locations?: (input: unknown) => readonly ToolLocation[];
   parameters: Record<string, unknown>;
   parseInput: (raw: unknown) => Promise<unknown>;
   run: (input: unknown, signal: AbortSignal) => unknown | Promise<unknown>;
@@ -20,13 +45,20 @@ export type Tool = Readonly<{
 export function defineTool<S extends z.ZodType>(definition: {
   input: S;
   description?: string;
+  kind?: ToolKind;
+  /** Pure display metadata derived from parsed input; no I/O or execution authorization. */
+  locations?: (input: z.output<S>) => readonly ToolLocation[];
   run: (input: z.output<S>, signal: AbortSignal) => unknown | Promise<unknown>;
 }): Tool {
+  const { input, description, locations, run } = definition;
+  const kind = ToolKindSchema.parse(definition.kind ?? "other");
   return Object.freeze({
-    description: definition.description,
-    parameters: z.toJSONSchema(definition.input, { io: "input" }),
-    parseInput: (raw) => definition.input.parseAsync(raw),
-    run: (input, signal) => definition.run(input as z.output<S>, signal),
+    description,
+    kind,
+    ...(locations ? { locations: (value: unknown) => locations(value as z.output<S>) } : {}),
+    parameters: z.toJSONSchema(input, { io: "input" }),
+    parseInput: (raw: unknown) => input.parseAsync(raw),
+    run: (value: unknown, signal: AbortSignal) => run(value as z.output<S>, signal),
   });
 }
 
@@ -70,7 +102,11 @@ export function copyRegistries(bindings: Pick<ExecutionBindings, "agents" | "too
   const tools = new Map(
     [...(bindings.tools ?? [])].map(([name, tool]) => [
       ToolNameSchema.parse(name),
-      Object.freeze({ ...tool, parameters: freeze(structuredClone(tool.parameters)) }),
+      Object.freeze({
+        ...tool,
+        kind: ToolKindSchema.parse(tool.kind ?? "other"),
+        parameters: freeze(structuredClone(tool.parameters)),
+      }),
     ]),
   );
   for (const agent of agents.values())

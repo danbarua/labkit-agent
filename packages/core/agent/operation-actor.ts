@@ -18,6 +18,7 @@ type Event<I, O> =
   | { type: "output_valid"; value: O }
   | { type: "failed"; error: Failure };
 type Command<I, O> =
+  | { type: "observe" }
   | { type: "validate_input" }
   | { type: "run"; input: I }
   | { type: "validate_output"; value: unknown }
@@ -36,6 +37,7 @@ export function createOperationActor<I, O>(
   request: ChildRef,
   operation: Operation<I, O>,
   settled: (result: Result<O>) => void,
+  observe?: (state: OperationState<O>) => unknown,
 ) {
   type State = OperationState<O>;
   type Cmd = Command<I, O>;
@@ -103,6 +105,12 @@ export function createOperationActor<I, O>(
         .catch((error) => actor.send({ type: "failed", error: failure(error) }));
     };
     switch (command.type) {
+      case "observe":
+        // Display only: observer failures must never become operation failures.
+        try {
+          void Promise.resolve(observe?.(actor.snapshot)).catch(() => {});
+        } catch {}
+        break;
       case "validate_input":
         launch(
           () => operation.parseInput(operation.input),
@@ -130,10 +138,17 @@ export function createOperationActor<I, O>(
     }
     return undefined;
   };
-  actor = new Actor<State, Event<I, O>, Cmd>({ status: "ready" }, decide, execute, (_, error) => ({
-    type: "failed",
-    error: failure(error),
-  }));
+  actor = new Actor<State, Event<I, O>, Cmd>(
+    { status: "ready" },
+    (state, event) => {
+      const decision = decide(state, event);
+      return observe && decision.state !== state
+        ? { ...decision, commands: [{ type: "observe" }, ...decision.commands] }
+        : decision;
+    },
+    execute,
+    (_, error) => ({ type: "failed", error: failure(error) }),
+  );
   return {
     get snapshot() {
       return actor.snapshot;

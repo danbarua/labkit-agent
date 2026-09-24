@@ -33,7 +33,13 @@ import {
   matchingContinuations,
   type Continuation,
 } from "../providers/types.ts";
-import { copyRegistries, type ExecutionBindings } from "./ports.ts";
+import {
+  copyRegistries,
+  ToolLocationSchema,
+  type ExecutionBindings,
+  type ToolKind,
+  type ToolLocation,
+} from "./ports.ts";
 
 export type HostToolOutcome = Readonly<{
   turnId: ActorId;
@@ -41,6 +47,33 @@ export type HostToolOutcome = Readonly<{
   callId: ToolCall["id"];
   result: Result<string>;
 }>;
+/** Non-authoritative display data. toolCallId is the child ID, not the provider's batch-local call ID. */
+export type HostToolNotification = Readonly<
+  {
+    sessionId?: string;
+    turnId: ActorId;
+    batchId: ActorId;
+    callId: ToolCall["id"];
+    toolCallId: ActorId;
+  } & (
+    | {
+        sessionUpdate: "tool_call";
+        title: string;
+        name: string;
+        kind: ToolKind;
+        status: "pending";
+        rawInput: unknown;
+      }
+    | {
+        sessionUpdate: "tool_call_update";
+        status?: "pending" | "in_progress" | "completed" | "failed";
+        locations?: readonly ToolLocation[];
+        rawOutput?: unknown;
+      }
+  )
+>;
+export type ToolUpdateSink = (notification: HostToolNotification) => unknown;
+
 export type ExecutionContext = Readonly<{
   prompt?: PromptInput;
   loadBlobs?: (
@@ -72,6 +105,7 @@ export function createHost(
   sinks: {
     turn: (turnId: ActorId, event: TurnEvent) => void;
     tool: (outcome: HostToolOutcome) => void;
+    toolUpdate?: ToolUpdateSink;
   },
 ) {
   const { agents, tools } = copyRegistries(bindings);
@@ -85,6 +119,13 @@ export function createHost(
     }
   >();
   let closed = false;
+  const toolUpdate = sinks.toolUpdate;
+  const notifyTool = (notification: HostToolNotification) => {
+    if (closed || !toolUpdate) return;
+    try {
+      void Promise.resolve(toolUpdate(freeze(structuredClone(notification)))).catch(() => {});
+    } catch {}
+  };
   const post: typeof sinks.turn = (turnId, event) => {
     if (!closed) sinks.turn(turnId, event);
   };
@@ -92,22 +133,28 @@ export function createHost(
     child: ChildRef,
     operation: Operation<I, O>,
     settled: (result: Result<O>) => void,
+    observe?: (state: OperationState<O>) => unknown,
   ) {
-    const actor = createOperationActor(child, operation, (result) => {
-      children.delete(child.id);
-      diagnostic(
-        child.kind === "completion" ? "provider" : "host",
-        result.kind === "failed" ? "warning" : "debug",
-        "child.settled",
-        {
-          sessionId: bindings.sessionId,
-          childId: child.id,
-          operation: child.kind,
-          outcome: result.kind,
-        },
-      );
-      if (!closed) settled(result);
-    });
+    const actor = createOperationActor(
+      child,
+      operation,
+      (result) => {
+        children.delete(child.id);
+        diagnostic(
+          child.kind === "completion" ? "provider" : "host",
+          result.kind === "failed" ? "warning" : "debug",
+          "child.settled",
+          {
+            sessionId: bindings.sessionId,
+            childId: child.id,
+            operation: child.kind,
+            outcome: result.kind,
+          },
+        );
+        if (!closed) settled(result);
+      },
+      observe,
+    );
     diagnostic(child.kind === "completion" ? "provider" : "host", "debug", "child.started", {
       sessionId: bindings.sessionId,
       childId: child.id,
@@ -291,11 +338,46 @@ export function createHost(
           switch (batchCommand.type) {
             case "spawn_tool": {
               const tool = tools.get(batchCommand.call.name)!;
+              const identity = {
+                ...(bindings.sessionId ? { sessionId: bindings.sessionId } : {}),
+                turnId,
+                batchId: command.child.id,
+                callId: batchCommand.call.id,
+                toolCallId: batchCommand.child.id,
+              };
+              notifyTool({
+                ...identity,
+                sessionUpdate: "tool_call",
+                title: batchCommand.call.name,
+                name: batchCommand.call.name,
+                kind: tool.kind ?? "other",
+                status: "pending",
+                rawInput: batchCommand.call.args,
+              });
+              if (closed) break;
+              let status = "pending";
+
               spawn(
                 batchCommand.child,
                 {
                   input: batchCommand.call.args,
-                  parseInput: tool.parseInput,
+                  parseInput: async (raw) => {
+                    const input = await tool.parseInput(raw);
+                    if (!closed && status === "pending" && toolUpdate && tool.locations) {
+                      try {
+                        const locations = z
+                          .array(ToolLocationSchema)
+                          .parse(tool.locations(structuredClone(input)));
+                        notifyTool({ ...identity, sessionUpdate: "tool_call_update", locations });
+                      } catch {
+                        diagnostic("host", "warning", "tool.locations_failed", {
+                          sessionId: bindings.sessionId,
+                          childId: batchCommand.child.id,
+                        });
+                      }
+                    }
+                    return input;
+                  },
                   run: tool.run,
                   parseOutput: (value) => {
                     const parsed = z.json().safeParse(value);
@@ -321,6 +403,30 @@ export function createHost(
                     toolFailure: context.toolFailure,
                   });
                   sinks.tool(outcome);
+                },
+                (state) => {
+                  const next =
+                    state.status === "succeeded"
+                      ? "completed"
+                      : state.status === "failed" || state.status === "cancelled"
+                        ? "failed"
+                        : state.status === "running" || state.status === "validating_output"
+                          ? "in_progress"
+                          : "pending";
+                  if (next === status) return;
+                  status = next;
+                  notifyTool({
+                    ...identity,
+                    sessionUpdate: "tool_call_update",
+                    status: next,
+                    ...(state.status === "succeeded"
+                      ? { rawOutput: state.value }
+                      : state.status === "failed"
+                        ? { rawOutput: { error: state.error.message } }
+                        : state.status === "cancelled"
+                          ? { rawOutput: { error: "Tool cancelled" } }
+                          : {}),
+                  });
                 },
               );
               break;

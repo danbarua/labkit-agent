@@ -21,7 +21,7 @@ import {
   type TurnRecord,
 } from "../agent/types.ts";
 import { Actor, freeze } from "../fsm/fsm.ts";
-import { createHost } from "../host/host.ts";
+import { createHost, type ToolUpdateSink } from "../host/host.ts";
 import type { CompletionPort } from "../host/ports.ts";
 import { copyRegistries } from "../host/ports.ts";
 import { diagnostic } from "../logging/index.ts";
@@ -62,6 +62,8 @@ import {
 
 export { defineTool } from "../host/ports.ts";
 export type { Tool, AgentDefinition };
+export type { HostToolNotification, ToolUpdateSink } from "../host/host.ts";
+export type { ToolKind, ToolLocation } from "../host/ports.ts";
 /** Compatibility input: new integrations should supply SessionConfiguration and SessionBindings. */
 export type LegacySessionOptions = Omit<RuntimeOptions, "projectPrompt"> & {
   persistence: SessionPersistence;
@@ -84,6 +86,7 @@ export type SessionBindings = Readonly<{
   policies?: PolicyResolvers;
   id?: () => string;
   observe?: (snapshot: SessionState) => unknown;
+  toolUpdate?: ToolUpdateSink;
 }>;
 export type BoundSessionOptions = Readonly<{
   persistence: SessionPersistence;
@@ -128,6 +131,7 @@ function normalizeOptions(options: SessionOptions, restoring = false) {
     persistence: options.persistence,
     sessionId: options.sessionId,
     tools: bindings.tools,
+    toolUpdate: bindings.toolUpdate,
     id: bindings.id,
     baseUrl: "https://journal.invalid",
     complete: (request) => {
@@ -174,6 +178,7 @@ export type SessionRuntime = {
 function configure(raw: SessionOptions, restoring = false) {
   const { options, resolvers, initialPolicy, observe, completePort, providerMedia } =
     normalizeOptions(raw, restoring);
+  const toolUpdate = options.toolUpdate;
   const agentId = AgentIdSchema.parse(options.agent);
   const steps = StepsSchema.parse(options.steps);
   const baseUrl = z.url({ protocol: /^https?$/ }).parse(options.baseUrl);
@@ -273,6 +278,7 @@ function configure(raw: SessionOptions, restoring = false) {
       },
       {
         turn: post,
+        toolUpdate,
         tool: (outcome) => {
           void submit({ kind: "tool", ...outcome }, () => host.releaseTool(outcome));
         },
