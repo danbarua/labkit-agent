@@ -1349,7 +1349,7 @@ test("invalid policy patches return errors without publishing a configuration ch
       return {
         ...original,
         config: original.config!.map((binding) =>
-          binding.id !== "model"
+          binding.id !== "model" || binding.type === "boolean"
             ? binding
             : {
                 ...binding,

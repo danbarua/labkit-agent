@@ -89,7 +89,7 @@ export function workspaceAgent(
           name: "Stream responses",
           category: "model_config",
           type: "boolean",
-          current: (policy) => policy.stream,
+          current: (policy) => policy.stream ?? false,
           patches: { true: { stream: true }, false: { stream: false } },
         },
         {

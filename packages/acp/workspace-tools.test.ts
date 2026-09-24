@@ -7,6 +7,7 @@ import { createMemoryPersistence } from "@labkit-agent/core/testing";
 import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { workspaceAgent } from "./examples/vscode-workspace.ts";
+import type { AcpSelectBinding } from "./session-config.ts";
 import { MAX_FILE_BYTES, workspaceFiles } from "./workspace-files.ts";
 import { workspaceTools } from "./workspace-tools.ts";
 
@@ -182,12 +183,18 @@ test("workspace example validates environment, enables load and disables self-ha
       });
       expect(
         options.config
-          ?.find((binding) => binding.id === "model")
+          ?.find(
+            (binding): binding is AcpSelectBinding =>
+              binding.type !== "boolean" && binding.id === "model",
+          )
           ?.options.map((option) => option.value),
       ).toEqual(["m", "m2"]);
       expect(
         options.config
-          ?.find((binding) => binding.id === "thinking")
+          ?.find(
+            (binding): binding is AcpSelectBinding =>
+              binding.type !== "boolean" && binding.id === "thinking",
+          )
           ?.options.map((option) => option.value),
       ).toEqual(
         provider!.startsWith("openai") ? ["off", "low", "medium", "high"] : ["off", "adaptive"],
@@ -219,7 +226,10 @@ test("workspace terminal tool requires explicit opt-in and client capability and
         });
         expect(options.bindings.tools?.has("run_command")).toBe(enabled && supported);
         const readOnly = options.config
-          ?.find((binding) => binding.id === "mode")
+          ?.find(
+            (binding): binding is AcpSelectBinding =>
+              binding.type !== "boolean" && binding.id === "mode",
+          )
           ?.options.find((option) => option.value === "read-only");
         expect(readOnly?.patch.tools?.workspace).not.toContain("run_command");
         expect(options.configuration.policy?.permissions).toBe("ask");

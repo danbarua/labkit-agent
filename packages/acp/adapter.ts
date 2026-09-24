@@ -971,7 +971,14 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       return options.listSessions(params, signal);
     })
     .onRequest("session/set_config_option", ({ params, client, signal }) =>
-      setConfig(params.sessionId, params.configId, params.value, client, signal, params.type),
+      setConfig(
+        params.sessionId,
+        params.configId,
+        params.value,
+        client,
+        signal,
+        "type" in params ? params.type : undefined,
+      ),
     )
     .onRequest("session/set_mode", async ({ params, client, signal }) => {
       const entry = lookup(params.sessionId);
