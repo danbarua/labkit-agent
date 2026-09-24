@@ -33,8 +33,12 @@ Use an absolute Bun executable path if the GUI's PATH does not include Bun. Star
 an environment with `ANTHROPIC_API_KEY` available to its child processes. Do not commit credentials
 in workspace settings. Bun also loads environment files from the launched process's working
 directory; the adapter never changes that directory. File operations use the absolute cwd from
-`session/new`, independently of the process cwd. Leave `acp.defaultWorkingDirectory` unset to use
-the opened workspace. Other provider profiles and credentials are listed in the
+`session/new`, independently of the process cwd. ACP Client 0.2.0 reads the first entry in
+`vscode.workspace.workspaceFolders`; when none exists, it falls back to the extension host
+process directory. Opening a file is not the same as opening a workspace folder. The installed
+0.2.0 implementation does not read its advertised `acp.defaultWorkingDirectory` setting.
+Open the intended folder/workspace in the same VS Code window before connecting. Other provider
+profiles and credentials are listed in the
 [ACP README](../packages/acp/README.md#configure-a-host).
 
 If session creation rejects `LABKIT_ACP_PROVIDER`, use `anthropic`, not an adapter identifier
