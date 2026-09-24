@@ -1330,8 +1330,13 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           throw new RequestError(-32000, result.error.message, result.error);
         const outcome = result.record.outcome;
         if (outcome.kind === "failed") {
-          if (outcome.error.classification === "permission_refused")
-            return { stopReason: "refusal" };
+          if (outcome.error.providerStop?.category === "token_limit")
+            return { stopReason: "max_tokens", _meta: { "labkit.dev/failure": outcome.error } };
+          if (
+            outcome.error.classification === "permission_refused" ||
+            outcome.error.providerStop?.category === "refusal"
+          )
+            return { stopReason: "refusal", _meta: { "labkit.dev/failure": outcome.error } };
           throw new RequestError(-32000, "Agent turn failed", outcome.error);
         }
         return {

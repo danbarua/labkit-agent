@@ -20,7 +20,12 @@ export function anthropicStopReason(
       : reason === "model_context_window_exceeded"
         ? " Model context window exhausted; compact or narrow the conversation."
         : "";
-  throw new Error(
+  const error = new Error(
     `Anthropic completion stopped: stop_reason=${reason}${counts.length ? ` (${counts.join(", ")})` : ""}.${hint} No partial completion was accepted.`,
   );
+  if (reason === "max_tokens" || reason === "model_context_window_exceeded" || reason === "refusal")
+    Object.assign(error, {
+      providerStop: { category: reason === "refusal" ? "refusal" : "token_limit", reason },
+    });
+  throw error;
 }

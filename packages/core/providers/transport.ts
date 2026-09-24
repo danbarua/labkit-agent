@@ -531,7 +531,13 @@ export function bindProviders(bindings: ProviderBindings) {
         );
         throw Object.assign(
           new Error(String(safeError.message ?? "Completion failed"), { cause: safeError }),
-          { phase, ...terminalEvidence },
+          {
+            phase,
+            ...terminalEvidence,
+            ...(safeError.providerStop === undefined
+              ? {}
+              : { providerStop: safeError.providerStop }),
+          },
         );
       }
     },

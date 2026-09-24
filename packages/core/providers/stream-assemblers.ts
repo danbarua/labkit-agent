@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { anthropicStopReason } from "./anthropic-stop.ts";
+import { rejectStoppedResponse } from "./stops.ts";
 import type { StreamAssembler, StreamDelta, StreamEvent } from "./types.ts";
 
 const object = z.record(z.string(), z.json());
@@ -14,6 +15,7 @@ function streamFailure(message: string, details: Record<string, z.JSONType>): Er
 }
 function body(event: StreamEvent) {
   const value = object.parse(JSON.parse(event.data));
+  rejectStoppedResponse(value);
   if (value.error || event.event === "error" || value.type === "error")
     throw streamFailure("Provider stream error", value);
   if (event.event && value.type && event.event !== value.type)
@@ -227,6 +229,7 @@ export function responsesAssembler(): StreamAssembler {
         case "response.failed":
         case "response.incomplete": {
           const response = object.parse(item.response);
+          rejectStoppedResponse(response);
           throw streamFailure(`Provider stream ${item.type}`, {
             type: item.type,
             responseId: response.id ?? null,
@@ -238,6 +241,7 @@ export function responsesAssembler(): StreamAssembler {
         }
         case "response.completed": {
           const response = object.parse(item.response);
+          rejectStoppedResponse(response);
           if (response.id !== responseId || response.status !== "completed")
             throw new Error("Invalid completed response");
           completed = response;

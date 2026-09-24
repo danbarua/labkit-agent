@@ -103,7 +103,9 @@ Stream text is provisional. It can be visible before EOF exposes a malformed res
 card can show completion before its result is saved. Wait for the prompt response to decide how
 the turn ended; use the core terminal outcome/logs for the underlying cause. Completed turns map
 to `end_turn`, exhausted steps to `max_turn_requests`, and aborted turns to `cancelled`. Other
-execution/storage failures become JSON-RPC errors. Failed admission and storage settlement expose
+execution/storage failures become JSON-RPC errors. Explicit provider token limits map to
+`max_tokens` and provider refusals to `refusal`; `_meta["labkit.dev/failure"]` retains the typed
+operation failure. Neither admits a partial completion or retries the provider. Failed admission and storage settlement expose
 the core structured failure in error data, including operation identity and reconciliation causes. A display notification is never a receipt.
 
 Reload renders saved conversation data without rerunning tools or asking for old permissions.

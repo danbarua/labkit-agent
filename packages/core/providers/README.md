@@ -184,3 +184,10 @@ bunx tsc --noEmit
 
 Tests use injected responses and make no paid provider calls. Exact wire vectors, cancellation,
 credential redaction, streaming EOF, model selection, restoration and nested request sizes are covered.
+
+Explicit provider token limits and refusals remain failed completions. Their public failure carries
+`providerStop: { category: "token_limit" | "refusal", reason }`, where `reason` is the provider's
+terminal value. Consumers can report the limit or refusal without parsing English error messages.
+This field survives streamed failures and HTTP error translation. Partial answers and tool calls are
+not admitted, and the runtime does not retry. Unknown stop reasons and truncated streams remain
+ordinary failures; they must not be labelled as a known token limit without provider evidence.

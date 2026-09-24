@@ -105,6 +105,13 @@ export const MessagesSchema = z
   .readonly()
   .transform((messages) => freeze(messages));
 
+export const ProviderStopSchema = z
+  .strictObject({
+    category: z.enum(["token_limit", "refusal"]),
+    reason: z.string().min(1),
+  })
+  .readonly();
+
 export const FailureSchema = z
   .strictObject({
     message: z.string().min(1),
@@ -143,6 +150,7 @@ export const FailureSchema = z
       })
       .readonly()
       .optional(),
+    providerStop: ProviderStopSchema.optional(),
     phase: z.string().optional(),
     details: z.json().optional(),
     timeoutMs: z.number().positive().optional(),
@@ -165,6 +173,9 @@ export function failure(error: unknown, context: Partial<Failure> = {}): Failure
     message:
       typeof detail.message === "string" ? detail.message || "Unknown failure" : "Unknown failure",
     ...context,
+    ...(detail.providerStop === undefined
+      ? {}
+      : { providerStop: ProviderStopSchema.parse(detail.providerStop) }),
     cause: serializable,
   });
 }

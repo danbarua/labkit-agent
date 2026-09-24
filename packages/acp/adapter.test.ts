@@ -4656,3 +4656,114 @@ test("workspace ACP reports missing-file errors to the model, completes sibling 
     ),
   ).toBe(true);
 });
+
+for (const stream of [false, true]) {
+  for (const reason of ["max_tokens", "refusal"]) {
+    test(`ACP maps Anthropic ${reason} (stream=${stream}) without admitting partial tools`, async () => {
+      const { anthropicMessagesV3 } = await import("../core/providers/index.ts");
+      const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+      const directory = `.session-artifacts/acp-provider-stop/${crypto.randomUUID()}`;
+      await withFixtureDiagnostics(directory, {}, async () => {
+        const base = setup();
+        let requests = 0;
+        let toolRuns = 0;
+        const h = harness({
+          sessionOptions: async (context) => {
+            const options = await base.options.sessionOptions(context);
+            return {
+              ...options,
+              configuration: {
+                ...options.configuration,
+                policy: {
+                  provider: "anthropic",
+                  model: "m",
+                  permissions: "off",
+                  stream,
+                  thinking: "off",
+                  maxOutputTokens: 4096,
+                },
+              },
+              bindings: {
+                ...options.bindings,
+                complete: undefined,
+                tools: new Map([
+                  [
+                    "echo",
+                    defineTool({
+                      input: z.object({ text: z.string() }),
+                      run: () => {
+                        toolRuns++;
+                        return "unexpected";
+                      },
+                    }),
+                  ],
+                ]),
+                providers: new Map([
+                  [
+                    "anthropic",
+                    {
+                      profile: anthropicMessagesV3,
+                      transport: {
+                        baseUrl: "https://example.invalid",
+                        fetch: (async () => {
+                          requests++;
+                          if (!stream)
+                            return Response.json(
+                              {
+                                role: "assistant",
+                                stop_reason: reason,
+                                content: [
+                                  {
+                                    type: "tool_use",
+                                    id: "partial",
+                                    name: "echo",
+                                    input: { text: "partial" },
+                                  },
+                                ],
+                                usage: { output_tokens: 4096 },
+                              },
+                              { headers: { "request-id": "provider-stop-test" } },
+                            );
+                          const events = streamVector(anthropicMessagesV3, true).map((event) => {
+                            const data = JSON.parse(event.data);
+                            if (data.type === "message_delta") data.delta.stop_reason = reason;
+                            return { ...event, data: JSON.stringify(data) };
+                          });
+                          return streamResponse(events);
+                        }) as unknown as typeof fetch,
+                      },
+                    },
+                  ],
+                ]),
+              },
+            };
+          },
+        });
+        try {
+          await h.initialize();
+          const sessionId = await h.newSession();
+          const response = await h.request("session/prompt", prompt(sessionId));
+          expect(response.error).toBeUndefined();
+          expect(response.result.stopReason).toBe(
+            reason === "max_tokens" ? "max_tokens" : "refusal",
+          );
+          expect(response.result._meta["labkit.dev/failure"]).toMatchObject({
+            operation: { kind: "completion", sessionId },
+            providerStop: { category: reason === "max_tokens" ? "token_limit" : "refusal", reason },
+          });
+          expect(requests).toBe(1);
+          expect(toolRuns).toBe(0);
+        } finally {
+          await h.close();
+        }
+      });
+      const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const failed = records.find((record) => record.event === "provider.completion.failed");
+      expect(failed.level).toBe("warning");
+      expect(failed.error.providerStop.reason).toBe(reason);
+    });
+  }
+}

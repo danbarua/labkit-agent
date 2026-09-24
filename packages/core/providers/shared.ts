@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { hashBlob, type BlobRef, type BlobResolver } from "../agent/content.ts";
 import { CompletionSchema, type AgentMessage, type ToolCall } from "../agent/types.ts";
+import { rejectStoppedResponse } from "./stops.ts";
 import {
   CompletionRequestSchema,
   type CompletionRequest,
@@ -55,6 +56,7 @@ export function jsonArguments(raw: string): unknown {
 export function responseBody(response: HttpResponse): unknown {
   if (response.status < 200 || response.status >= 300)
     throw new Error(`Completion HTTP failure (${response.status})`);
+  rejectStoppedResponse(response.body);
   return response.body;
 }
 export function systemAndMessages(request: CompletionRequest, blobs?: BlobResolver) {
