@@ -1837,6 +1837,7 @@ for (const scenario of [
     const { join } = await import("node:path");
     const { workspaceFiles, MAX_FILE_BYTES } = await import("./workspace-files.ts");
     const { workspaceTools } = await import("./workspace-tools.ts");
+    const { workspaceToolContent } = await import("./file-write.ts");
     const cwd = await mkdtemp(join(tmpdir(), "labkit-client-fs-"));
     await writeFile(join(cwd, "README.md"), "disk contents");
     const files = await workspaceFiles(cwd);
@@ -1866,7 +1867,7 @@ for (const scenario of [
         return answer;
       },
     });
-    const h = harness({
+    const options: AcpOptions = {
       ...base.options,
       sessionOptions: async (context) => {
         const original = await base.options.sessionOptions(context);
@@ -1880,9 +1881,11 @@ for (const scenario of [
             agents: new Map([["a", { model: "m", tools: [...tools.keys()] }]]),
           },
           bindings: { ...original.bindings, tools },
+          toolContent: workspaceToolContent,
         };
       },
-    });
+    };
+    let h = harness(options);
     try {
       await h.request("initialize", {
         protocolVersion: 1,
@@ -1912,7 +1915,19 @@ for (const scenario of [
       });
       if (scenario !== "reject" && scenario !== "unsupported") {
         await until(() => h.messages.some((message) => message.method?.startsWith("fs/")));
-        const file = h.messages.find((message) => message.method?.startsWith("fs/"))!;
+        if (writing) {
+          const baseline = h.messages.find((message) => message.method === "fs/read_text_file")!;
+          expect(baseline.params.path).toBe(join(files.root, "README.md"));
+          await h.send({
+            jsonrpc: "2.0",
+            id: baseline.id,
+            result: { content: "unsaved editor contents" },
+          });
+          await until(() => h.messages.some((message) => message.method === "fs/write_text_file"));
+        }
+        const file = h.messages.find(
+          (message) => message.method === (writing ? "fs/write_text_file" : "fs/read_text_file"),
+        )!;
         expect(file.method).toBe(writing ? "fs/write_text_file" : "fs/read_text_file");
         expect(file.params).toEqual({
           sessionId: id,
@@ -1949,6 +1964,52 @@ for (const scenario of [
       if (scenario === "reject" || scenario === "unsupported")
         expect(h.messages.some((message) => message.method?.startsWith("fs/"))).toBe(false);
       expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("disk contents");
+      if (scenario === "write") {
+        const expected = {
+          type: "diff",
+          path: join(files.root, "README.md"),
+          oldText: "unsaved editor contents",
+          newText: "editor write",
+        };
+        expect(
+          h
+            .updates()
+            .map(({ update }) => update)
+            .find(
+              (update) =>
+                update.sessionUpdate === "tool_call_update" && update.status === "completed",
+            ),
+        ).toMatchObject({ content: [expected] });
+        await h.close();
+        await writeFile(join(cwd, "README.md"), "later disk edit");
+        h = harness(options);
+        await h.request("initialize", {
+          protocolVersion: 1,
+          clientCapabilities: {
+            fs: { readTextFile: true, writeTextFile: true },
+          },
+        });
+        expect(
+          (await h.request("session/load", { cwd, sessionId: id, mcpServers: [] })).error,
+        ).toBeUndefined();
+        expect(
+          h
+            .updates()
+            .map(({ update }) => update)
+            .find(
+              (update) =>
+                update.sessionUpdate === "tool_call_update" && update.status === "completed",
+            ),
+        ).toMatchObject({ content: [expected], _meta: { "labkit.dev/reconstructed": true } });
+        expect(
+          h.messages.some(
+            (message) =>
+              message.method?.startsWith("fs/") || message.method === "session/request_permission",
+          ),
+        ).toBe(false);
+        expect(completions).toBe(2);
+        expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("later disk edit");
+      }
     } finally {
       await h.close();
       await rm(cwd, { recursive: true, force: true });

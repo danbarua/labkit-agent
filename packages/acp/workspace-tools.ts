@@ -1,10 +1,11 @@
 import { dirname } from "node:path";
 
 import { defineTool } from "@labkit-agent/core";
-import { diagnosticError } from "@labkit-agent/core/logging";
+import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
 import { z } from "zod";
 
 import type { ClientFiles } from "./client-files.ts";
+import { recordWriteEvidence, type FileBefore } from "./file-write.ts";
 import { FileReadRangeSchema, MAX_FILE_BYTES, type WorkspaceFiles } from "./workspace-files.ts";
 
 export function workspaceTools(files: WorkspaceFiles, client: ClientFiles = {}) {
@@ -49,7 +50,7 @@ export function workspaceTools(files: WorkspaceFiles, client: ClientFiles = {}) 
       "write_file",
       defineTool({
         description:
-          "Replace or create a UTF-8 workspace file, at most 256 KiB. Parent directories must exist." +
+          "Replace or create a UTF-8 workspace file, at most 256 KiB. Capture readable prior contents to report the change; an unavailable diff does not prevent an approved write. Parent directories must exist." +
           scope,
         input: z.object({
           path,
@@ -62,10 +63,51 @@ export function workspaceTools(files: WorkspaceFiles, client: ClientFiles = {}) 
         }),
         kind: "edit",
         locations: ({ path }) => [{ path }],
-        run: ({ path, text }, signal, context) =>
-          client.write
-            ? client.write(path, text, signal, context)
-            : files.write(path, text, signal, context),
+        run: async ({ path, text }, signal, context) => {
+          if (!client.write) {
+            const result = await files.write(path, text, signal, context);
+            recordWriteEvidence(result, context);
+            return result;
+          }
+          let before: FileBefore = {
+            kind: "unavailable",
+            reasonCode: "read_not_supported",
+            source: "client",
+            reason:
+              "The editor does not advertise fs.readTextFile; prior buffer contents are unknown",
+          };
+          if (client.readText) {
+            try {
+              before = {
+                kind: "text",
+                source: "client",
+                text: await client.readText(path, signal, context),
+              };
+            } catch (error) {
+              signal.throwIfAborted();
+              if (error instanceof Error && error.name === "TimeoutError") throw error;
+              diagnostic("acp.files", "warning", "workspace.write_baseline.failed", {
+                ...context,
+                path,
+                source: "client",
+                reason:
+                  "Editor prior contents could not be captured; no diff can be produced if the write completes",
+                error: diagnosticError(error),
+              });
+              before = {
+                kind: "unavailable",
+                reasonCode: "read_failed",
+                source: "client",
+                reason: `Editor baseline read failed: ${diagnosticError(error).message}. File existence is unknown`,
+              };
+            }
+          }
+          signal.throwIfAborted();
+          const written = await client.write(path, text, signal, context);
+          const result = { ...written, before, newText: text };
+          recordWriteEvidence(result, context);
+          return result;
+        },
       }),
     ],
     [

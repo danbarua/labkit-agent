@@ -177,6 +177,7 @@ test("workspace example validates environment, enables load and disables self-ha
       expect(agent.loadSession).toBe(true);
       const options = await agent.sessionOptions({ cwd: f.cwd, signal: signal() });
       expect(options.configuration.agents.get("workspace")?.successors).toEqual([]);
+      expect(options.toolContent?.has("write_file")).toBe(true);
       expect(options.configuration.policy).toMatchObject({
         permissions: "ask",
         stream: true,
@@ -371,6 +372,201 @@ test("read_file ranges can read beyond the full-file byte cap with correct UTF-8
     await expect(
       f.files.readText("large.txt", aborted.signal, undefined, { line: 40001, limit: 1 }),
     ).rejects.toThrow("Stop range scan");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("workspace writes retain observed baselines and distinguish an empty file from a new file", async () => {
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const { FileWriteResultSchema, workspaceWriteContent } = await import("./file-write.ts");
+  const directory = `.session-artifacts/workspace-write-diff/${crypto.randomUUID()}`;
+  const f = await fixture();
+  try {
+    await withFixtureDiagnostics(directory, {}, async () => {
+      await writeFile(join(f.cwd, "empty.txt"), "");
+      const tool = f.tools.get("write_file")!;
+      for (const [path, oldText] of [
+        ["README.md", "# workspace 🌍"],
+        ["empty.txt", ""],
+        ["created.txt", null],
+      ] as const) {
+        const result = FileWriteResultSchema.parse(
+          await tool.run(
+            await tool.parseInput({ path, text: "WRITTEN_CONTENT_SENTINEL\r\n🌍" }),
+            signal(),
+            {
+              toolCallId: `write/${path}`,
+              sessionId: "write-session",
+              turnId: "write-turn",
+              callId: path,
+            },
+          ),
+        );
+        expect(result.before).toEqual(
+          oldText === null
+            ? { kind: "absent", source: "filesystem" }
+            : { kind: "text", text: oldText, source: "filesystem" },
+        );
+        expect(await readFile(join(f.cwd, path), "utf8")).toBe(result.newText);
+        await writeFile(join(f.cwd, path), "later contents");
+        expect(
+          workspaceWriteContent({ toolName: "write_file", output: JSON.stringify(result) }),
+        ).toMatchObject([
+          {
+            type: "diff",
+            path: join(f.cwd, path),
+            oldText,
+            newText: "WRITTEN_CONTENT_SENTINEL\r\n🌍",
+          },
+        ]);
+      }
+    });
+    const logs = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const evidence = logs.filter((entry) => entry.event === "workspace.write_evidence.captured");
+    expect(evidence).toHaveLength(3);
+    expect(evidence.map((entry) => entry.beforeKind)).toEqual(["text", "text", "absent"]);
+    expect(
+      evidence.every(
+        (entry) =>
+          entry.sessionId === "write-session" && entry.toolCallId && entry.path && entry.bytes,
+      ),
+    ).toBe(true);
+    expect(logs.filter((entry) => ["warning", "error"].includes(entry.level))).toEqual([]);
+    expect(JSON.stringify(logs)).not.toContain("WRITTEN_CONTENT_SENTINEL");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("unreadable diff baselines remain explicitly unknown while approved writes still run", async () => {
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const { FileWriteResultSchema, workspaceWriteContent } = await import("./file-write.ts");
+  const directory = `.session-artifacts/workspace-write-diff-unavailable/${crypto.randomUUID()}`;
+  const f = await fixture();
+  try {
+    await withFixtureDiagnostics(directory, {}, async () => {
+      await writeFile(join(f.cwd, "large.txt"), "x".repeat(MAX_FILE_BYTES + 1));
+      await writeFile(join(f.cwd, "binary.txt"), new Uint8Array([0xff]));
+      for (const path of ["large.txt", "binary.txt"]) {
+        const tool = f.tools.get("write_file")!;
+        const result = FileWriteResultSchema.parse(
+          await tool.run(await tool.parseInput({ path, text: "replacement" }), signal(), {
+            toolCallId: `write/${path}`,
+            sessionId: "write-failure-session",
+          }),
+        );
+        expect(result.before.kind).toBe("unavailable");
+        expect(await readFile(join(f.cwd, path), "utf8")).toBe("replacement");
+        const display = workspaceWriteContent({
+          toolName: "write_file",
+          output: JSON.stringify(result),
+        });
+        expect(display[0]?.type).toBe("content");
+        expect(JSON.stringify(display)).toContain("Diff unavailable");
+      }
+    });
+    const logs = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const failures = logs.filter((entry) => entry.event === "workspace.write_baseline.failed");
+    expect(failures).toHaveLength(2);
+    expect(
+      failures.every(
+        (entry) =>
+          entry.level === "warning" && entry.error.message && entry.path && entry.toolCallId,
+      ),
+    ).toBe(true);
+    expect(failures[0].error.message).toContain("diff capture limit");
+    expect(
+      logs.filter((entry) => entry.event === "workspace.write_evidence.unavailable"),
+    ).toHaveLength(2);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("editor baseline failure never falls back to disk or turns unknown existence into a new-file diff", async () => {
+  const { FileWriteResultSchema, workspaceWriteContent } = await import("./file-write.ts");
+  const f = await fixture();
+  let writes = 0;
+  try {
+    const tools = workspaceTools(f.files, {
+      readText: async () => {
+        throw new Error("Editor buffer unavailable");
+      },
+      write: async (path, text) => {
+        writes++;
+        return { path, bytes: Buffer.byteLength(text) };
+      },
+    });
+    const tool = tools.get("write_file")!;
+    const result = FileWriteResultSchema.parse(
+      await tool.run(
+        await tool.parseInput({ path: "README.md", text: "editor replacement" }),
+        signal(),
+      ),
+    );
+    expect(writes).toBe(1);
+    expect(result.before.kind).toBe("unavailable");
+    expect(JSON.stringify(result.before)).toContain("Editor buffer unavailable");
+    expect(JSON.stringify(result.before)).not.toContain("# workspace");
+    expect(
+      workspaceWriteContent({ toolName: "write_file", output: JSON.stringify(result) })[0]?.type,
+    ).toBe("content");
+    expect(await readFile(join(f.cwd, "README.md"), "utf8")).toBe("# workspace 🌍");
+    const controller = new AbortController();
+    const cancelling = workspaceTools(f.files, {
+      readText: async () => {
+        controller.abort();
+        throw controller.signal.reason;
+      },
+      write: async (path, text) => {
+        writes++;
+        return { path, bytes: Buffer.byteLength(text) };
+      },
+    }).get("write_file")!;
+    await expect(
+      cancelling.run(
+        await cancelling.parseInput({ path: "README.md", text: "cancelled" }),
+        controller.signal,
+      ),
+    ).rejects.toThrow();
+    expect(writes).toBe(1);
+    const timedOut = workspaceTools(f.files, {
+      readText: async () => {
+        throw new DOMException("Editor baseline timed out", "TimeoutError");
+      },
+      write: async (path, text) => {
+        writes++;
+        return { path, bytes: Buffer.byteLength(text) };
+      },
+    }).get("write_file")!;
+    await expect(
+      timedOut.run(await timedOut.parseInput({ path: "README.md", text: "not written" }), signal()),
+    ).rejects.toThrow("timed out");
+    expect(writes).toBe(1);
+    const writeOnly = workspaceTools(f.files, {
+      write: async (path, text) => {
+        writes++;
+        return { path, bytes: Buffer.byteLength(text) };
+      },
+    }).get("write_file")!;
+    const withoutRead = FileWriteResultSchema.parse(
+      await writeOnly.run(
+        await writeOnly.parseInput({ path: "README.md", text: "write-only" }),
+        signal(),
+      ),
+    );
+    expect(withoutRead.before).toMatchObject({
+      kind: "unavailable",
+      reasonCode: "read_not_supported",
+    });
+    expect(writes).toBe(2);
   } finally {
     await f.cleanup();
   }

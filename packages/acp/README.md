@@ -149,6 +149,22 @@ interpreted as MCP content or a diff. Discovered MCP tools receive a renderer au
 admitted text/resource blocks display directly rather than as serialized envelopes. MCP binary-result
 admission remains a separate missing model-content boundary; this display binding does not enable it.
 
+The workspace launcher binds `workspaceToolContent` for `write_file`. Its tool result records
+`before` as observed text, confirmed absence, or unavailable with a reason, plus the written text.
+Existing local files use an inode-checked read before truncation; exclusive creation establishes a
+new file. Editor writes read the editor's buffer when that capability exists, so unsaved changes
+appear in the diff. They never substitute disk contents for an unavailable editor baseline.
+
+Baseline reads stay inside the approved write operation. Cancellation or timeout prevents dispatch
+of a subsequent write. Other baseline-read failures do not deny an otherwise authorized write;
+a successful write then shows why its diff is unavailable. Oversized or non-UTF-8 prior local files
+have that explicit outcome. Missing editor reads do not establish that a file is new. These are
+pre-write observations, not compare-and-swap protection against concurrent edits.
+`workspace.write_evidence.captured` records source and byte counts; `workspace.write_baseline.failed`
+retains an actual read failure, and `workspace.write_evidence.unavailable` explains the consequence.
+File bodies live in the saved result, not routine diagnostics. Custom workspace factories can bind
+`toolContent: workspaceToolContent` using the package export.
+
 Renderers must use only the supplied result: no filesystem reads, network calls, tool execution or
 live terminal handles. Reload runs the current renderer over saved successful results and labels
 the update `_meta["labkit.dev/reconstructed"] = true`. It never reruns the tool. Preserve renderer

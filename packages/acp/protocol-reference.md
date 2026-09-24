@@ -100,6 +100,27 @@ The adapter retains raw output and sends an explicit display error if rendering 
 Reload reconstructs display from saved results, marks the notification as reconstructed, and performs
 no tool, completion or permission invocation. Unbound tools retain plain-text display.
 
+### Workspace write evidence
+
+The workspace launcher registers the exported `workspaceToolContent` map. `write_file` returns
+`FileWriteResult`: `{ path, bytes, before, newText }`. `FileBefore` is one of:
+
+- `{ kind: "text", text, source: "filesystem" | "client" }` for observed prior contents.
+- `{ kind: "absent", source: "filesystem" }` when an exclusive create proved no file existed.
+- `{ kind: "unavailable", reasonCode: "read_not_supported" | "read_failed", reason, source }`.
+
+Only the first two yield diff blocks. Empty old text is an existing empty file; null means confirmed
+creation. Diff `_meta["labkit.dev/baseline"]` identifies the observation source. Unknown prior content
+produces an explanatory text block, never a fabricated new-file diff. Reload uses these saved values
+and makes no filesystem or editor request. Client errors cannot authorize reading local disk instead.
+
+Local baseline capture is bounded to 256 KiB and requires valid UTF-8; larger/binary prior content
+does not prevent writing a valid replacement within the write limit. Editor capture uses the same
+bounded `readText` port. Capture and write are sequential observations, not an atomic editor
+transaction; concurrent edits can intervene. Permission covers the write operation including its
+baseline read. Cancellation/timeouts stop it before the subsequent write. Failure after write
+starts can still leave partial effects and does not produce a completed diff.
+
 ## Session usage
 
 `AcpSessionOptions.usage` implements the [session usage notification](https://agentclientprotocol.com/rfds/session-usage).

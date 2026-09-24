@@ -37,3 +37,11 @@ export {
 } from "./session-usage.ts";
 
 export type { AcpToolContent, AcpToolContentContext } from "./tool-content.ts";
+
+export {
+  workspaceToolContent,
+  FileWriteResultSchema,
+  FileBeforeSchema,
+  type FileWriteResult,
+  type FileBefore,
+} from "./file-write.ts";

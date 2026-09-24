@@ -1,10 +1,12 @@
 import { constants } from "node:fs";
-import { lstat, open, opendir, realpath } from "node:fs/promises";
+import { lstat, open, opendir, realpath, type FileHandle } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import type { ToolRunContext } from "@labkit-agent/core/host";
 import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
 import { z } from "zod";
+
+import type { FileBefore, FileWriteResult } from "./file-write.ts";
 
 export const MAX_FILE_BYTES = 256 * 1024;
 
@@ -150,27 +152,102 @@ async function workspaceRootFiles(cwd: string) {
         await read(raw, signal, MAX_FILE_BYTES, range),
       );
     },
-    async write(raw: string, text: string, signal: AbortSignal) {
+    async write(raw: string, text: string, signal: AbortSignal, context?: ToolRunContext) {
       signal.throwIfAborted();
       const bytes = new TextEncoder().encode(text);
       if (bytes.length > MAX_FILE_BYTES)
         throw new Error(`Content exceeds ${MAX_FILE_BYTES} bytes; narrow the write`);
       const target = await check(raw, true);
       // Parent directories must already exist. Never truncate before validating the opened file.
-      const file = await open(
-        target,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-        0o600,
-      );
+      const flags = constants.O_WRONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+      let created = false;
+      let file: FileHandle;
+      try {
+        file = await open(target, flags);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        file = await open(target, flags | constants.O_CREAT | constants.O_EXCL, 0o600);
+        created = true;
+      }
       try {
         const stat = await file.stat();
         if (!stat.isFile() || stat.nlink !== 1)
           throw new Error("Only regular workspace files without hard-link aliases are allowed");
         await check(target);
+        let before: FileBefore = { kind: "absent", source: "filesystem" };
+        if (!created) {
+          try {
+            // Read without changing the write handle's offset; verify both handles name the same inode.
+            const reader = await open(
+              target,
+              constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+            );
+            try {
+              const observed = await reader.stat();
+              if (observed.dev !== stat.dev || observed.ino !== stat.ino)
+                throw new Error("File changed while opening its diff baseline");
+              if (observed.size > MAX_FILE_BYTES)
+                throw new Error(`Prior file exceeds the ${MAX_FILE_BYTES}-byte diff capture limit`);
+              const previous = new Uint8Array(MAX_FILE_BYTES + 1);
+              let length = 0;
+              while (length < previous.length) {
+                signal.throwIfAborted();
+                const { bytesRead } = await reader.read(
+                  previous,
+                  length,
+                  previous.length - length,
+                  length,
+                );
+                if (!bytesRead) break;
+                length += bytesRead;
+              }
+              if (length > MAX_FILE_BYTES)
+                throw new Error(`Prior file exceeds the ${MAX_FILE_BYTES}-byte diff capture limit`);
+              before = {
+                kind: "text",
+                source: "filesystem",
+                text: new TextDecoder("utf-8", { fatal: true }).decode(
+                  previous.subarray(0, length),
+                ),
+              };
+            } finally {
+              await reader.close();
+            }
+          } catch (error) {
+            signal.throwIfAborted();
+            before = {
+              kind: "unavailable",
+              reasonCode: "read_failed",
+              source: "filesystem",
+              reason: error instanceof Error ? error.message : String(error),
+            };
+            diagnostic("acp.files", "warning", "workspace.write_baseline.failed", {
+              ...context,
+              path: target,
+              reason:
+                "Prior contents could not be captured; no diff can be produced if the write completes",
+              error: diagnosticError(error),
+            });
+          }
+        }
+        const current = await lstat(target);
+        if (
+          current.dev !== stat.dev ||
+          current.ino !== stat.ino ||
+          current.isSymbolicLink() ||
+          !current.isFile() ||
+          current.nlink !== 1
+        )
+          throw new Error("File was replaced before write; no content was written");
         signal.throwIfAborted();
         await file.truncate(0);
         await file.writeFile(bytes, { signal });
-        return { path: target, bytes: bytes.length };
+        return {
+          path: target,
+          bytes: bytes.length,
+          before,
+          newText: text,
+        } satisfies FileWriteResult;
       } finally {
         await file.close();
       }
@@ -311,7 +388,7 @@ export async function workspaceFiles(cwd: string, additionalDirectories: readonl
         "write",
         raw,
         signal,
-        ({ files, path }) => files.write(path, text, signal),
+        ({ files, path }) => files.write(path, text, signal, context),
         MAX_FILE_BYTES,
         context,
       ),

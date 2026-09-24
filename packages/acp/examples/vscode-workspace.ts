@@ -9,6 +9,7 @@ import {
 
 import type { AcpOptions } from "../adapter.ts";
 import { terminalTool } from "../client-terminal.ts";
+import { workspaceToolContent } from "../file-write.ts";
 import { planTool } from "../plan.ts";
 import type { AcpConfigBinding } from "../session-config.ts";
 import { workspaceDirectory } from "../workspace-directory.ts";
@@ -218,6 +219,7 @@ export function workspaceAgent(
       ];
       return {
         config,
+        toolContent: workspaceToolContent,
         commands: [
           {
             name: "review",
