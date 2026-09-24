@@ -120,7 +120,7 @@ test("JSON-RPC initialization, framing, validation and baseline text/resource-li
     protocolVersion: 1,
     agentCapabilities: {
       loadSession: true,
-      promptCapabilities: { image: true, embeddedContext: true, audio: false },
+      promptCapabilities: { image: true, embeddedContext: true, audio: true },
     },
   });
   expect((await h.initialize()).error?.code).toBe(-32600);
@@ -4904,6 +4904,132 @@ test("read_file forwards line ranges to the ACP client and retains range diagnos
   expect(records.find((record) => record.event === "client_file.completed")).toMatchObject({
     line: 10,
     limit: 3,
+  });
+  expect(records.filter((record) => ["warning", "error"].includes(record.level))).toHaveLength(0);
+});
+
+test("ACP audio reaches Google as exact inline bytes, remains a journal ref, and reload performs no HTTP", async () => {
+  const { googleGenerateV3 } = await import("../core/providers/index.ts");
+  const { SessionIdSchema } = await import("../core/agent/types.ts");
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = `.session-artifacts/acp-audio/${crypto.randomUUID()}`;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    const wav = Buffer.alloc(44 + 320);
+    wav.write("RIFF", 0);
+    wav.writeUInt32LE(wav.length - 8, 4);
+    wav.write("WAVEfmt ", 8);
+    wav.writeUInt32LE(16, 16);
+    wav.writeUInt16LE(1, 20);
+    wav.writeUInt16LE(1, 22);
+    wav.writeUInt32LE(16000, 24);
+    wav.writeUInt32LE(32000, 28);
+    wav.writeUInt16LE(2, 32);
+    wav.writeUInt16LE(16, 34);
+    wav.write("data", 36);
+    wav.writeUInt32LE(320, 40);
+    const data = wav.toString("base64");
+    const wires: any[] = [];
+    const base = setup();
+    const options: AcpOptions = {
+      ...base.options,
+      sessionOptions: async (context) => {
+        const original = await base.options.sessionOptions(context);
+        return {
+          ...original,
+          configuration: {
+            ...original.configuration,
+            policy: { provider: "google", model: "audio-test", thinking: "off" },
+          },
+          bindings: {
+            ...original.bindings,
+            complete: undefined,
+            providers: new Map([
+              [
+                "google",
+                {
+                  profile: googleGenerateV3,
+                  transport: {
+                    baseUrl: "https://example.invalid",
+                    fetch: (async (_url, init) => {
+                      wires.push(JSON.parse(String(init?.body)));
+                      return Response.json({
+                        candidates: [
+                          {
+                            finishReason: "STOP",
+                            content: {
+                              role: "model",
+                              parts: [{ text: "Scripted audio response" }],
+                            },
+                          },
+                        ],
+                      });
+                    }) as typeof fetch,
+                  },
+                },
+              ],
+            ]),
+          },
+        };
+      },
+    };
+    let h = harness(options);
+    try {
+      await h.initialize();
+      const id = await h.newSession();
+      const response = await h.request("session/prompt", {
+        sessionId: id,
+        prompt: [
+          { type: "text", text: "Describe this recording" },
+          { type: "audio", mimeType: "audio/wav", data },
+        ],
+      });
+      expect(response.result.stopReason).toBe("end_turn");
+      expect(wires[0].contents[0].parts).toContainEqual({
+        inlineData: { mimeType: "audio/wav", data },
+      });
+      const loaded = await base.persistence.load(
+        SessionIdSchema.parse(id),
+        new AbortController().signal,
+      );
+      expect(JSON.stringify(loaded)).toContain("audio/wav");
+      expect(JSON.stringify(loaded)).not.toContain(data);
+      await h.close();
+      h = harness(options);
+      await h.initialize();
+      expect(
+        (await h.request("session/load", { sessionId: id, cwd: "/tmp", mcpServers: [] })).error,
+      ).toBeUndefined();
+      expect(wires).toHaveLength(1);
+      expect(
+        h
+          .updates()
+          .some(
+            (message) =>
+              message.update.sessionUpdate === "user_message_chunk" &&
+              message.update.content.type === "resource_link" &&
+              message.update.content.mimeType === "audio/wav",
+          ),
+      ).toBe(true);
+      await h.request("session/prompt", {
+        sessionId: id,
+        prompt: [{ type: "text", text: "Describe the recording again" }],
+      });
+      expect(wires).toHaveLength(2);
+      expect(wires[1].contents[0].parts).toContainEqual({
+        inlineData: { mimeType: "audio/wav", data },
+      });
+    } finally {
+      await h.close();
+      await Bun.write(`${directory}/requests.json`, JSON.stringify(wires, null, 2));
+    }
+  });
+  const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(records.find((record) => record.event === "attachment.stored")).toMatchObject({
+    media: "audio/wav",
+    bytes: 364,
   });
   expect(records.filter((record) => ["warning", "error"].includes(record.level))).toHaveLength(0);
 });

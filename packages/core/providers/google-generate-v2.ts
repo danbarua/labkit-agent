@@ -1,10 +1,12 @@
 import { z } from "zod";
 
+import { AUDIO_MEDIA_KINDS } from "../agent/content.ts";
 import { ToolCallSchema } from "../agent/types.ts";
 import {
   advertisements,
   completion,
   continuationPayload,
+  googleMessageParts,
   messageText,
   responseBody,
   systemAndMessages,
@@ -39,7 +41,7 @@ export const googleGenerateV2: CompletionProfile = {
   capabilities: {
     thinking: { mode: "budget", minTokens: 1 },
     stream: false,
-    media: ["text/plain", "text/markdown"],
+    media: ["text/plain", "text/markdown", ...AUDIO_MEDIA_KINDS],
   },
   encode(raw, blobs) {
     const request = parseRequest(raw, "google-generate@2");
@@ -48,7 +50,7 @@ export const googleGenerateV2: CompletionProfile = {
     const contents: { role: string; parts: unknown[] }[] = [];
     const calls = new Map<string, string>();
     for (const message of split.messages) {
-      const text = messageText(message, blobs);
+      const text = message.role === "tool" ? messageText(message, blobs) : "";
       const role = message.role === "assistant" ? "model" : "user";
       const envelope = matchingContinuations(
         [message],
@@ -69,7 +71,7 @@ export const googleGenerateV2: CompletionProfile = {
         });
       else {
         if (replay) parts.push(...replay);
-        else if (text) parts.push({ text: text });
+        else parts.push(...googleMessageParts(message, blobs));
         if (message.role === "assistant")
           for (const call of message.calls ?? []) {
             calls.set(call.id, call.name);

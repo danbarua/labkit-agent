@@ -107,3 +107,26 @@ export function continuationPayload(entry: Continuation, blobs?: BlobResolver): 
       ),
     );
 }
+
+/** Audio is native user content; it must never be replaced by a textual attachment stub. */
+export function googleMessageParts(message: AgentMessage, blobs?: BlobResolver): unknown[] {
+  const hasAudio =
+    message.role !== "tool" &&
+    message.parts?.some((part) => part.type === "blob" && part.ref.media.startsWith("audio/"));
+  if (!hasAudio) {
+    const text = messageText(message, blobs);
+    return text ? [{ text }] : [];
+  }
+  if (message.role !== "user") throw new Error("Google audio attachments require a user message");
+  return message.parts!.map((part) => {
+    if (part.type === "text") return { text: part.text };
+    if (part.ref.media.startsWith("audio/"))
+      return {
+        inlineData: {
+          mimeType: part.ref.media,
+          data: Buffer.from(attachmentBytes(part.ref, blobs)).toString("base64"),
+        },
+      };
+    return { text: attachmentText(part.ref, blobs) };
+  });
+}

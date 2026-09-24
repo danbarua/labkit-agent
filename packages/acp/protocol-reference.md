@@ -520,7 +520,7 @@ The initial agent manifest model remains unchanged by a policy selection, so kee
 
 ## Explicit limits
 
-This is an ACP v1 **session subset**, not a claim of full protocol conformance. Text, resource-link, image, and embedded-resource
+This is an ACP v1 **session subset**, not a claim of full protocol conformance. Text, resource-link, image, audio, and embedded-resource
 prompts are accepted. Local `file://` links and paths inside the session workspace roots are read through the
 workspace path checks and stored with `putBlob` in that session before admitting the user input.
 The journal contains attachment refs, never file bytes. Outside paths are rejected without reading
@@ -531,14 +531,18 @@ Local attachments retain the 8 MiB blob cap. Extensions select markdown, PDF, PN
 plain text; the bound provider must support the selected media. The existing 64 KiB provider text
 inline cap is unchanged. Attaching a local resource is an explicit user input and does not create
 a tool permission request. Model-initiated file access still uses the permission-gated tools.
-Image and embedded-context capabilities are advertised. PNG/JPEG image data and embedded binary
+Image, audio, and embedded-context capabilities are advertised. PNG/JPEG image data and embedded binary
 resources (PNG/JPEG/PDF or UTF-8 plain text/markdown) require canonical base64 and the same 8 MiB
 raw-byte cap. Binary resources require an explicit supported MIME type. Embedded text is stored
 as markdown when declared `text/markdown`, otherwise as plain text, including source-code MIME
 types. Embedded URIs are labels only: supplied bytes can represent unsaved or outside-workspace
 content, and no file read or URL fetch occurs. Blob refs, not content bytes, enter the journal.
 Provider media support is checked before storage/admission; attachments require a bound provider
-profile. Custom completion ports without a provider registry cannot resolve attachment media. Audio prompt blocks remain unadvertised and rejected.
+profile. Custom completion ports without a provider registry cannot resolve attachment media. Audio blocks require a declared supported audio MIME type and canonical base64 within the same
+8 MiB cap. Google bindings encode them as native audio; bindings without audio support reject
+before storage/admission. Local audio file links use the declared audio MIME type or a recognized
+extension. Reload displays the saved audio reference without invoking a model; a new prompt can
+resolve the saved bytes. Audio playback in the installed editor still needs verification.
 The existing provider text inline cap still applies to embedded resources.
 
 Client-supplied stdio, HTTP, SSE, and ACP-proxied MCP servers are supported. MCP OAuth, cross-provider switching,

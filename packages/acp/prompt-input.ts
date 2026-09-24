@@ -45,9 +45,10 @@ export async function promptInput(
         text.push(block.text);
         continue;
       }
-      if (block.type === "image" || block.type === "resource") {
+      if (block.type === "image" || block.type === "audio" || block.type === "resource") {
         const resource = block.type === "resource" ? block.resource : undefined;
-        const name = resource?.uri || (block.type === "image" ? block.uri : undefined) || "image";
+        const name =
+          resource?.uri || (block.type === "image" ? block.uri : undefined) || block.type;
         let media: MediaKind;
         let bytes: Uint8Array;
         if (resource && "text" in resource) {
@@ -56,13 +57,18 @@ export async function promptInput(
             throw RequestError.invalidParams(undefined, "Embedded resource exceeds 8 MiB");
           bytes = new TextEncoder().encode(resource.text);
         } else {
-          const mime = block.type === "image" ? block.mimeType : resource?.mimeType;
+          const mime =
+            block.type === "image" || block.type === "audio" ? block.mimeType : resource?.mimeType;
           const parsed = MediaKindSchema.safeParse(mime);
-          if (!parsed.success || (block.type === "image" && !parsed.data.startsWith("image/")))
+          if (
+            !parsed.success ||
+            (block.type === "image" && !parsed.data.startsWith("image/")) ||
+            (block.type === "audio" && !parsed.data.startsWith("audio/"))
+          )
             throw RequestError.invalidParams(undefined, "Unsupported embedded media type");
           media = parsed.data;
           const encoded =
-            block.type === "image"
+            block.type === "image" || block.type === "audio"
               ? block.data
               : resource && "blob" in resource
                 ? resource.blob
@@ -90,7 +96,7 @@ export async function promptInput(
         continue;
       }
       if (block.type !== "resource_link")
-        throw RequestError.invalidParams(undefined, `Unsupported prompt content: ${block.type}`);
+        throw RequestError.invalidParams(undefined, "Unsupported prompt content");
       text.push(
         `[Resource: ${block.name}] ${block.uri}${block.description ? `\n${block.description}` : ""}`,
       );
@@ -104,16 +110,31 @@ export async function promptInput(
         files ??= await workspaceFiles(cwd, additionalDirectories);
         path = files.path(raw);
         const extension = extname(path).toLowerCase();
+        const declared = MediaKindSchema.safeParse(block.mimeType);
+        const audioExtension: Record<string, MediaKind> = {
+          ".wav": "audio/wav",
+          ".mp3": "audio/mpeg",
+          ".aiff": "audio/aiff",
+          ".aac": "audio/aac",
+          ".ogg": "audio/ogg",
+          ".flac": "audio/flac",
+          ".m4a": "audio/m4a",
+          ".opus": "audio/opus",
+          ".webm": "audio/webm",
+        };
         const media: MediaKind =
-          extension === ".pdf"
-            ? "application/pdf"
-            : extension === ".png"
-              ? "image/png"
-              : [".jpg", ".jpeg"].includes(extension)
-                ? "image/jpeg"
-                : [".md", ".markdown"].includes(extension)
-                  ? "text/markdown"
-                  : "text/plain";
+          declared.success && declared.data.startsWith("audio/")
+            ? declared.data
+            : (audioExtension[extension] ??
+              (extension === ".pdf"
+                ? "application/pdf"
+                : extension === ".png"
+                  ? "image/png"
+                  : [".jpg", ".jpeg"].includes(extension)
+                    ? "image/jpeg"
+                    : [".md", ".markdown"].includes(extension)
+                      ? "text/markdown"
+                      : "text/plain"));
         pending.push({ path, media });
       } catch (error) {
         throw RequestError.invalidParams(
@@ -124,12 +145,14 @@ export async function promptInput(
     }
     if (!text.join("\n").trim())
       throw RequestError.invalidParams(undefined, "Prompt must not be empty");
-    for (const { media } of pending)
-      if (supportedMedia && !supportedMedia.includes(media))
+    for (const item of pending) {
+      media = item.media;
+      if (supportedMedia && !supportedMedia.includes(item.media))
         throw RequestError.invalidParams(
           undefined,
-          `Provider does not support attachment media: ${media}`,
+          `Provider does not support attachment media: ${media}; supported media: ${supportedMedia.join(", ") || "none"}`,
         );
+    }
     for (const item of pending) {
       media = item.media;
       path = "path" in item ? item.path : undefined;

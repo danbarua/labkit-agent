@@ -168,7 +168,12 @@ contents. An application that needs extraction must arrange it explicitly; attac
 not an automatic document-reading workflow.
 
 Every profile accepts text/plain and text/markdown. Anthropic @2–@4 additionally support user PNG,
-JPEG and PDF as base64 blocks. Tool-result blobs and other unsupported media fail before HTTP.
+JPEG and PDF as base64 blocks. Google profiles support user audio as native `inlineData` parts,
+including WAV, MP3/MPEG, AIFF, AAC, OGG, FLAC, M4A, L16, Opus, A-law, μ-law and WebM. The MIME type
+and bytes are preserved; no transcription or text stub is substituted. See Google's
+[audio input documentation](https://ai.google.dev/gemini-api/docs/generate-content/audio).
+The environment must bind a model that supports the declared media. Other profiles still reject
+audio before HTTP. Tool-result blobs and other unsupported media fail before HTTP.
 Attachment bytes are verified by hash/length through an operation-local resolver. Inline UTF-8 text
 is limited to 65,536 bytes; larger text becomes a named SHA-256 stub, not its full contents. No implicit
 summarization, path reading, PDF conversion or Files API is performed. Attachment refs and continuation

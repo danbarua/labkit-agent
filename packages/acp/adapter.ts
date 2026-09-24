@@ -989,7 +989,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         agentCapabilities: {
           loadSession,
           ...(auth.logoutSupported ? { auth: { logout: {} } } : {}),
-          promptCapabilities: { image: true, audio: false, embeddedContext: true },
+          promptCapabilities: { image: true, audio: true, embeddedContext: true },
           mcpCapabilities: { http: true, sse: true, acp: true },
           sessionCapabilities: {
             close: {},
