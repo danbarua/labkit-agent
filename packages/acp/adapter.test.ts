@@ -4767,3 +4767,74 @@ for (const stream of [false, true]) {
     });
   }
 }
+
+test("live command catalogs update and clear without changing admitted prompts or leaking after close", async () => {
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = `.session-artifacts/acp-commands/${crypto.randomUUID()}`;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    const pending = deferred<unknown>();
+    let admittedText = "";
+    let publish: NonNullable<Parameters<AcpOptions["sessionOptions"]>[0]["publishCommands"]>;
+    const base = setup({
+      complete: (request) => {
+        admittedText = request.messages.at(-1)!.content;
+        return pending.promise;
+      },
+    });
+    const h = harness({
+      ...base.options,
+      sessionOptions: async (context) => {
+        publish = context.publishCommands!;
+        publish([{ name: "review", description: "Staged", prompt: "Initial instructions" }]);
+        return base.options.sessionOptions(context);
+      },
+    });
+    try {
+      await h.initialize();
+      const sessionId = await h.newSession();
+      const catalogs = () =>
+        h
+          .updates()
+          .filter((message) => message.update.sessionUpdate === "available_commands_update");
+      expect(catalogs()).toHaveLength(1);
+      const turn = await h.start("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: "/review this" }],
+      });
+      await until(() => admittedText !== "");
+      publish!([{ name: "review", description: "Changed", prompt: "Replacement instructions" }]);
+      await until(() => catalogs().length === 2);
+      expect(admittedText).toContain("Initial instructions");
+      expect(admittedText).not.toContain("Replacement instructions");
+      expect(() =>
+        publish!([{ name: "INVALID COMMAND", description: "bad", prompt: "bad" }]),
+      ).toThrow();
+      expect(catalogs()).toHaveLength(2);
+      pending.resolve(answer);
+      expect((await h.response(turn)).result.stopReason).toBe("end_turn");
+      await h.request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: "/review again" }],
+      });
+      expect(admittedText).toContain("Replacement instructions");
+      publish!([]);
+      await until(() => catalogs().length === 3);
+      expect(catalogs().at(-1)!.update).toMatchObject({ availableCommands: [] });
+      await h.request("session/close", { sessionId });
+      expect(() => publish!([])).toThrow("closed ACP session");
+      expect(catalogs()).toHaveLength(3);
+    } finally {
+      pending.resolve(answer);
+      await h.close();
+    }
+  });
+  const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const updated = records.filter((record) => record.event === "acp.commands.updated");
+  expect(updated.map((record) => record.count)).toEqual([1, 0]);
+  expect(updated[0]).toMatchObject({ level: "info", names: ["review"] });
+  expect(updated[0].sessionId).toBeString();
+  expect(records.filter((record) => record.event === "acp.commands.rejected")).toHaveLength(2);
+});

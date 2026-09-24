@@ -92,9 +92,12 @@ letters, digits, underscores, and hyphens, beginning with a letter; omit the lea
 A declared `/name` prefix in the first text block expands to the template plus the remaining
 unstructured argument text. Other blocks keep their order. Unknown command prefixes and ordinary
 slash-containing text are left unchanged. The expanded user text, including the command name,
-is journaled once; restore replays it without re-expanding against changed templates. Catalogs
-remain fixed for an open session and are rebound from the factory on load/resume. Dynamic command
-registration and commands with direct session lifecycle effects are not implemented.
+is journaled once; restore replays it without re-expanding against changed templates. `SessionOptionsContext.publishCommands(commands)` replaces the complete catalog for the live
+session and sends `available_commands_update`; an empty array clears it. Updates during opening
+are staged until publication. Invalid catalogs and updates after close are rejected without
+changing the active catalog. Already-admitted prompts retain their expanded text. Catalogs are
+environment resources rebound on load/resume, not journal data. Commands with direct session
+lifecycle effects are not implemented.
 
 ## Plans
 
@@ -299,8 +302,8 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
 
 ## Supported protocol surface
 
-- `initialize`: negotiates ACP v1; declares actual prompt/load/close capabilities. Credentials are
-  supplied by the environment, so no interactive authentication methods are advertised.
+- `initialize`: negotiates ACP v1; declares actual prompt/load/close capabilities. The default launcher uses
+  environment credentials; hosts can supply the authentication methods described above.
 - `session/new`: creates a journaled session. Each connection owns its loaded runtimes.
 - `session/prompt`: admits one active prompt per session and waits for durable terminal settlement.
   Separate sessions run independently; overlapping prompts in one session return an RPC error.
@@ -348,7 +351,7 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
   with the full configuration list. Requests during a prompt wait for its terminal boundary; new
   prompts wait for pending configuration commits. Cancellation before dispatch prevents the patch;
   cancellation after persistence dispatch does not imply rollback. Failed patches publish no change.
-- `session/set_mode`: compatibility alias for the single mode-category selector. Mode and config
+- `session/set_mode`: alias for the first mode-category selector. Mode and config
   notifications reflect the same committed policy. New/load/resume responses include current
   config options and legacy modes when bindings are provided. Boolean controls require the client's
   `session.configOptions.boolean` capability.
@@ -362,7 +365,9 @@ best-effort subscribers. Neither outgoing display updates nor an ACP response ce
 Both the admitted tool-intent receipt and approval receipt still precede execution.
 
 Prompt responses map completed → `end_turn`, exhausted → `max_turn_requests`, aborted → `cancelled`,
-and terminal error classification `permission_refused` → `refusal`. Provider, tool, storage and malformed-permission
+and terminal error classification `permission_refused` → `refusal`. Explicit provider token limits
+map to `max_tokens`; provider refusals map to `refusal`. These responses retain the structured
+failure in `_meta["labkit.dev/failure"]`. Other provider, tool, storage and malformed-permission
 failures return JSON-RPC errors. Partial stream text may already be visible when a stream fails;
 it never becomes a successful partial model_settled. Updates queued for a prompt are written before
 its response. EOF, output failure and SIGINT/SIGTERM close owned runtimes and cancel their children.
@@ -529,8 +534,7 @@ Provider media support is checked before storage/admission; attachments require 
 profile. Custom completion ports without a provider registry cannot resolve attachment media. Audio prompt blocks remain unadvertised and rejected.
 The existing provider text inline cap still applies to embedded resources.
 
-Client-supplied stdio, HTTP, SSE, and ACP-proxied MCP servers are supported. MCP OAuth,
-remembered permissions, cross-provider switching,
+Client-supplied stdio, HTTP, SSE, and ACP-proxied MCP servers are supported. MCP OAuth, cross-provider switching,
 and ACP HTTP transport remain unimplemented. No usage_update is fabricated from provider usage deltas:
 ACP requires a context-window size that core does not currently supply.
 

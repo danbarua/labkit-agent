@@ -60,6 +60,8 @@ export type SessionOptionsContext = Readonly<{
   elicitation?: ClientElicitation;
   terminal?: ClientTerminal;
   publishPlan?: PlanSink;
+  /** Replace this session’s command catalog; admitted prompts retain their expanded text. */
+  publishCommands?: (commands: readonly AcpCommand[]) => void;
   signal: AbortSignal;
 }>;
 
@@ -482,6 +484,9 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     let initializedId: string | undefined;
     let cancelOpening: (() => void) | undefined;
     let boundSessionId: string | undefined;
+    let commandEntry: Session | undefined;
+    let commandPublisherActive = true;
+    let pendingCommands: readonly AcpCommand[] | undefined;
     const sessionIdentity = () => {
       if (!boundSessionId || !sessions.has(boundSessionId)) throw new Error("Session is not open");
       return boundSessionId;
@@ -511,6 +516,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         );
       }
       const cleanup = async () => {
+        commandPublisherActive = false;
         elicitation.close();
         try {
           await mcp.close();
@@ -568,6 +574,39 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         mcpTools,
         clientFiles: filesystem,
         elicitation: elicitation.port,
+        publishCommands: (commands) => {
+          try {
+            if (!commandPublisherActive || signal.aborted || connection.signal.aborted || closing)
+              throw new Error("Cannot update commands for a closed ACP session");
+            const next = bindCommands(commands);
+            if (!commandEntry) {
+              pendingCommands = next;
+              return;
+            }
+            const sessionId = commandEntry.runtime.snapshot.durable.conversation.sessionId;
+            if (sessions.get(sessionId) !== commandEntry || !commandEntry.acceptingUpdates)
+              throw new Error("Cannot update commands for an unpublished ACP session");
+            commandEntry.commands = next;
+            send(client, sessionId, {
+              sessionUpdate: "available_commands_update",
+              availableCommands: availableCommands(next),
+            });
+            diagnostic("acp", "info", "acp.commands.updated", {
+              connectionId,
+              sessionId,
+              count: next.length,
+              names: next.map((command) => command.name),
+            });
+          } catch (error) {
+            diagnostic("acp", "warning", "acp.commands.rejected", {
+              connectionId,
+              sessionId: boundSessionId ?? id,
+              reason: "Command catalog unchanged; update was invalid or session is no longer open",
+              error: diagnosticError(error),
+            });
+            throw error;
+          }
+        },
         publishPlan: (entries, operationSignal) => {
           if (operationSignal.aborted || connection.signal.aborted) return;
           const sessionId = sessionIdentity();
@@ -790,9 +829,11 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         await runtime.close();
         throw error;
       }
+      entry.commands = pendingCommands ?? entry.commands;
       entry.configSignature = JSON.stringify(configuration);
       entry.modeId = configuration.modes?.currentModeId;
-      sessions.set(sessionId, Object.assign(entry, { runtime }));
+      commandEntry = Object.assign(entry, { runtime });
+      sessions.set(sessionId, commandEntry);
       entry.revision = runtime.snapshot.durable.revision;
       if (id && replay) {
         const durable = runtime.snapshot.durable;
