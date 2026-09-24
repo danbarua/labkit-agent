@@ -33,7 +33,9 @@ export function workspaceAgent(
   ]);
   const profile = profiles.get(id);
   if (!profile)
-    throw new Error("LABKIT_ACP_PROVIDER must be anthropic, openai, openai-responses, or google");
+    throw new Error(
+      `Unsupported LABKIT_ACP_PROVIDER ${JSON.stringify(id)}; choose anthropic, openai, openai-responses, or google. Adapter profile IDs are not provider selections.`,
+    );
   const model = env.LABKIT_ACP_MODEL;
   if (!model) throw new Error("Set LABKIT_ACP_MODEL to your provider's model ID");
   const models = [

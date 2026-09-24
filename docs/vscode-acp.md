@@ -2,7 +2,9 @@
 
 Install [ACP Client by formulahendry](https://marketplace.visualstudio.com/items?itemName=formulahendry.acp-client)
 and run `bun install` in the Labkit checkout. This uses ACP stdio, not VS Code Agent Host/AHP.
-The web console remains the in-repo harness; no Labkit chat extension is required.
+Run `bun run debug:acp` from the checkout root to verify the built stdio integration without an
+editor or provider credentials. Run `bun run build:acp` after source changes before launching the
+built agent below. No Labkit chat extension is required.
 
 ACP Client 0.2.0 uses an **object keyed by agent name** for `acp.agents`
 ([setting schema](https://github.com/formulahendry/vscode-acp/blob/main/package.json)).
@@ -14,9 +16,9 @@ Add this to your VS Code user settings, replacing the absolute checkout paths an
     "Labkit": {
       "command": "bun",
       "args": [
-        "/ABS/labkit-agent/packages/acp/cli.ts",
+        "/ABS/labkit-agent/packages/acp/dist/cli.js",
         "--config",
-        "/ABS/labkit-agent/packages/acp/examples/vscode-workspace.ts"
+        "/ABS/labkit-agent/packages/acp/dist/examples/vscode-workspace.js"
       ],
       "env": {
         "LABKIT_ACP_MODEL": "YOUR_ANTHROPIC_MODEL_ID"
@@ -34,6 +36,11 @@ directory; the adapter never changes that directory. File operations use the abs
 `session/new`, independently of the process cwd. Leave `acp.defaultWorkingDirectory` unset to use
 the opened workspace. Other provider profiles and credentials are listed in the
 [ACP README](../packages/acp/README.md#configure-a-host).
+
+If session creation rejects `LABKIT_ACP_PROVIDER`, use `anthropic`, not an adapter identifier
+such as `anthropic-messages@4`. Run `bun run logs:acp --errors` from the checkout to read the latest
+launch failure. The log path is printed before the records. A logged `cwd: "/"` means the client
+sent the filesystem root; select the intended workspace in the client before invoking file tools.
 
 ## First conversation
 

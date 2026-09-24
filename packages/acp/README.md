@@ -9,6 +9,30 @@ For a runnable agent, use [vscode-workspace.ts](examples/vscode-workspace.ts) an
 [VS Code launch instructions](../../docs/vscode-acp.md). For exact fields, limits, and supported
 messages, use the [protocol and binding reference](protocol-reference.md).
 
+## Build, test, and debug ACP from the repository root
+
+```sh
+bun run build:acp   # Bundle the CLI and workspace config into packages/acp/dist/
+bun run test:acp    # Run the ACP suite; no provider credentials needed
+bun run logs:acp    # Read the newest launch log; add --errors for warnings/errors
+bun run debug:acp   # Build, drive real stdio, and retain failure/restore evidence
+bun run dev:acp     # Run source over stdio with the workspace config
+bun run start:acp   # Run the built version over stdio (build first)
+```
+
+`debug:acp` needs no editor or API key. It exercises initialization, a permission-approved
+file read, a scripted HTTP failure, and restart/load. It prints a unique directory under
+`.session-artifacts/acp-debug/` containing protocol replies, journals, and actual launcher logs.
+The intentional HTTP 400 must appear with its provider request ID and redacted credential.
+A failed check exits nonzero and keeps the evidence. Remove old debug run directories yourself.
+
+`dev:acp` and `start:acp` are protocol servers, not interactive chat terminals. They need
+`LABKIT_ACP_MODEL` and the selected provider's API key; connect them to an ACP client.
+Live-launch logs default to `~/.labkit/logs/` (DEBUG, 10 MiB rotation, four backups per launch,
+20 stopped launches retained); the exact file is printed on stderr. Stdout stays protocol-only.
+For an editor launch, use the absolute built CLI and config paths described in
+[the VS Code setup](../../docs/vscode-acp.md).
+
 ## Configure a host
 
 ```ts

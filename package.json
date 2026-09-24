@@ -10,7 +10,13 @@
     "build": "bun run packages/web/build.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:with-logs": "LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test"
+    "test:with-logs": "LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test",
+    "build:acp": "bun build packages/acp/cli.ts packages/acp/examples/vscode-workspace.ts --target=bun --splitting --sourcemap=external --outdir=packages/acp/dist",
+    "start:acp": "bun packages/acp/dist/cli.js --config packages/acp/dist/examples/vscode-workspace.js",
+    "dev:acp": "bun packages/acp/cli.ts --config packages/acp/examples/vscode-workspace.ts",
+    "test:acp": "bun test packages/acp",
+    "debug:acp": "bun run build:acp && LABKIT_ACP_TEST_BUILT=1 LABKIT_ACP_KEEP_TRACE=1 LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/acp/stdio.test.ts packages/acp/observability-flow.test.ts",
+    "logs:acp": "bun packages/acp/logs.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

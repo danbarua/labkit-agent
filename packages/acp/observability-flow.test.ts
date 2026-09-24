@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,11 +6,22 @@ import { expect, test } from "@logtape/testing-bun/autoload";
 
 // Verify the operator's artifact, through the actual CLI, rather than a mock logging sink.
 test("persisted CLI trace joins ACP, permission, tool and provider failure across restart", async () => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), "labkit-trace-flow-")));
+  const retain = process.env.LABKIT_ACP_KEEP_TRACE === "1";
+  const parent = retain
+    ? new URL("../../.session-artifacts/acp-debug/", import.meta.url).pathname
+    : tmpdir();
+  await mkdir(parent, { recursive: true });
+  const root = await realpath(await mkdtemp(join(parent, "labkit-trace-flow-")));
+  if (retain) console.error(`ACP debug evidence: ${root}`);
   const logs = join(root, "logs");
   const secret = "test-provider-credential-9ad0c2";
   const config = join(root, "config.ts");
-  const workspace = new URL("./examples/vscode-workspace.ts", import.meta.url).href;
+  const workspace = new URL(
+    process.env.LABKIT_ACP_TEST_BUILT
+      ? "./dist/examples/vscode-workspace.js"
+      : "./examples/vscode-workspace.ts",
+    import.meta.url,
+  ).href;
   await writeFile(join(root, "README.md"), "A local file read for the trace test.");
   await Bun.write(
     config,
@@ -33,7 +44,13 @@ test("persisted CLI trace joins ACP, permission, tool and provider failure acros
   const launches: ReturnType<typeof launch>[] = [];
   function launch() {
     const child = Bun.spawn(
-      [process.execPath, new URL("./cli.ts", import.meta.url).pathname, "--config", config],
+      [
+        process.execPath,
+        new URL(process.env.LABKIT_ACP_TEST_BUILT ? "./dist/cli.js" : "./cli.ts", import.meta.url)
+          .pathname,
+        "--config",
+        config,
+      ],
       {
         cwd: root,
         env: { ...process.env, LABKIT_ACP_LOG_DIR: logs, LABKIT_ACP_LOG_LEVEL: "debug" },
@@ -72,6 +89,7 @@ test("persisted CLI trace joins ACP, permission, tool and provider failure acros
     };
     return {
       child,
+      stderr,
       messages,
       send,
       wait,
@@ -190,6 +208,31 @@ test("persisted CLI trace joins ACP, permission, tool and provider failure acros
       child.kill();
       await child.exited;
     }
-    await rm(root, { recursive: true, force: true });
+    if (retain) {
+      for (const [index, launch] of launches.entries()) {
+        await Bun.write(
+          join(root, `launch-${index + 1}-messages.json`),
+          JSON.stringify(launch.messages, null, 2),
+        );
+        await Bun.write(join(root, `launch-${index + 1}-stderr.log`), await launch.stderr);
+      }
+      await Bun.write(
+        join(root, "README.md"),
+        [
+          "# ACP debug evidence",
+          "",
+          "This run exercised the stdio CLI with scripted HTTP responses; no live provider was called.",
+          "The test runner reports pass/fail. These files are retained even when assertions fail.",
+          "",
+          "- logs/: actual rotating launcher diagnostics, including the deliberately triggered HTTP 400.",
+          "- launch-N-messages.json: received ACP replies, updates, and permission requests.",
+          "- launch-N-stderr.log: launcher messages and diagnostic file locations.",
+          "- .labkit/: workspace journals and blobs used by the restore check.",
+          "",
+          "Expected failure: req-provider-failure-123, Unsupported max_tokens; credentials must be redacted.",
+          "Remove this run directory when finished; retained debug runs are not pruned automatically.",
+        ].join("\n"),
+      );
+    } else await rm(root, { recursive: true, force: true });
   }
 }, 20_000);

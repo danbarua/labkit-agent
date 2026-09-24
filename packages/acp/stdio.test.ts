@@ -22,7 +22,13 @@ test("Bun stdio launcher exchanges ACP JSON lines and exits on EOF with stdout r
     }) };`,
   );
   const child = Bun.spawn(
-    [process.execPath, new URL("./cli.ts", import.meta.url).pathname, "--config", config],
+    [
+      process.execPath,
+      new URL(process.env.LABKIT_ACP_TEST_BUILT ? "./dist/cli.js" : "./cli.ts", import.meta.url)
+        .pathname,
+      "--config",
+      config,
+    ],
     {
       stdin: "pipe",
       stdout: "pipe",
