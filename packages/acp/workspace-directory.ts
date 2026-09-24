@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { Database } from "bun:sqlite";
 
 import {
@@ -54,23 +54,44 @@ export function workspaceDirectory(initialCwd = process.cwd()) {
       const metadata = !!db
         .query("SELECT name FROM sqlite_master WHERE type='table' AND name='session_info'")
         .get();
+      const scope = !!db
+        .query("SELECT name FROM sqlite_master WHERE type='table' AND name='session_scope'")
+        .get();
       const result = db
         .query(
-          metadata
-            ? `SELECT DISTINCT b.session, i.title, i.updated_at FROM batches b LEFT JOIN session_info i ON i.session=b.session WHERE b.session > ? AND (? IS NULL OR b.session=?) ORDER BY b.session LIMIT ?`
-            : `SELECT DISTINCT session, NULL AS title, NULL AS updated_at FROM batches WHERE session > ? AND (? IS NULL OR session=?) ORDER BY session LIMIT ?`,
+          `SELECT DISTINCT b.session, ${metadata ? "i.title, i.updated_at" : "NULL AS title, NULL AS updated_at"},
+          ${scope ? "s.additional_directories" : "NULL AS additional_directories"}
+          FROM batches b
+          ${metadata ? "LEFT JOIN session_info i ON i.session=b.session" : ""}
+          ${scope ? "LEFT JOIN session_scope s ON s.session=b.session" : ""}
+          WHERE b.session > ? AND (? IS NULL OR b.session=?) ORDER BY b.session LIMIT ?`,
         )
         .all(afterId, onlyId ?? null, onlyId ?? null, limit) as {
         session: string;
         title: string | null;
         updated_at: string | null;
+        additional_directories: string | null;
       }[];
-      return result.map((row) => ({
-        sessionId: SessionIdSchema.parse(row.session),
-        cwd,
-        ...(row.title ? { title: row.title } : {}),
-        ...(row.updated_at ? { updatedAt: row.updated_at } : {}),
-      }));
+      return result.map((row) => {
+        const directories: unknown = row.additional_directories
+          ? JSON.parse(row.additional_directories)
+          : [];
+        if (
+          !Array.isArray(directories) ||
+          directories.length > 32 ||
+          directories.some(
+            (path) => typeof path !== "string" || !isAbsolute(path) || path.includes("\0"),
+          )
+        )
+          throw new Error("Invalid stored workspace roots");
+        return {
+          sessionId: SessionIdSchema.parse(row.session),
+          cwd,
+          ...(directories.length ? { additionalDirectories: directories } : {}),
+          ...(row.title ? { title: row.title } : {}),
+          ...(row.updated_at ? { updatedAt: row.updated_at } : {}),
+        };
+      });
     } finally {
       db.close();
     }

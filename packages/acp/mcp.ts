@@ -3,7 +3,13 @@ import { pathToFileURL } from "node:url";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import type { Tool } from "@labkit-agent/core/host";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { CallToolResultSchema, ListRootsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import {
+  CallToolResultSchema,
+  ElicitationCompleteNotificationSchema,
+  ElicitRequestSchema,
+  ListRootsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import type {
   JsonSchemaType,
   JsonSchemaValidator,
@@ -15,6 +21,7 @@ import { Ajv2019 } from "ajv/dist/2019.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
+import type { ClientElicitation } from "./client-elicitation.ts";
 import { mcpTransport, validateMcpTransport } from "./mcp-transport.ts";
 import { waitForBoundary } from "./session-config.ts";
 
@@ -47,11 +54,17 @@ export function mcpToolName(server: string, tool: string) {
   return `mcp_${slug(server, 16)}_${slug(tool, 24)}_${hash}`;
 }
 /** Session-owned resources, registered before opening so disconnect can always stop child processes. */
-export function mcpConnections(servers: readonly McpServer[], cwd: string) {
+export function mcpConnections(
+  servers: readonly McpServer[],
+  cwd: string,
+  additionalDirectories: readonly string[] = [],
+  proxy?: (serverId: string) => Transport,
+  elicitation: ClientElicitation = {},
+) {
   if (servers.length > 32) throw new Error("At most 32 MCP servers are supported per session");
   const names = new Set<string>();
   for (const server of servers) {
-    validateMcpTransport(server);
+    validateMcpTransport(server, !!proxy);
     if (!server.name.trim() || names.has(server.name))
       throw new Error("MCP server names must be nonempty and unique");
     names.add(server.name);
@@ -82,14 +95,86 @@ export function mcpConnections(servers: readonly McpServer[], cwd: string) {
           const validator = new SchemaValidator();
           const client = new Client(
             { name: "labkit-agent", version: "0.1.0" },
-            { capabilities: { roots: { listChanged: false } }, jsonSchemaValidator: validator },
+            {
+              capabilities: {
+                roots: { listChanged: false },
+                ...(elicitation.form || elicitation.url
+                  ? {
+                      elicitation: {
+                        ...(elicitation.form ? { form: {} } : {}),
+                        ...(elicitation.url ? { url: {} } : {}),
+                      },
+                    }
+                  : {}),
+              },
+              jsonSchemaValidator: validator,
+            },
           );
+          const activeCalls = new Set<AbortSignal>();
+          const urls = new Map<string, (() => Promise<void>) | undefined>();
+          if (elicitation.form || elicitation.url)
+            client.setRequestHandler(ElicitRequestSchema, async ({ params }, extra) => {
+              if (!activeCalls.size)
+                throw new Error("MCP elicitation requires an active tool call");
+              const signal =
+                activeCalls.size === 1
+                  ? AbortSignal.any([extra.signal, [...activeCalls][0]!])
+                  : extra.signal;
+              if (params.mode !== "url") {
+                if (!elicitation.form) throw new Error("Client does not support form elicitation");
+                return elicitation.form(
+                  { message: params.message, requestedSchema: params.requestedSchema },
+                  signal,
+                );
+              }
+              if (!elicitation.url) throw new Error("Client does not support URL elicitation");
+              if (urls.has(params.elicitationId))
+                throw new Error("Duplicate outstanding MCP elicitation ID");
+              urls.set(params.elicitationId, undefined);
+              try {
+                const response = await elicitation.url(
+                  { message: params.message, url: params.url },
+                  signal,
+                );
+                if (response.action === "accept") {
+                  const discard = () => {
+                    if (urls.get(params.elicitationId) === complete)
+                      urls.delete(params.elicitationId);
+                    response.signal.removeEventListener("abort", discard);
+                  };
+                  const complete = async () => {
+                    discard();
+                    await response.complete();
+                  };
+                  urls.set(params.elicitationId, complete);
+                  response.signal.addEventListener("abort", discard, { once: true });
+                  if (response.signal.aborted) discard();
+                } else urls.delete(params.elicitationId);
+                return { action: response.action };
+              } catch (error) {
+                urls.delete(params.elicitationId);
+                throw error;
+              }
+            });
+          if (elicitation.url)
+            client.setNotificationHandler(
+              ElicitationCompleteNotificationSchema,
+              async ({ params }) => {
+                const complete = urls.get(params.elicitationId);
+                urls.delete(params.elicitationId);
+                await complete?.();
+              },
+            );
           client.setRequestHandler(ListRootsRequestSchema, () => ({
-            roots: [{ uri: pathToFileURL(cwd).href, name: "Workspace" }],
+            roots: [cwd, ...additionalDirectories].map((path, index) => ({
+              uri: pathToFileURL(path).href,
+              name: index === 0 ? "Workspace" : `Workspace ${index + 1}`,
+            })),
           }));
           // The SDK inherits only its safe baseline env for stdio. Remote headers stay transport-owned.
-          const { transport, dispose } = mcpTransport(server, cwd);
+          const { transport, dispose } = mcpTransport(server, cwd, proxy);
           clients.push(async () => {
+            urls.clear();
             try {
               await dispose?.();
             } finally {
@@ -146,13 +231,18 @@ export function mcpConnections(servers: readonly McpServer[], cwd: string) {
               async run(input, toolSignal) {
                 toolSignal.throwIfAborted();
                 if (closed) throw new Error("MCP session closed");
-                const result = CallToolResultSchema.parse(
-                  await client.callTool(
+                activeCalls.add(toolSignal);
+                let rawResult: unknown;
+                try {
+                  rawResult = await client.callTool(
                     { name: entry.name, arguments: input as Record<string, unknown> },
                     undefined,
                     { signal: toolSignal, timeout: 60000 },
-                  ),
-                );
+                  );
+                } finally {
+                  activeCalls.delete(toolSignal);
+                }
+                const result = CallToolResultSchema.parse(rawResult);
                 if (result.isError)
                   throw new Error(
                     `MCP tool failed: ${result.content

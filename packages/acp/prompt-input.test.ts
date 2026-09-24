@@ -109,3 +109,43 @@ test("provider media rejection happens before blob storage", async () => {
   ).rejects.toThrow("Provider does not support");
   expect(puts).toBe(0);
 });
+
+test("resource links in additional roots become session blobs and removed roots stop new reads", async () => {
+  const { mkdtemp, mkdir, writeFile, rm, realpath } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const root = await realpath(await mkdtemp(join(tmpdir(), "labkit-prompt-roots-")));
+  try {
+    const cwd = join(root, "primary");
+    const extra = join(root, "extra");
+    await mkdir(cwd);
+    await mkdir(extra);
+    await writeFile(join(extra, "DESIGN.md"), "# attached design");
+    const block: ContentBlock = {
+      type: "resource_link",
+      name: "DESIGN.md",
+      uri: pathToFileURL(join(extra, "DESIGN.md")).href,
+    };
+    const store = createMemoryPersistence();
+    const result = await promptInput(
+      [block],
+      cwd,
+      store,
+      sessionId,
+      signal,
+      ["text/markdown"],
+      [extra],
+    );
+    const ref = result.attachments![0]!;
+    expect(ref.media).toBe("text/markdown");
+    expect(JSON.stringify(result)).not.toContain("# attached design");
+    await expect(
+      promptInput([block], cwd, store, sessionId, signal, ["text/markdown"]),
+    ).rejects.toThrow();
+    const blob = await store.getBlob(sessionId, ref.id, signal);
+    expect("bytes" in blob && new TextDecoder().decode(blob.bytes)).toBe("# attached design");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

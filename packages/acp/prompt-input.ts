@@ -21,6 +21,7 @@ export async function promptInput(
   sessionId: z.infer<typeof SessionIdSchema>,
   signal: AbortSignal,
   supportedMedia?: readonly MediaKind[],
+  additionalDirectories: readonly string[] = [],
 ) {
   const text: string[] = [];
   const attachments: BlobRef[] = [];
@@ -83,7 +84,7 @@ export async function promptInput(
       if (decodeURIComponent(block.uri).split(/[\\/]/).includes(".."))
         throw new Error("Parent traversal is not allowed");
       const raw = scheme ? fileURLToPath(block.uri) : block.uri;
-      files ??= await workspaceFiles(cwd);
+      files ??= await workspaceFiles(cwd, additionalDirectories);
       const path = files.path(raw);
       const extension = extname(path).toLowerCase();
       const media: MediaKind =

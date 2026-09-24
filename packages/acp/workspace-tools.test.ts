@@ -229,3 +229,45 @@ test("workspace terminal tool requires explicit opt-in and client capability and
     await f.cleanup();
   }
 });
+
+test("additional roots preserve primary relative paths and enforce every root's sandbox", async () => {
+  const f = await fixture();
+  const extra = join(f.root, "extra");
+  try {
+    await mkdir(extra);
+    await writeFile(join(extra, "README.md"), "extra");
+    await mkdir(join(extra, ".labkit"));
+    await writeFile(join(extra, ".labkit", "secret"), "private");
+    await symlink(join(f.root, "outside.txt"), join(extra, "alias"));
+    await link(join(f.root, "outside.txt"), join(extra, "hard"));
+    const extraAlias = join(f.root, "extra-alias");
+    await symlink(extra, extraAlias);
+    const files = await workspaceFiles(f.cwd, [extra, extraAlias, extra]);
+    expect(files.roots).toEqual([f.cwd, extra]);
+    expect(await files.readText(join(extraAlias, "README.md"), signal())).toBe("extra");
+    expect(await files.readText("README.md", signal())).toBe("# workspace 🌍");
+    expect(await files.readText(join(extra, "README.md"), signal())).toBe("extra");
+    const write = workspaceTools(files).get("write_file")!;
+    const input = await write.parseInput({ path: join(extra, "new.txt"), text: "new" });
+    expect(write.locations!(input)).toEqual([{ path: join(extra, "new.txt") }]);
+    await write.run(input, signal());
+    expect(await readFile(join(extra, "new.txt"), "utf8")).toBe("new");
+    expect((await files.list(extra, signal())).path).toBe(extra);
+    for (const path of [
+      join(f.root, "outside.txt"),
+      "../extra/README.md",
+      join(extra, ".labkit/secret"),
+      join(extra, "alias"),
+      join(extra, "hard"),
+    ])
+      await expect(files.readText(path, signal())).rejects.toThrow();
+    // An overlapping parent root cannot expose another root's reserved store.
+    const overlapping = await workspaceFiles(f.root, [extra]);
+    await expect(overlapping.readText(join(extra, ".labkit/secret"), signal())).rejects.toThrow(
+      "reserved",
+    );
+    await expect(workspaceFiles(extra, [join(extra, ".labkit")])).rejects.toThrow("reserved");
+  } finally {
+    await f.cleanup();
+  }
+});

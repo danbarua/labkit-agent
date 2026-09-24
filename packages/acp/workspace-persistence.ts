@@ -1,5 +1,5 @@
 import { chmodSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { Database } from "bun:sqlite";
 
 import {
@@ -18,6 +18,11 @@ import {
 import { SessionIdSchema } from "@labkit-agent/core/types";
 
 export type WorkspacePersistence = SessionPersistence & {
+  setScope: (
+    sessionId: string,
+    additionalDirectories: readonly string[],
+    signal: AbortSignal,
+  ) => Promise<void>;
   deleteSession: (sessionId: string, signal: AbortSignal) => Promise<void>;
 };
 
@@ -64,6 +69,7 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
       CREATE TABLE IF NOT EXISTS workspace (singleton INTEGER PRIMARY KEY CHECK(singleton=1), cwd TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS batches (session TEXT NOT NULL, append_id TEXT NOT NULL, revision INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(session, append_id), UNIQUE(session, revision));
       CREATE TABLE IF NOT EXISTS session_info (session TEXT PRIMARY KEY, title TEXT, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_scope (session TEXT PRIMARY KEY, additional_directories TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS deleted_sessions (session TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS blobs (session TEXT NOT NULL, id TEXT NOT NULL, meta TEXT NOT NULL, bytes BLOB NOT NULL, PRIMARY KEY(session, id));
     `);
@@ -79,6 +85,33 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
   return {
     lifetime:
       "workspace-local SQLite; retained until session deletion or removal of .labkit/sessions",
+    async setScope(rawId, directories, signal) {
+      signal.throwIfAborted();
+      const sessionId = SessionIdSchema.parse(rawId);
+      if (
+        directories.length > 32 ||
+        directories.some((path) => !isAbsolute(path) || path.includes("\0"))
+      )
+        throw new Error("Additional directories must be absolute (at most 32)");
+      const roots = JSON.stringify([...new Set(directories)]);
+      const db = database();
+      try {
+        db.transaction(() => {
+          signal.throwIfAborted();
+          if (
+            db.query("SELECT 1 FROM deleted_sessions WHERE session=?").get(sessionId) ||
+            !db.query("SELECT 1 FROM batches WHERE session=? LIMIT 1").get(sessionId)
+          )
+            throw new Error("Cannot set scope for a missing or deleted session");
+          db.query(
+            `INSERT INTO session_scope VALUES (?, ?)
+            ON CONFLICT(session) DO UPDATE SET additional_directories=excluded.additional_directories`,
+          ).run(sessionId, roots);
+        }).immediate();
+      } finally {
+        db.close();
+      }
+    },
     async deleteSession(rawId, signal) {
       signal.throwIfAborted();
       const sessionId = SessionIdSchema.parse(rawId);
@@ -89,6 +122,7 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
           db.query("INSERT OR IGNORE INTO deleted_sessions VALUES (?)").run(sessionId);
           db.query("DELETE FROM batches WHERE session=?").run(sessionId);
           db.query("DELETE FROM session_info WHERE session=?").run(sessionId);
+          db.query("DELETE FROM session_scope WHERE session=?").run(sessionId);
           db.query("DELETE FROM blobs WHERE session=?").run(sessionId);
         }).immediate();
       } finally {

@@ -1609,6 +1609,7 @@ for (const type of ["http", "sse"] as const) {
       expect(initialized.result.agentCapabilities.mcpCapabilities).toEqual({
         http: true,
         sse: true,
+        acp: true,
       });
       const opened = await h.request("session/new", {
         cwd: "/tmp",
@@ -2988,5 +2989,1159 @@ test("throwing, rejected, pending, and malformed metadata callbacks do not fail 
     } finally {
       await h.close();
     }
+  }
+});
+
+test("workspace roots survive listing restart, replace on load/resume, and fork independently", async () => {
+  const { mkdtempSync, mkdirSync, realpathSync, rmSync, existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { workspaceAgent } = await import("./examples/vscode-workspace.ts");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "labkit-acp-roots-")));
+  const cwd = join(root, "primary");
+  const a = join(root, "a");
+  const b = join(root, "b");
+  for (const path of [cwd, a, b]) mkdirSync(path);
+  const make = () =>
+    workspaceAgent({ ANTHROPIC_API_KEY: "fixture", LABKIT_ACP_MODEL: "fixture-model" });
+  let h = harness(make());
+  try {
+    expect(
+      (await h.initialize()).result.agentCapabilities.sessionCapabilities.additionalDirectories,
+    ).toEqual({});
+    expect(
+      (await h.request("session/new", { cwd, mcpServers: [], additionalDirectories: ["relative"] }))
+        .error?.code,
+    ).toBe(-32602);
+    const opened = await h.request("session/new", {
+      cwd,
+      mcpServers: [],
+      additionalDirectories: [a],
+    });
+    expect(opened.error).toBeUndefined();
+    const id = opened.result.sessionId;
+    const rows = async () =>
+      (await h.request("session/list", { cwd })).result.sessions as {
+        sessionId: string;
+        additionalDirectories?: string[];
+      }[];
+    expect((await rows())[0]?.additionalDirectories).toEqual([a]);
+    await h.close();
+    h = harness(make());
+    await h.initialize();
+    expect((await rows())[0]?.additionalDirectories).toEqual([a]);
+    expect(
+      (
+        await h.request("session/load", {
+          sessionId: id,
+          cwd,
+          mcpServers: [],
+          additionalDirectories: [b],
+        })
+      ).error,
+    ).toBeUndefined();
+    expect((await rows())[0]?.additionalDirectories).toEqual([b]);
+    const fork = await h.request("session/fork", {
+      sessionId: id,
+      cwd,
+      additionalDirectories: [a],
+    });
+    expect(fork.error).toBeUndefined();
+    expect((await rows()).find((row) => row.sessionId === id)?.additionalDirectories).toEqual([b]);
+    expect(
+      (await rows()).find((row) => row.sessionId === fork.result.sessionId)?.additionalDirectories,
+    ).toEqual([a]);
+    await h.request("session/close", { sessionId: id });
+    expect(
+      (await h.request("session/resume", { sessionId: id, cwd, mcpServers: [] })).error,
+    ).toBeUndefined();
+    expect(
+      (await rows()).find((row) => row.sessionId === id)?.additionalDirectories,
+    ).toBeUndefined();
+    await h.request("session/close", { sessionId: id });
+    const savedFork = await h.request("session/fork", {
+      sessionId: id,
+      cwd,
+      mcpServers: [],
+      additionalDirectories: [b],
+    });
+    expect(savedFork.error).toBeUndefined();
+    expect(
+      (await rows()).find((row) => row.sessionId === id)?.additionalDirectories,
+    ).toBeUndefined();
+    expect(
+      (await rows()).find((row) => row.sessionId === savedFork.result.sessionId)
+        ?.additionalDirectories,
+    ).toEqual([b]);
+    expect(existsSync(join(cwd, ".labkit/sessions/store.sqlite"))).toBe(true);
+    expect(existsSync(join(a, ".labkit"))).toBe(false);
+    expect(existsSync(join(b, ".labkit"))).toBe(false);
+  } finally {
+    await h.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("lifecycle publication waits for metadata and failed or cancelled hooks cannot publish", async () => {
+  const base = setup();
+  const gate = deferred<void>();
+  let entered = false;
+  let id: string | undefined;
+  let fail = false;
+  const h = harness({
+    ...base.options,
+    sessionOptions: async (context) => ({
+      ...(await base.options.sessionOptions(context)),
+      onReady: async (sessionId) => {
+        id = sessionId;
+        entered = true;
+        await gate.promise;
+        if (fail) throw new Error("metadata failed");
+      },
+    }),
+  });
+  try {
+    await h.initialize();
+    const open = await h.start("session/new", { cwd: "/tmp", mcpServers: [] });
+    await until(() => entered);
+    expect(h.messages.some((message) => message.id === open && !message.method)).toBe(false);
+    expect((await h.request("session/prompt", prompt(id!))).error).toBeDefined();
+    expect(
+      (await h.request("session/load", { sessionId: id, cwd: "/tmp", mcpServers: [] })).error?.code,
+    ).toBe(-32602);
+    await h.send({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: open } });
+    expect((await h.response(open)).error).toBeDefined();
+    gate.resolve();
+    fail = true;
+    expect(
+      (await h.request("session/load", { sessionId: id, cwd: "/tmp", mcpServers: [] })).error?.code,
+    ).toBe(-32603);
+    fail = false;
+    expect(
+      (await h.request("session/load", { sessionId: id, cwd: "/tmp", mcpServers: [] })).error,
+    ).toBeUndefined();
+    expect((await h.request("session/prompt", prompt(id!))).result.stopReason).toBe("end_turn");
+  } finally {
+    gate.resolve();
+    await h.close();
+  }
+});
+
+test("ACP admits an additional-root resource as a blob and passes its contents through the provider", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { openaiChat } = await import("@labkit-agent/core/providers");
+  const { SessionIdSchema } = await import("@labkit-agent/core/types");
+  const root = mkdtempSync(join(tmpdir(), "labkit-acp-root-blob-"));
+  const cwd = join(root, "primary");
+  const extra = join(root, "extra");
+  mkdirSync(cwd);
+  mkdirSync(extra);
+  const path = join(extra, "DESIGN.md");
+  const body = "extra workspace document bytes";
+  writeFileSync(path, body);
+  const base = setup();
+  let calls = 0;
+  const h = harness({
+    ...base.options,
+    additionalDirectories: true,
+    sessionOptions: async (context) => {
+      expect(context.additionalDirectories).toEqual([extra]);
+      const options = await base.options.sessionOptions(context);
+      return {
+        ...options,
+        configuration: { ...options.configuration, policy: { provider: openaiChat.id } },
+        bindings: {
+          ...options.bindings,
+          complete: undefined,
+          providers: new Map([
+            [
+              openaiChat.id,
+              {
+                profile: openaiChat,
+                transport: {
+                  baseUrl: "https://provider.invalid/v1",
+                  fetch: (async (_url, init) => {
+                    calls++;
+                    expect(String(init?.body)).toContain(body);
+                    return Response.json({ choices: [{ message: { content: "Done" } }] });
+                  }) as typeof fetch,
+                },
+              },
+            ],
+          ]),
+        },
+      };
+    },
+  });
+  try {
+    await h.initialize();
+    const id = (
+      await h.request("session/new", { cwd, additionalDirectories: [extra], mcpServers: [] })
+    ).result.sessionId;
+    expect(
+      (
+        await h.request("session/prompt", {
+          sessionId: id,
+          prompt: [{ type: "resource_link", name: "DESIGN.md", uri: path }],
+        })
+      ).result.stopReason,
+    ).toBe("end_turn");
+    expect(calls).toBe(1);
+    const loaded = await base.persistence.load(
+      SessionIdSchema.parse(id),
+      new AbortController().signal,
+    );
+    expect(loaded.kind).toBe("loaded");
+    expect(JSON.stringify(loaded)).not.toContain(body);
+    expect(JSON.stringify(loaded)).toContain("attachments");
+  } finally {
+    await h.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function proxiedMcpPeer(h: ReturnType<typeof harness>) {
+  const handled = new Set<unknown>();
+  const next = async (method: string, inner?: string) => {
+    const match = () =>
+      h.messages.find(
+        (m) =>
+          m.method === method &&
+          m.id !== undefined &&
+          !handled.has(m.id) &&
+          (!inner || m.params?.method === inner),
+      );
+    await until(() => !!match());
+    const message = match()!;
+    handled.add(message.id);
+    return message;
+  };
+  const reply = (message: Message, result: unknown) =>
+    h.send({ jsonrpc: "2.0", id: message.id, result });
+  return {
+    next,
+    reply,
+    async open(connectionId = "mcp-connection-1", cwd = "/tmp") {
+      const request = await h.start("session/new", {
+        cwd,
+        mcpServers: [{ type: "acp", name: "host", serverId: "host-server" }],
+      });
+      const connect = await next("mcp/connect");
+      expect(connect.params).toEqual({ serverId: "host-server" });
+      await reply(connect, { connectionId });
+      const initialize = await next("mcp/message", "initialize");
+      expect(initialize.params.connectionId).toBe(connectionId);
+      await reply(initialize, {
+        protocolVersion: initialize.params.params.protocolVersion,
+        capabilities: { tools: {} },
+        serverInfo: { name: "host", version: "1" },
+      });
+      const list = await next("mcp/message", "tools/list");
+      await reply(list, {
+        tools: [
+          {
+            name: "echo",
+            inputSchema: {
+              type: "object",
+              properties: { text: { type: "string" } },
+              required: ["text"],
+              additionalProperties: false,
+            },
+          },
+        ],
+      });
+      const opened = await h.response(request);
+      expect(opened.error).toBeUndefined();
+      return opened.result.sessionId as string;
+    },
+    async close(sessionId: string, connectionId = "mcp-connection-1") {
+      const close = await h.start("session/close", { sessionId });
+      const disconnect = await next("mcp/disconnect");
+      expect(disconnect.params).toEqual({ connectionId });
+      await reply(disconnect, {});
+      expect((await h.response(close)).error).toBeUndefined();
+    },
+  };
+}
+
+test("ACP-proxied MCP connects, gates calls with permissions, routes reverse requests, and disconnects", async () => {
+  const { mcpToolName } = await import("./mcp.ts");
+  let completions = 0;
+  const base = setup({
+    complete: (request) => {
+      if (++completions === 1)
+        return {
+          kind: "tools",
+          text: "Calling host tool",
+          calls: [
+            { id: "proxy-call", name: mcpToolName("host", "echo"), args: { text: "hello proxy" } },
+          ],
+        };
+      expect(JSON.stringify(request)).toContain("proxy result");
+      return answer;
+    },
+  });
+  const h = harness(base.options);
+  const peer = proxiedMcpPeer(h);
+  try {
+    expect((await h.initialize()).result.agentCapabilities.mcpCapabilities.acp).toBe(true);
+    const id = await peer.open();
+    expect(
+      (await h.request("mcp/message", { connectionId: "missing", method: "roots/list" })).error
+        ?.code,
+    ).toBe(-32602);
+    await h.send({
+      jsonrpc: "2.0",
+      method: "mcp/message",
+      params: { connectionId: "missing", method: "notifications/tools/list_changed" },
+    });
+    expect(
+      (await h.request("mcp/message", { connectionId: "mcp-connection-1", method: "roots/list" }))
+        .result,
+    ).toEqual({ roots: [{ uri: "file:///tmp", name: "Workspace" }] });
+    expect(
+      (
+        await h.request("mcp/message", {
+          connectionId: "mcp-connection-1",
+          method: "sampling/createMessage",
+          params: {},
+        })
+      ).error?.code,
+    ).toBe(-32601);
+    const turn = await h.start("session/prompt", prompt(id));
+    const permission = await peer.next("session/request_permission");
+    expect(
+      h.messages.some((m) => m.method === "mcp/message" && m.params?.method === "tools/call"),
+    ).toBe(false);
+    await peer.reply(permission, { outcome: { outcome: "selected", optionId: "allow-once" } });
+    const call = await peer.next("mcp/message", "tools/call");
+    expect(call.params).toMatchObject({
+      connectionId: "mcp-connection-1",
+      params: { name: "echo", arguments: { text: "hello proxy" } },
+    });
+    await peer.reply(call, { content: [{ type: "text", text: "proxy result" }] });
+    expect((await h.response(turn)).result.stopReason).toBe("end_turn");
+    const { SessionIdSchema } = await import("@labkit-agent/core/types");
+    const loaded = await base.persistence.load(
+      SessionIdSchema.parse(id),
+      new AbortController().signal,
+    );
+    expect(JSON.stringify(loaded)).toContain("proxy result");
+    expect(JSON.stringify(loaded)).not.toContain("mcp-connection-1");
+    await peer.close(id);
+    expect(
+      (await h.request("mcp/message", { connectionId: "mcp-connection-1", method: "roots/list" }))
+        .error?.code,
+    ).toBe(-32602);
+  } finally {
+    await h.close();
+  }
+});
+
+test("ACP MCP refusal sends no call and cancellation targets the outer request, ignoring late replies", async () => {
+  const { mcpToolName } = await import("./mcp.ts");
+  const h = harness(
+    setup({
+      complete: () => ({
+        kind: "tools",
+        text: "Calling host tool",
+        calls: [{ id: "call", name: mcpToolName("host", "echo"), args: { text: "hello" } }],
+      }),
+    }).options,
+  );
+  const peer = proxiedMcpPeer(h);
+  try {
+    await h.initialize();
+    const id = await peer.open();
+    let turn = await h.start("session/prompt", prompt(id));
+    await peer.reply(await peer.next("session/request_permission"), {
+      outcome: { outcome: "selected", optionId: "reject-once" },
+    });
+    expect((await h.response(turn)).result.stopReason).toBe("refusal");
+    expect(
+      h.messages.some((m) => m.method === "mcp/message" && m.params?.method === "tools/call"),
+    ).toBe(false);
+    turn = await h.start("session/prompt", prompt(id));
+    await peer.reply(await peer.next("session/request_permission"), {
+      outcome: { outcome: "selected", optionId: "allow-once" },
+    });
+    const call = await peer.next("mcp/message", "tools/call");
+    await h.send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: id } });
+    expect((await h.response(turn)).result.stopReason).toBe("cancelled");
+    await until(() =>
+      h.messages.some((m) => m.method === "$/cancel_request" && m.params?.requestId === call.id),
+    );
+    await peer.reply(call, { content: [{ type: "text", text: "late result" }] });
+    expect(JSON.stringify(h.updates())).not.toContain("late result");
+    await peer.close(id);
+  } finally {
+    await h.close();
+  }
+});
+
+test("cancelled ACP MCP setup releases a late connection ID without publishing a session", async () => {
+  const h = harness(setup().options);
+  const peer = proxiedMcpPeer(h);
+  try {
+    await h.initialize();
+    const open = await h.start("session/new", {
+      cwd: "/tmp",
+      mcpServers: [{ type: "acp", name: "host", serverId: "late" }],
+    });
+    const connect = await peer.next("mcp/connect");
+    await h.send({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: open } });
+    expect((await h.response(open)).error).toBeDefined();
+    await peer.reply(connect, { connectionId: "late-connection" });
+    const disconnect = await peer.next("mcp/disconnect");
+    expect(disconnect.params.connectionId).toBe("late-connection");
+    await peer.reply(disconnect, {});
+    expect(h.messages.some((m) => m.method === "mcp/message")).toBe(false);
+    expect(h.updates()).toEqual([]);
+  } finally {
+    await h.close();
+  }
+});
+
+test("ACP MCP sessions have independent connections and reject a reused active connection ID", async () => {
+  const h = harness(setup().options);
+  const peer = proxiedMcpPeer(h);
+  try {
+    await h.initialize();
+    const a = await peer.open("connection-a", "/workspace-a");
+    const b = await peer.open("connection-b", "/workspace-b");
+    const duplicate = await h.start("session/new", {
+      cwd: "/tmp",
+      mcpServers: [{ type: "acp", name: "host", serverId: "host-server" }],
+    });
+    await peer.reply(await peer.next("mcp/connect"), { connectionId: "connection-a" });
+    expect((await h.response(duplicate)).error).toBeDefined();
+    expect(h.messages.filter((m) => m.method === "mcp/disconnect")).toHaveLength(0);
+    for (const [connectionId, cwd] of [
+      ["connection-a", "/workspace-a"],
+      ["connection-b", "/workspace-b"],
+    ])
+      expect(
+        (await h.request("mcp/message", { connectionId, method: "roots/list" })).result.roots,
+      ).toEqual([{ uri: `file://${cwd}`, name: "Workspace" }]);
+    await peer.close(a, "connection-a");
+    expect(
+      (await h.request("mcp/message", { connectionId: "connection-b", method: "roots/list" }))
+        .result.roots,
+    ).toHaveLength(1);
+    await peer.close(b, "connection-b");
+  } finally {
+    await h.close();
+  }
+});
+
+test("ACP MCP errors fail the ordinary tool operation and failed catalog setup disconnects", async () => {
+  const { mcpToolName } = await import("./mcp.ts");
+  const h = harness(
+    setup({
+      complete: () => ({
+        kind: "tools",
+        text: "Call",
+        calls: [{ id: "call", name: mcpToolName("host", "echo"), args: { text: "error" } }],
+      }),
+    }).options,
+  );
+  const peer = proxiedMcpPeer(h);
+  try {
+    await h.initialize();
+    const id = await peer.open();
+    const turn = await h.start("session/prompt", prompt(id));
+    await peer.reply(await peer.next("session/request_permission"), {
+      outcome: { outcome: "selected", optionId: "allow-once" },
+    });
+    const call = await peer.next("mcp/message", "tools/call");
+    await h.send({
+      jsonrpc: "2.0",
+      id: call.id,
+      error: { code: -32001, message: "host tool failed" },
+    });
+    expect((await h.response(turn)).error).toBeDefined();
+    expect(
+      h
+        .updates()
+        .some((m) => m.update.sessionUpdate === "tool_call_update" && m.update.status === "failed"),
+    ).toBe(true);
+    await peer.close(id);
+    const open = await h.start("session/new", {
+      cwd: "/tmp",
+      mcpServers: [{ type: "acp", name: "host", serverId: "host-server" }],
+    });
+    await peer.reply(await peer.next("mcp/connect"), { connectionId: "bad-catalog" });
+    const initialize = await peer.next("mcp/message", "initialize");
+    await peer.reply(initialize, {
+      protocolVersion: initialize.params.params.protocolVersion,
+      capabilities: { tools: {} },
+      serverInfo: { name: "host", version: "1" },
+    });
+    const list = await peer.next("mcp/message", "tools/list");
+    await h.send({
+      jsonrpc: "2.0",
+      id: list.id,
+      error: { code: -32000, message: "catalog unavailable" },
+    });
+    const disconnect = await peer.next("mcp/disconnect");
+    expect(disconnect.params.connectionId).toBe("bad-catalog");
+    await peer.reply(disconnect, {});
+    expect((await h.response(open)).error).toBeDefined();
+  } finally {
+    await h.close();
+  }
+});
+
+test("ACP authentication gates session access, negotiates terminal methods, and logout releases active work", async () => {
+  let authenticated = false;
+  let factoryCalls = 0;
+  let logoutCalls = 0;
+  let completionSignal: AbortSignal | undefined;
+  const blocked = deferred<unknown>();
+  const base = setup({
+    complete: (_request, signal) => {
+      completionSignal = signal;
+      return blocked.promise;
+    },
+  });
+  const h = harness({
+    ...base.options,
+    listSessions: () => ({ sessions: [] }),
+    auth: {
+      methods: [
+        { id: "login", name: "Sign in" },
+        { type: "terminal", id: "interactive", name: "Terminal login", args: ["--login"] },
+      ],
+      isAuthenticated: () => authenticated,
+      authenticate: (method) => {
+        expect(method).toBe("login");
+        authenticated = true;
+      },
+      logout: () => {
+        logoutCalls++;
+        authenticated = false;
+      },
+    },
+    sessionOptions: (context) => {
+      factoryCalls++;
+      return base.options.sessionOptions(context);
+    },
+  });
+  try {
+    expect((await h.request("authenticate", { methodId: "login" })).error?.code).toBe(-32002);
+    const init = await h.initialize();
+    expect(init.result.authMethods).toEqual([{ id: "login", name: "Sign in" }]);
+    expect(init.result.agentCapabilities.auth).toEqual({ logout: {} });
+    expect((await h.request("session/new", { cwd: "/tmp", mcpServers: [] })).error?.code).toBe(
+      -32000,
+    );
+    expect((await h.request("session/list", {})).error?.code).toBe(-32000);
+    expect(factoryCalls).toBe(0);
+    expect((await h.request("authenticate", { methodId: "unknown" })).error?.code).toBe(-32602);
+    expect((await h.request("authenticate", { methodId: "interactive" })).error?.code).toBe(-32602);
+    expect((await h.request("authenticate", { methodId: "login" })).result).toEqual({});
+    const id = await h.newSession();
+    const turn = await h.start("session/prompt", prompt(id));
+    await until(() => !!completionSignal);
+    expect((await h.request("logout", {})).result).toEqual({});
+    expect(completionSignal!.aborted).toBe(true);
+    expect((await h.response(turn)).result.stopReason).toBe("cancelled");
+    expect(logoutCalls).toBe(1);
+    expect((await h.request("session/new", { cwd: "/tmp", mcpServers: [] })).error?.code).toBe(
+      -32000,
+    );
+    expect((await h.request("authenticate", { methodId: "login" })).result).toEqual({});
+    expect(
+      (await h.request("session/load", { sessionId: id, cwd: "/tmp", mcpServers: [] })).error,
+    ).toBeUndefined();
+    const { SessionIdSchema } = await import("@labkit-agent/core/types");
+    const saved = await base.persistence.load(
+      SessionIdSchema.parse(id),
+      new AbortController().signal,
+    );
+    expect(JSON.stringify(saved)).not.toContain("Sign in");
+  } finally {
+    blocked.resolve(answer);
+    await h.close();
+  }
+});
+
+test("cancelled authentication cannot grant late access or overlap another credential change", async () => {
+  let authenticated = false;
+  let calls = 0;
+  const gate = deferred<void>();
+  const h = harness({
+    ...setup().options,
+    auth: {
+      methods: [{ id: "login", name: "Sign in" }],
+      isAuthenticated: () => authenticated,
+      authenticate: async () => {
+        if (++calls === 1) await gate.promise;
+        authenticated = true;
+      },
+    },
+  });
+  try {
+    await h.initialize();
+    const login = await h.start("authenticate", { methodId: "login" });
+    await until(() => calls === 1);
+    await h.send({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: login } });
+    expect((await h.response(login)).error).toBeDefined();
+    expect((await h.request("authenticate", { methodId: "login" })).error).toBeDefined();
+    expect(calls).toBe(1);
+    gate.resolve();
+    await until(() => authenticated);
+    expect((await h.request("session/new", { cwd: "/tmp", mcpServers: [] })).error?.code).toBe(
+      -32000,
+    );
+    expect((await h.request("authenticate", { methodId: "login" })).result).toEqual({});
+    expect(typeof (await h.newSession())).toBe("string");
+  } finally {
+    gate.resolve();
+    await h.close();
+  }
+});
+
+test("logout cancels an opening factory and terminal login is advertised only to capable clients", async () => {
+  let authenticated = true;
+  const gate = deferred<void>();
+  let entered = false;
+  let factorySignal: AbortSignal | undefined;
+  const base = setup();
+  const h = harness({
+    ...base.options,
+    auth: {
+      methods: [{ type: "terminal", id: "interactive", name: "Terminal", args: ["--login"] }],
+      isAuthenticated: () => authenticated,
+      logout: () => {
+        authenticated = false;
+      },
+    },
+    sessionOptions: async (context) => {
+      entered = true;
+      factorySignal = context.signal;
+      await gate.promise;
+      return base.options.sessionOptions(context);
+    },
+  });
+  try {
+    const init = await h.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { auth: { terminal: true } },
+    });
+    expect(init.result.authMethods).toHaveLength(1);
+    expect(init.result.authMethods[0].type).toBe("terminal");
+    expect((await h.request("authenticate", { methodId: "interactive" })).error).toBeDefined();
+    const open = await h.start("session/new", { cwd: "/tmp", mcpServers: [] });
+    await until(() => entered);
+    expect((await h.request("logout", {})).result).toEqual({});
+    expect(factorySignal!.aborted).toBe(true);
+    gate.resolve();
+    expect((await h.response(open)).error).toBeDefined();
+    expect(h.updates()).toEqual([]);
+  } finally {
+    gate.resolve();
+    await h.close();
+  }
+});
+
+test("expired credentials still permit cancellation and close; disconnect aborts pending authentication", async () => {
+  let authenticated = true;
+  let completionSignal: AbortSignal | undefined;
+  let loginSignal: AbortSignal | undefined;
+  const completion = deferred<unknown>();
+  const login = deferred<void>();
+  const h = harness({
+    ...setup({
+      complete: (_request, signal) => {
+        completionSignal = signal;
+        return completion.promise;
+      },
+    }).options,
+    auth: {
+      methods: [{ id: "login", name: "Login" }],
+      isAuthenticated: () => authenticated,
+      authenticate: async (_id, signal) => {
+        loginSignal = signal;
+        await login.promise;
+      },
+    },
+  });
+  try {
+    await h.initialize();
+    const id = await h.newSession();
+    const turn = await h.start("session/prompt", prompt(id));
+    await until(() => !!completionSignal);
+    authenticated = false;
+    await h.send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: id } });
+    expect((await h.response(turn)).result.stopReason).toBe("cancelled");
+    expect((await h.request("session/close", { sessionId: id })).result).toEqual({});
+    await h.start("authenticate", { methodId: "login" });
+    await until(() => !!loginSignal);
+    await h.close();
+    expect(loginSignal!.aborted).toBe(true);
+  } finally {
+    completion.resolve(answer);
+    login.resolve();
+    await h.close();
+  }
+});
+
+for (const action of ["accept", "decline", "cancel", "invalid"] as const) {
+  test(`ACP MCP form elicitation handles ${action} and keeps the existing tool operation`, async () => {
+    const { mcpToolName } = await import("./mcp.ts");
+    const h = harness(
+      setup({
+        complete: () => ({
+          kind: "tools",
+          text: "Call",
+          calls: [{ id: "call", name: mcpToolName("host", "echo"), args: { text: "ask" } }],
+        }),
+      }).options,
+    );
+    const peer = proxiedMcpPeer(h);
+    try {
+      await h.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: { elicitation: { form: {} } },
+      });
+      const id = await peer.open();
+      const initialize = h.messages.find(
+        (m) => m.method === "mcp/message" && m.params?.method === "initialize",
+      )!;
+      expect(initialize.params.params.capabilities.elicitation).toEqual({ form: {} });
+      const turn = await h.start("session/prompt", prompt(id));
+      await peer.reply(await peer.next("session/request_permission"), {
+        outcome: { outcome: "selected", optionId: "allow-once" },
+      });
+      await peer.next("mcp/message", "tools/call");
+      const elicitation = await h.start("mcp/message", {
+        connectionId: "mcp-connection-1",
+        method: "elicitation/create",
+        params: {
+          message: "Pick a strategy",
+          requestedSchema: {
+            type: "object",
+            properties: { strategy: { type: "string", enum: ["small", "large"] } },
+            required: ["strategy"],
+          },
+        },
+      });
+      const form = await peer.next("elicitation/create");
+      expect(form.params).toMatchObject({
+        sessionId: id,
+        mode: "form",
+        message: "Pick a strategy",
+      });
+      expect(form.params.toolCallId).toBeUndefined(); // MCP provides no reliable originating tool ID.
+      await peer.reply(form, {
+        action: action === "invalid" ? "accept" : action,
+        content: { strategy: action === "invalid" ? "unknown" : "small" },
+      });
+      const result = await h.response(elicitation);
+      if (action === "invalid") expect(result.error).toBeDefined();
+      else
+        expect(result.result).toEqual(
+          action === "accept" ? { action, content: { strategy: "small" } } : { action },
+        );
+      await h.send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: id } });
+      expect((await h.response(turn)).result.stopReason).toBe("cancelled");
+      await peer.close(id);
+    } finally {
+      await h.close();
+    }
+  });
+}
+
+test("ACP MCP URL elicitation uses a private ID and signals completion only after the server finishes", async () => {
+  const { mcpToolName } = await import("./mcp.ts");
+  const h = harness(
+    setup({
+      complete: () => ({
+        kind: "tools",
+        text: "Call",
+        calls: [{ id: "call", name: mcpToolName("host", "echo"), args: { text: "url" } }],
+      }),
+    }).options,
+  );
+  const peer = proxiedMcpPeer(h);
+  try {
+    await h.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { elicitation: { url: {} } },
+    });
+    const id = await peer.open();
+    const turn = await h.start("session/prompt", prompt(id));
+    await peer.reply(await peer.next("session/request_permission"), {
+      outcome: { outcome: "selected", optionId: "allow-once" },
+    });
+    await peer.next("mcp/message", "tools/call");
+    const ask = () =>
+      h.start("mcp/message", {
+        connectionId: "mcp-connection-1",
+        method: "elicitation/create",
+        params: {
+          mode: "url",
+          elicitationId: "remote-id",
+          message: "Open external setup",
+          url: "https://example.invalid/setup",
+        },
+      });
+    const request = await ask();
+    const url = await peer.next("elicitation/create");
+    expect(url.params.elicitationId).not.toBe("remote-id");
+    expect(url.params.url).toBe("https://example.invalid/setup");
+    await peer.reply(url, { action: "accept", content: { token: "MUST_NOT_FORWARD" } });
+    expect((await h.response(request)).result).toEqual({ action: "accept" });
+    expect((await h.response(await ask())).error).toBeDefined();
+    expect(h.messages.some((m) => m.method === "elicitation/complete")).toBe(false);
+    const complete = {
+      jsonrpc: "2.0",
+      method: "mcp/message",
+      params: {
+        connectionId: "mcp-connection-1",
+        method: "notifications/elicitation/complete",
+        params: { elicitationId: "remote-id" },
+      },
+    };
+    await h.send(complete);
+    await until(() => h.messages.some((m) => m.method === "elicitation/complete"));
+    expect(h.messages.find((m) => m.method === "elicitation/complete")!.params).toEqual({
+      elicitationId: url.params.elicitationId,
+    });
+    await h.send(complete);
+    await h.send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: id } });
+    expect((await h.response(turn)).result.stopReason).toBe("cancelled");
+    expect(h.messages.filter((m) => m.method === "elicitation/complete")).toHaveLength(1);
+    await peer.close(id);
+  } finally {
+    await h.close();
+  }
+});
+
+test("local tools can elicit a validated form tied to their tool card and journal only their result", async () => {
+  const base = setup();
+  let completes = 0;
+  const h = harness({
+    ...base.options,
+    sessionOptions: async (context) => {
+      const options = await base.options.sessionOptions(context);
+      return {
+        ...options,
+        bindings: {
+          ...options.bindings,
+          complete: (request) => {
+            if (++completes === 1) return tools;
+            expect(JSON.stringify(request)).toContain("chosen");
+            return answer;
+          },
+          tools: new Map([
+            [
+              "echo",
+              defineTool({
+                input: z.object({ text: z.string() }),
+                kind: "other",
+                run: async (_input, signal, operation) =>
+                  context.elicitation!.form!(
+                    {
+                      message: "Choose an approach",
+                      requestedSchema: {
+                        properties: { approach: { type: "string", enum: ["chosen"] } },
+                        required: ["approach"],
+                      },
+                    },
+                    signal,
+                    operation,
+                  ),
+              }),
+            ],
+          ]),
+        },
+      };
+    },
+  });
+  const peer = proxiedMcpPeer(h);
+  try {
+    await h.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { elicitation: { form: {} } },
+    });
+    const id = await h.newSession();
+    const turn = await h.start("session/prompt", prompt(id));
+    const permission = await peer.next("session/request_permission");
+    await peer.reply(permission, { outcome: { outcome: "selected", optionId: "allow-once" } });
+    const form = await peer.next("elicitation/create");
+    expect(form.params.toolCallId).toBe(permission.params.toolCall.toolCallId);
+    await peer.reply(form, { action: "accept", content: { approach: "chosen" } });
+    expect((await h.response(turn)).result.stopReason).toBe("end_turn");
+    const { SessionIdSchema } = await import("@labkit-agent/core/types");
+    const journal = await base.persistence.load(
+      SessionIdSchema.parse(id),
+      new AbortController().signal,
+    );
+    expect(JSON.stringify(journal)).toContain("chosen");
+    expect(JSON.stringify(journal)).not.toContain("Choose an approach");
+  } finally {
+    await h.close();
+  }
+});
+
+test("cancelling a tool prompt cancels ACP elicitation and discards a late form response", async () => {
+  const { mcpToolName } = await import("./mcp.ts");
+  const h = harness(
+    setup({
+      complete: () => ({
+        kind: "tools",
+        text: "Call",
+        calls: [{ id: "call", name: mcpToolName("host", "echo"), args: { text: "ask" } }],
+      }),
+    }).options,
+  );
+  const peer = proxiedMcpPeer(h);
+  try {
+    await h.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { elicitation: { form: {} } },
+    });
+    const id = await peer.open();
+    const params = {
+      connectionId: "mcp-connection-1",
+      method: "elicitation/create",
+      params: {
+        message: "Input",
+        requestedSchema: { type: "object", properties: { value: { type: "string" } } },
+      },
+    };
+    expect((await h.request("mcp/message", params)).error).toBeDefined();
+    expect(h.messages.some((m) => m.method === "elicitation/create")).toBe(false);
+    const turn = await h.start("session/prompt", prompt(id));
+    await peer.reply(await peer.next("session/request_permission"), {
+      outcome: { outcome: "selected", optionId: "allow-once" },
+    });
+    await peer.next("mcp/message", "tools/call");
+    const ask = await h.start("mcp/message", params);
+    const form = await peer.next("elicitation/create");
+    await h.send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: id } });
+    expect((await h.response(turn)).result.stopReason).toBe("cancelled");
+    expect((await h.response(ask)).error).toBeDefined();
+    expect(
+      h.messages.some((m) => m.method === "$/cancel_request" && m.params?.requestId === form.id),
+    ).toBe(true);
+    await peer.reply(form, { action: "accept", content: { value: "LATE_FORM_RESPONSE" } });
+    expect(JSON.stringify(h.updates())).not.toContain("LATE_FORM_RESPONSE");
+    await peer.close(id);
+  } finally {
+    await h.close();
+  }
+});
+
+test("authentication URL elicitation is request-scoped and waits for verified external completion", async () => {
+  const external = deferred<void>();
+  let authenticated = false;
+  let credentials: string | undefined;
+  const base = setup();
+  const h = harness({
+    ...base.options,
+    auth: {
+      methods: [{ id: "browser", name: "Browser login" }],
+      isAuthenticated: () => authenticated,
+      authenticate: async (_method, signal, context) => {
+        if (!context.elicitation.url) throw new Error("URL login requires host URL support");
+        const interaction = await context.elicitation.url(
+          { message: "Sign in with your browser", url: "https://login.example.invalid/start" },
+          signal,
+        );
+        if (interaction.action !== "accept") return;
+        await external.promise; // Application verifies the same user's external workflow.
+        signal.throwIfAborted();
+        credentials = "AUTH_TOKEN_SENTINEL";
+        authenticated = true;
+        await interaction.complete();
+        await interaction.complete();
+      },
+    },
+  });
+  const peer = proxiedMcpPeer(h);
+  try {
+    await h.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { elicitation: { url: {} } },
+    });
+    const login = await h.start("authenticate", { methodId: "browser" });
+    const url = await peer.next("elicitation/create");
+    expect(url.params).toMatchObject({
+      requestId: login,
+      mode: "url",
+      url: "https://login.example.invalid/start",
+    });
+    expect(url.params.sessionId).toBeUndefined();
+    expect(url.params.toolCallId).toBeUndefined();
+    await peer.reply(url, { action: "accept" });
+    expect(authenticated).toBe(false);
+    expect(h.messages.some((m) => m.id === login && !m.method)).toBe(false);
+    expect((await h.request("session/new", { cwd: "/tmp", mcpServers: [] })).error?.code).toBe(
+      -32000,
+    );
+    external.resolve();
+    expect((await h.response(login)).result).toEqual({});
+    expect(credentials).toBe("AUTH_TOKEN_SENTINEL");
+    expect(h.messages.filter((m) => m.method === "elicitation/complete")).toHaveLength(1);
+    expect(h.messages.find((m) => m.method === "elicitation/complete")!.params).toEqual({
+      elicitationId: url.params.elicitationId,
+    });
+    const id = await h.newSession();
+    const { SessionIdSchema } = await import("@labkit-agent/core/types");
+    const journal = await base.persistence.load(
+      SessionIdSchema.parse(id),
+      new AbortController().signal,
+    );
+    expect(JSON.stringify(journal)).not.toContain("AUTH_TOKEN_SENTINEL");
+    expect(JSON.stringify(h.messages)).not.toContain("AUTH_TOKEN_SENTINEL");
+  } finally {
+    external.resolve();
+    await h.close();
+  }
+});
+
+for (const action of ["decline", "cancel"] as const) {
+  test(`authentication URL ${action} cannot create sessions or emit completion`, async () => {
+    const h = harness({
+      ...setup().options,
+      auth: {
+        methods: [{ id: "browser", name: "Login" }],
+        isAuthenticated: () => false,
+        authenticate: async (_id, signal, context) => {
+          const result = await context.elicitation.url!(
+            { message: "Sign in", url: "https://example.invalid/login" },
+            signal,
+          );
+          expect(result.action).toBe(action);
+          await result.complete();
+        },
+      },
+    });
+    const peer = proxiedMcpPeer(h);
+    try {
+      await h.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: { elicitation: { url: {} } },
+      });
+      const login = await h.start("authenticate", { methodId: "browser" });
+      await peer.reply(await peer.next("elicitation/create"), { action });
+      expect((await h.response(login)).error?.code).toBe(-32000);
+      expect((await h.request("session/new", { cwd: "/tmp", mcpServers: [] })).error?.code).toBe(
+        -32000,
+      );
+      expect(h.messages.some((m) => m.method === "elicitation/complete")).toBe(false);
+    } finally {
+      await h.close();
+    }
+  });
+}
+
+test("cancelled request-scoped login suppresses late external completion", async () => {
+  let authenticated = false;
+  let finished = false;
+  const external = deferred<void>();
+  const h = harness({
+    ...setup().options,
+    auth: {
+      methods: [{ id: "browser", name: "Login" }],
+      isAuthenticated: () => authenticated,
+      authenticate: async (_id, signal, context) => {
+        const result = await context.elicitation.url!(
+          { message: "Sign in", url: "https://example.invalid/login" },
+          signal,
+        );
+        await external.promise; // Deliberately uncooperative host callback.
+        authenticated = true;
+        await result.complete();
+        finished = true;
+      },
+    },
+  });
+  const peer = proxiedMcpPeer(h);
+  try {
+    await h.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { elicitation: { url: {} } },
+    });
+    const login = await h.start("authenticate", { methodId: "browser" });
+    await peer.reply(await peer.next("elicitation/create"), { action: "accept" });
+    await h.send({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: login } });
+    expect((await h.response(login)).error).toBeDefined();
+    external.resolve();
+    await until(() => finished);
+    expect(h.messages.some((m) => m.method === "elicitation/complete")).toBe(false);
+    expect((await h.request("session/new", { cwd: "/tmp", mcpServers: [] })).error?.code).toBe(
+      -32000,
+    );
+  } finally {
+    external.resolve();
+    await h.close();
+  }
+});
+
+test("authentication does not substitute form mode when the required URL capability is absent", async () => {
+  const h = harness({
+    ...setup().options,
+    auth: {
+      methods: [{ id: "browser", name: "Login" }],
+      isAuthenticated: () => false,
+      authenticate: async (_id, _signal, context) => {
+        expect(context.elicitation.form).toBeDefined();
+        expect(context.elicitation.url).toBeUndefined();
+        throw new Error("Use another login flow; URL support is required");
+      },
+    },
+  });
+  try {
+    await h.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { elicitation: { form: {} } },
+    });
+    expect((await h.request("authenticate", { methodId: "browser" })).error).toBeDefined();
+    expect(h.messages.some((m) => m.method === "elicitation/create")).toBe(false);
+  } finally {
+    await h.close();
+  }
+});
+
+test("cancelling authentication while its UI is unanswered cancels the matching elicitation request", async () => {
+  const h = harness({
+    ...setup().options,
+    auth: {
+      methods: [{ id: "browser", name: "Login" }],
+      isAuthenticated: () => false,
+      authenticate: async (_id, signal, context) => {
+        await context.elicitation.url!(
+          { message: "Sign in", url: "https://example.invalid/login" },
+          signal,
+        );
+      },
+    },
+  });
+  const peer = proxiedMcpPeer(h);
+  try {
+    await h.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { elicitation: { url: {} } },
+    });
+    const login = await h.start("authenticate", { methodId: "browser" });
+    const url = await peer.next("elicitation/create");
+    await h.send({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: login } });
+    expect((await h.response(login)).error).toBeDefined();
+    expect(
+      h.messages.some((m) => m.method === "$/cancel_request" && m.params?.requestId === url.id),
+    ).toBe(true);
+    await peer.reply(url, { action: "accept" });
+    expect((await h.request("session/new", { cwd: "/tmp", mcpServers: [] })).error?.code).toBe(
+      -32000,
+    );
+    expect(h.messages.some((m) => m.method === "elicitation/complete")).toBe(false);
+  } finally {
+    await h.close();
   }
 });

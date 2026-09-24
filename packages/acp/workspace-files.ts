@@ -5,7 +5,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 export const MAX_FILE_BYTES = 256 * 1024;
 
 /** Cwd is resolved once. Reject traversal, symlink components, and non-regular files. */
-export async function workspaceFiles(cwd: string) {
+async function workspaceRootFiles(cwd: string) {
   if (!isAbsolute(cwd)) throw new Error("Workspace cwd must be absolute");
   const requestedRoot = resolve(cwd);
   const root = await realpath(requestedRoot);
@@ -138,6 +138,58 @@ export async function workspaceFiles(cwd: string) {
         entries.push(value);
       }
       return { path: target, entries: entries.sort((a, b) => a.name.localeCompare(b.name)) };
+    },
+  };
+}
+/** Relative paths stay anchored to cwd; additional roots require absolute paths. */
+export async function workspaceFiles(cwd: string, additionalDirectories: readonly string[] = []) {
+  const primary = await workspaceRootFiles(cwd);
+  const roots = [primary];
+  // Keep requested aliases for path resolution; expose canonical roots only once.
+  for (const directory of new Set(additionalDirectories))
+    roots.push(await workspaceRootFiles(directory));
+  const reserved = (path: string) =>
+    roots.some((files) => {
+      const part = relative(files.root, path);
+      return part === ".labkit" || part.startsWith(`.labkit${sep}`);
+    });
+  if (roots.some((files) => reserved(files.root)))
+    throw new Error("The .labkit directory is reserved for session storage");
+  function select(raw: string) {
+    if (!raw || raw.includes("\0") || raw.split(/[\\/]/).includes(".."))
+      throw new Error("Path must stay inside the workspace; parent traversal is not allowed");
+    const absolute = resolve(cwd, raw);
+    for (const files of roots) {
+      let path: string;
+      try {
+        path = files.path(absolute);
+      } catch {
+        continue;
+      }
+      if (reserved(path)) throw new Error("The .labkit directory is reserved for session storage");
+      return { files, path };
+    }
+    throw new Error("Path is outside the workspace or reserved for session storage");
+  }
+  return {
+    root: primary.root,
+    roots: Object.freeze([...new Set(roots.map((files) => files.root))]),
+    path: (raw: string) => select(raw).path,
+    read: async (raw: string, signal: AbortSignal, limit?: number) => {
+      const { files, path } = select(raw);
+      return files.read(path, signal, limit);
+    },
+    readText: async (raw: string, signal: AbortSignal) => {
+      const { files, path } = select(raw);
+      return files.readText(path, signal);
+    },
+    write: async (raw: string, text: string, signal: AbortSignal) => {
+      const { files, path } = select(raw);
+      return files.write(path, text, signal);
+    },
+    list: async (raw: string, signal: AbortSignal) => {
+      const { files, path } = select(raw);
+      return files.list(path, signal);
     },
   };
 }

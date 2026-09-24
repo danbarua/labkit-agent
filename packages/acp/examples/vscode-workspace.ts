@@ -61,19 +61,37 @@ export function workspaceAgent(
   return {
     loadSession: true,
     forkSession: true,
+    additionalDirectories: true,
     listSessions: (params, signal) => directory.list(params, signal),
     deleteSession: (params, signal) => directory.deleteSession(params, signal),
     sessionInfo: (params, signal) => directory.info(params, signal),
-    async sessionOptions({ cwd, signal, mcpTools, clientFiles, terminal, publishPlan }) {
+    async sessionOptions({
+      cwd,
+      additionalDirectories,
+      signal,
+      mcpTools,
+      clientFiles,
+      terminal,
+      publishPlan,
+    }) {
       signal.throwIfAborted();
-      const files = await workspaceFiles(cwd);
+      const files = await workspaceFiles(cwd, additionalDirectories);
       signal.throwIfAborted();
       directory.remember(files.root);
+      const persistence = workspacePersistence(files.root);
       const tools = new Map([...workspaceTools(files, clientFiles), ...(mcpTools ?? [])]);
       if (publishPlan) tools.set("update_plan", planTool(publishPlan));
       if (env.LABKIT_ACP_TERMINAL === "1" && terminal)
         tools.set("run_command", terminalTool(terminal, files.root));
       const config: AcpConfigBinding[] = [
+        {
+          id: "stream",
+          name: "Stream responses",
+          category: "model_config",
+          type: "boolean",
+          current: (policy) => policy.stream,
+          patches: { true: { stream: true }, false: { stream: false } },
+        },
         {
           id: "mode",
           name: "File access",
@@ -144,7 +162,9 @@ export function workspaceAgent(
               "Inspect the relevant workspace content, then propose a concrete plan for the requested task. Publish the complete plan with update_plan when available. Do not implement the plan or run commands in this turn.",
           },
         ],
-        persistence: workspacePersistence(files.root),
+        persistence,
+        onReady: (sessionId, signal) =>
+          persistence.setScope(sessionId, files.roots.slice(1), signal),
         configuration: {
           agent: "workspace",
           agents: new Map([
@@ -187,6 +207,7 @@ function discovery() {
 export default {
   loadSession: true,
   forkSession: true,
+  additionalDirectories: true,
   deleteSession: (params, signal) => discovery().deleteSession(params, signal),
   sessionInfo: (params, signal) => discovery().info(params, signal),
   listSessions: (params, signal) => {

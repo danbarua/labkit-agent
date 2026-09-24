@@ -15,16 +15,19 @@ function remoteSettings(server: Extract<McpServer, { type: "http" | "sse" }>) {
   }
   return { url, headers };
 }
-export function validateMcpTransport(server: McpServer) {
+export function validateMcpTransport(server: McpServer, proxy = false) {
   if ("type" in server) {
-    if (server.type === "acp") throw new Error("ACP-proxied MCP servers are not supported");
-    remoteSettings(server);
+    if (server.type === "acp") {
+      if (!proxy) throw new Error("ACP MCP transport requires a client binding");
+      if (!server.serverId.trim()) throw new Error("ACP MCP server ID must be nonempty");
+    } else remoteSettings(server);
   } else if (new Set(server.env.map((entry) => entry.name)).size !== server.env.length)
     throw new Error("MCP environment names must be unique");
 }
 export function mcpTransport(
   server: McpServer,
   cwd: string,
+  proxy?: (serverId: string) => Transport,
 ): { transport: Transport; dispose?: () => Promise<void> } {
   if (!("type" in server))
     return {
@@ -37,7 +40,10 @@ export function mcpTransport(
         maxBufferSize: 1024 * 1024,
       }),
     };
-  if (server.type === "acp") throw new Error("ACP-proxied MCP servers are not supported");
+  if (server.type === "acp") {
+    if (!proxy) throw new Error("ACP MCP transport requires a client binding");
+    return { transport: proxy(server.serverId) };
+  }
   const { url, headers } = remoteSettings(server);
   const lifetime = new AbortController();
   const fetchRemote: FetchLike = async (input, init) => {

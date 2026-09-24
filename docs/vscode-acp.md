@@ -177,3 +177,18 @@ unsettled. SQLite row deletion does not securely erase underlying disk pages.
 Session titles and activity timestamps also arrive as ACP `session_info_update` notifications
 after committed changes. They match session-list metadata; the title comes from the first
 committed user text. Metadata failures do not interrupt chat, and stale async replies are ignored.
+
+Hosts that support multiple workspace roots can send `additionalDirectories: ["/ABS/other-project"]`
+in `session/new`, `session/load`, `session/resume`, or `session/fork`. This is the complete resulting
+list; omission clears additional roots rather than restoring the prior list. Relative file paths
+still use the primary cwd, and file tools/resource links accept absolute paths under either root.
+The primary workspace retains all journal and blob storage. Session listing reports the last bound
+roots across restarts. Fork roots apply only to the child; removing a root does not delete already
+attached session blobs. This protocol support does not imply ACP Client 0.2.0 has a roots picker.
+
+Hosts may also supply experimental ACP-proxied MCP servers as
+`{ "type": "acp", "name": "editor-tools", "serverId": "HOST_SERVER_ID" }` in `mcpServers`.
+Labkit connects and exchanges MCP messages over the existing ACP channel; the host owns the server.
+These tools use the same approval cards and durable results as external MCP tools. This requires
+host support for `mcp/connect`, bidirectional `mcp/message`, and `mcp/disconnect`; no ACP Client UI
+support is implied. Connection IDs are live resources and are never restored from the journal.

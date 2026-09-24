@@ -28,14 +28,22 @@ import {
 import type { HostToolNotification, Tool } from "@labkit-agent/core/host";
 import type { AgentMessage } from "@labkit-agent/core/types";
 
+import { bindAuth, type AcpAuth } from "./auth.ts";
+import {
+  clientElicitation,
+  requestElicitation,
+  type ClientElicitation,
+} from "./client-elicitation.ts";
 import { clientFiles, type ClientFiles } from "./client-files.ts";
 import { clientTerminal, type ClientTerminal } from "./client-terminal.ts";
 import { availableCommands, bindCommands, expandCommand, type AcpCommand } from "./commands.ts";
+import { acpMcpBridge, McpMessageSchema } from "./mcp-acp.ts";
 import { mcpConnections } from "./mcp.ts";
 import { PlanEntriesSchema, type PlanSink } from "./plan.ts";
 import { promptInput } from "./prompt-input.ts";
 import {
   bindConfig,
+  configPatch,
   configState,
   waitForBoundary,
   type AcpConfigBinding,
@@ -44,9 +52,11 @@ import { parseSessionInfo } from "./session-info.ts";
 
 export type SessionOptionsContext = Readonly<{
   cwd: string;
+  additionalDirectories?: readonly string[];
   sessionId?: string;
   mcpTools?: ReadonlyMap<string, Tool>;
   clientFiles?: ClientFiles;
+  elicitation?: ClientElicitation;
   terminal?: ClientTerminal;
   publishPlan?: PlanSink;
   signal: AbortSignal;
@@ -54,8 +64,11 @@ export type SessionOptionsContext = Readonly<{
 export type AcpSessionOptions = BoundSessionOptions & {
   config?: readonly AcpConfigBinding[];
   commands?: readonly AcpCommand[];
+  /** Persist host metadata after runtime initialization, before visible lifecycle publication. */
+  onReady?: (sessionId: string, signal: AbortSignal) => void | Promise<void>;
 };
 export type AcpOptions = Readonly<{
+  auth?: AcpAuth;
   /** Bind tools to cwd without changing process.cwd(). On load, validate cwd against saved ownership. */
   sessionOptions: (
     context: SessionOptionsContext,
@@ -64,6 +77,7 @@ export type AcpOptions = Readonly<{
   loadSession?: boolean;
   /** Experimental session/fork; requires loadSession and compatible child persistence lookup. */
   forkSession?: boolean;
+  additionalDirectories?: boolean;
   /** End persisted lifetime; return only after deletion commits. cwd is supplied for live sessions. */
   deleteSession?: (
     params: { sessionId: string; cwd?: string },
@@ -88,6 +102,7 @@ type Session = {
   media: (provider: string | undefined) => readonly MediaKind[];
   promptController?: AbortController;
   cwd: string;
+  additionalDirectories: readonly string[];
   mcpServers: readonly McpServer[];
   busy: boolean;
   promptDone: Promise<void>;
@@ -193,6 +208,8 @@ function toolEvidence(state: JournalState) {
 /** One connection owns its runtimes; persistence and credentials remain caller-owned. */
 export function connectAcp(stream: Stream, options: AcpOptions) {
   const sessions = new Map<string, Session>();
+  const auth = bindAuth(options.auth);
+  let authLifetime = new AbortController();
   const opening = new Set<string>();
   const sessionOptions = options.sessionOptions;
   const loadSession = options.loadSession === true;
@@ -206,6 +223,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
   let clientCapabilities: ClientCapabilities = {};
   let closing = false;
   let connection: AgentConnection;
+  const mcpBridge = acpMcpBridge(() => connection.signal);
   let writes: Promise<void> = Promise.resolve();
   const send = (client: AgentContext, sessionId: string, update: SessionUpdate) => {
     if (closing) return;
@@ -248,8 +266,13 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     if (!initialized) throw new RequestError(-32002, "Initialize the connection first");
     if (closing) throw new RequestError(-32000, "Connection closed");
   };
-  const lookup = (id: string) => {
+  const requireAccess = () => {
     requireInitialized();
+    auth.requireAccess();
+  };
+  const lookup = (id: string, cleanup = false) => {
+    requireInitialized();
+    if (!cleanup) auth.requireAccess();
     if (deleting.has(id)) throw RequestError.invalidParams(undefined, "Session is being deleted");
     if (borrowedParents.has(id))
       throw RequestError.invalidParams(undefined, "Session is being forked privately");
@@ -378,11 +401,20 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     replay = true,
     visible = true,
   ) {
-    requireInitialized();
+    requireAccess();
     if (!isAbsolute(params.cwd))
       throw RequestError.invalidParams(undefined, "cwd must be absolute");
-    if (params.additionalDirectories?.length)
+    if (params.additionalDirectories?.length && !options.additionalDirectories)
       throw RequestError.invalidParams(undefined, "Additional directories are not supported");
+    const additionalDirectories = Object.freeze([...new Set(params.additionalDirectories ?? [])]);
+    if (
+      (params.additionalDirectories?.length ?? 0) > 32 ||
+      additionalDirectories.some((path) => !isAbsolute(path) || path.includes("\0"))
+    )
+      throw RequestError.invalidParams(
+        undefined,
+        "Additional directories must be absolute (at most 32)",
+      );
     if (
       params.sessionId &&
       (sessions.has(params.sessionId) ||
@@ -392,14 +424,33 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       throw RequestError.invalidParams(undefined, "Session is already loaded");
     const id = params.sessionId;
     if (id) opening.add(id);
-    signal = AbortSignal.any([signal, connection.signal]);
+    signal = AbortSignal.any([signal, connection.signal, authLifetime.signal]);
     let dispose: (() => Promise<void>) | undefined;
     let published = false;
+    let initializedId: string | undefined;
     let cancelOpening: (() => void) | undefined;
+    let boundSessionId: string | undefined;
+    const sessionIdentity = () => {
+      if (!boundSessionId || !sessions.has(boundSessionId)) throw new Error("Session is not open");
+      return boundSessionId;
+    };
+    const elicitation = clientElicitation(
+      client,
+      clientCapabilities,
+      sessionIdentity,
+      connection.signal,
+      () => sessions.get(sessionIdentity())?.promptController?.signal ?? AbortSignal.abort(),
+    );
     try {
       let mcp: ReturnType<typeof mcpConnections>;
       try {
-        mcp = mcpConnections(params.mcpServers, params.cwd);
+        mcp = mcpConnections(
+          params.mcpServers,
+          params.cwd,
+          additionalDirectories,
+          (serverId) => mcpBridge.transport(serverId, client),
+          elicitation.port,
+        );
       } catch (error) {
         throw RequestError.invalidParams(
           undefined,
@@ -407,6 +458,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         );
       }
       const cleanup = async () => {
+        elicitation.close();
         try {
           await mcp.close();
         } finally {
@@ -428,12 +480,6 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           error instanceof Error ? error.message : "MCP connection failed",
         );
       }
-      let boundSessionId: string | undefined;
-      const sessionIdentity = () => {
-        if (!boundSessionId || !sessions.has(boundSessionId))
-          throw new Error("Session is not open");
-        return boundSessionId;
-      };
       const filesystem = clientFiles(
         client,
         clientCapabilities,
@@ -464,9 +510,11 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           : undefined;
       const original = await sessionOptions({
         cwd: params.cwd,
+        additionalDirectories,
         ...(id ? { sessionId: id } : {}),
         mcpTools,
         clientFiles: filesystem,
+        elicitation: elicitation.port,
         publishPlan: (entries, operationSignal) => {
           if (operationSignal.aborted || connection.signal.aborted) return;
           const sessionId = sessionIdentity();
@@ -486,10 +534,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         tools.set(name, tool);
       }
       const subscribers = { ...original.bindings };
+      requireAccess();
       signal.throwIfAborted();
       if (closing) throw new Error("Connection closed");
       const entry = {
         cwd: params.cwd,
+        additionalDirectories,
         mcpServers: structuredClone(params.mcpServers),
         dispose: cleanup,
         persistence: original.persistence,
@@ -500,7 +550,10 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         busy: false,
         promptDone: Promise.resolve(),
         configurationTail: Promise.resolve(),
-        config: bindConfig(original.config),
+        config: bindConfig(
+          original.config,
+          clientCapabilities.session?.configOptions?.boolean != null,
+        ),
         commands: bindCommands(original.commands),
         configSignature: "",
         infoSignature: "",
@@ -595,13 +648,19 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         throw new Error("Session opening cancelled");
       }
       const sessionId = runtime.snapshot.durable.conversation.sessionId;
-      if (sessions.has(sessionId)) {
+      if (sessions.has(sessionId) || (!id && opening.has(sessionId)) || deleting.has(sessionId)) {
         await runtime.close();
         throw new Error("Duplicate session identity");
       }
+      initializedId = sessionId;
+      opening.add(sessionId);
       let configuration: ReturnType<typeof configState>;
       try {
         configuration = configState(entry.config, runtime.snapshot.durable.policy);
+        if (visible && original.onReady)
+          await waitForBoundary(Promise.resolve(original.onReady(sessionId, signal)), signal);
+        signal.throwIfAborted();
+        requireAccess();
       } catch (error) {
         await runtime.close();
         throw error;
@@ -632,8 +691,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       return { sessionId, ...configuration };
     } finally {
       if (cancelOpening) signal.removeEventListener("abort", cancelOpening);
-      if (!published) await dispose?.();
+      if (!published) {
+        elicitation.close();
+        await dispose?.();
+      }
       if (id) opening.delete(id);
+      if (initializedId) opening.delete(initializedId);
     }
   }
   function setConfig(
@@ -642,11 +705,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     value: unknown,
     client: AgentContext,
     signal: AbortSignal,
+    type?: string,
   ) {
     const entry = lookup(id);
     const binding = entry.config.find((binding) => binding.id === configId);
-    const choice = binding?.options.find((option) => option.value === value);
-    if (!binding || !choice)
+    const patch = binding && configPatch(binding, value, type);
+    if (!binding || !patch)
       throw RequestError.invalidParams(undefined, "Unknown config option or value");
     const cancellation = AbortSignal.any([signal, connection.signal]);
     const operation = entry.configurationTail.then(async () => {
@@ -654,10 +718,11 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       cancellation.throwIfAborted();
       if (closing || sessions.get(id) !== entry || !entry.acceptingUpdates)
         throw new RequestError(-32000, "Session closed");
+      requireAccess();
       const policy = entry.runtime.snapshot.durable.policy;
       if (!policy) throw new RequestError(-32000, "Session has no journaled policy");
       if (binding.current(policy) !== value) {
-        const receipt = await entry.runtime.updatePolicy(structuredClone(choice.patch));
+        const receipt = await entry.runtime.updatePolicy(structuredClone(patch));
         if (receipt.kind !== "accepted")
           throw new RequestError(-32000, "Configuration change was not committed", receipt);
       }
@@ -673,6 +738,25 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     );
     return waitForBoundary(operation, cancellation).then(() => operation);
   }
+  const closeForAuth = async () => {
+    authLifetime.abort();
+    authLifetime = new AbortController();
+    const active = [...sessions.entries()];
+    for (const [, entry] of active) {
+      entry.acceptingUpdates = false;
+      entry.promptController?.abort();
+    }
+    await Promise.allSettled(
+      active.map(async ([id, entry]) => {
+        try {
+          await entry.runtime.close();
+        } finally {
+          await entry.dispose();
+          if (sessions.get(id) === entry) sessions.delete(id);
+        }
+      }),
+    );
+  };
   const app = agent()
     .onRequest("initialize", ({ params }) => {
       if (initialized)
@@ -682,21 +766,51 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       return {
         protocolVersion: PROTOCOL_VERSION,
         agentInfo,
-        authMethods: [],
+        authMethods: auth.methods(clientCapabilities),
         agentCapabilities: {
           loadSession,
+          ...(auth.logoutSupported ? { auth: { logout: {} } } : {}),
           promptCapabilities: { image: true, audio: false, embeddedContext: true },
-          mcpCapabilities: { http: true, sse: true },
+          mcpCapabilities: { http: true, sse: true, acp: true },
           sessionCapabilities: {
             close: {},
             ...(loadSession ? { resume: {} } : {}),
             ...(forkSession ? { fork: {} } : {}),
             ...(options.deleteSession ? { delete: {} } : {}),
+            ...(options.additionalDirectories ? { additionalDirectories: {} } : {}),
             ...(options.listSessions ? { list: {} } : {}),
           },
         },
       };
     })
+    .onRequest("authenticate", async ({ params, signal, client }) => {
+      requireInitialized();
+      const cancellation = AbortSignal.any([signal, connection.signal]);
+      const interaction = requestElicitation(
+        client,
+        clientCapabilities,
+        cancellation,
+        connection.signal,
+      );
+      try {
+        await auth.authenticate(params.methodId, cancellation, closeForAuth, {
+          elicitation: interaction.port,
+        });
+        return {};
+      } finally {
+        interaction.close();
+      }
+    })
+    .onRequest("logout", async ({ signal }) => {
+      requireInitialized();
+      await auth.logout(AbortSignal.any([signal, connection.signal]), closeForAuth);
+      return {};
+    })
+    .onRequest("mcp/message", McpMessageSchema, ({ params, signal }) => {
+      requireInitialized();
+      return mcpBridge.request(params, signal);
+    })
+    .onNotification("mcp/message", McpMessageSchema, ({ params }) => mcpBridge.notify(params))
     .onRequest("session/new", ({ params, client, signal }) => open(params, client, signal))
     .onRequest("session/load", async ({ params, client, signal }) => {
       if (!loadSession) throw RequestError.methodNotFound("session/load");
@@ -715,15 +829,23 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     })
     .onRequest("session/fork", async ({ params, client, signal }) => {
       if (!forkSession) throw RequestError.methodNotFound("session/fork");
-      requireInitialized();
+      requireAccess();
       if (deleting.has(params.sessionId))
         throw RequestError.invalidParams(undefined, "Session is being deleted");
       if (borrowedParents.has(params.sessionId))
         throw RequestError.invalidParams(undefined, "Session is already being forked privately");
       if (!isAbsolute(params.cwd))
         throw RequestError.invalidParams(undefined, "cwd must be absolute");
-      if (params.additionalDirectories?.length)
+      if (params.additionalDirectories?.length && !options.additionalDirectories)
         throw RequestError.invalidParams(undefined, "Additional directories are not supported");
+      if (
+        (params.additionalDirectories?.length ?? 0) > 32 ||
+        params.additionalDirectories?.some((path) => !isAbsolute(path) || path.includes("\0"))
+      )
+        throw RequestError.invalidParams(
+          undefined,
+          "Additional directories must be absolute (at most 32)",
+        );
       const cancellation = AbortSignal.any([signal, connection.signal]);
       const borrowed = !sessions.has(params.sessionId);
       let entry: Session | undefined;
@@ -768,6 +890,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
                 cwd: parent.cwd,
                 sessionId: childId,
                 mcpServers,
+                additionalDirectories: params.additionalDirectories ?? [],
               },
               client,
               cancellation,
@@ -804,7 +927,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       }
     })
     .onRequest("session/delete", async ({ params, signal }) => {
-      requireInitialized();
+      requireAccess();
       if (!options.deleteSession) throw RequestError.methodNotFound("session/delete");
       if (
         opening.has(params.sessionId) ||
@@ -841,18 +964,20 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       return waitForBoundary(operation, cancellation);
     })
     .onRequest("session/list", async ({ params, signal }) => {
-      requireInitialized();
+      requireAccess();
       if (!options.listSessions) throw RequestError.methodNotFound("session/list");
       if (params.cwd != null && !isAbsolute(params.cwd))
         throw RequestError.invalidParams(undefined, "cwd must be absolute");
       return options.listSessions(params, signal);
     })
     .onRequest("session/set_config_option", ({ params, client, signal }) =>
-      setConfig(params.sessionId, params.configId, params.value, client, signal),
+      setConfig(params.sessionId, params.configId, params.value, client, signal, params.type),
     )
     .onRequest("session/set_mode", async ({ params, client, signal }) => {
       const entry = lookup(params.sessionId);
-      const mode = entry.config.find((binding) => binding.category === "mode");
+      const mode = entry.config.find(
+        (binding) => binding.category === "mode" && binding.type !== "boolean",
+      );
       if (!mode) throw RequestError.methodNotFound("session/set_mode");
       await setConfig(params.sessionId, mode.id, params.modeId, client, signal);
       return {};
@@ -891,6 +1016,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           entry.runtime.snapshot.durable.conversation.sessionId,
           promptSignal,
           entry.media(entry.runtime.snapshot.durable.policy?.provider),
+          entry.additionalDirectories,
         );
         promptSignal.throwIfAborted();
         const turn = entry.runtime.input(input);
@@ -935,6 +1061,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         throw error;
       } finally {
         promptSignal.removeEventListener("abort", abort);
+        controller.abort(); // Release pending elicitation UI after this prompt settles.
         entry.promptController = undefined;
         entry.busy = false;
         finishPrompt();
@@ -943,11 +1070,11 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       }
     })
     .onNotification("session/cancel", async ({ params }) => {
-      const entry = lookup(params.sessionId);
+      const entry = lookup(params.sessionId, true);
       entry.promptController?.abort();
     })
     .onRequest("session/close", async ({ params }) => {
-      const entry = lookup(params.sessionId);
+      const entry = lookup(params.sessionId, true);
       // Close is terminal for this runtime, even if the client never answers permission requests.
       entry.acceptingUpdates = false;
       entry.promptController?.abort();

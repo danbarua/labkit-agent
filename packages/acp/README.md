@@ -38,7 +38,7 @@ SQLite recovery handles interrupted transactions; interrupted agent turns use co
 never rerun tools automatically. Storage errors do not authorize execution.
 
 Workspace file tools are `read_file` (read), `write_file` (edit), and `list_dir` (search). Every
-location is absolute and bound to the session cwd. Parent traversal, outside paths, and the
+location is absolute and bound to the session workspace roots. Parent traversal, outside paths, and the
 reserved `.labkit` directory are rejected. Local filesystem operations additionally reject symlink
 components and hard-linked files. Reads require UTF-8 and reads/writes are capped
 at 256 KiB. Listings are shallow and capped at 1,000 entries and 256 KiB of entry data. Writes
@@ -129,6 +129,102 @@ clients can keep displaying released terminals. Cancellation before creation ret
 embedding but still releases the late terminal. Restore replays durable output without resurrecting
 terminal resources or replaying ephemeral IDs.
 
+## Elicitation
+
+Factories receive `SessionOptionsContext.elicitation`, a `ClientElicitation` port whose optional
+`form` and `url` methods exist only for explicitly non-null client capability modes. An absent,
+null, or empty `clientCapabilities.elicitation` does not imply form support. Ports are bound to the
+client connection, live session, and current prompt; they cannot be used during factory setup.
+Applications may call them inside ordinary tools, passing the operation signal and optional
+`ToolRunContext` to associate the request with its tool card. Tool permission still precedes run.
+
+`form({ message, requestedSchema }, signal, context?)` returns accept/decline/cancel. Accepted
+content is checked against the flat ACP schema: strings (length/pattern/format), numbers/integers
+(bounds), booleans, single-choice enums, and string multi-selects. Required fields, unknown response
+fields, and duplicate selections are checked. Schemas are restricted to supported keywords before
+compilation; arbitrary references and nested objects are not forwarded. Defaults remain UI hints,
+not fabricated answers. Decline/cancel content is ignored, and invalid accepted content fails the
+operation. Forms must request only non-sensitive information, never credentials or payment secrets.
+Tool authors decide how a declined/cancelled answer affects their task; it is not an approval.
+
+`url({ message, url }, signal, context?)` returns an action, a lifecycle `signal`, and `complete()`.
+The adapter generates a private connection-scoped ID. Accept means consent to open the URL, not
+successful completion of the external workflow. Call `complete()` only after verifying the same
+user finished that workflow; it sends `elicitation/complete` once to the original client. Repeated,
+declined, cancelled, or expired completions emit nothing. No URL response content is returned to the
+tool. Use HTTPS (HTTP is allowed only for loopback development); embedded URL credentials are
+rejected. Applications must not place credentials, personal data, or pre-authorized access in URLs.
+Labkit never fetches or opens them. Hosts own consent and secure browser presentation, and external
+workflow owners retain all tokens outside ACP, model context, and journals.
+
+Requests and responses are capped at 64 KiB, forms at 128 fields, messages at 4,096 characters,
+and outstanding interactions at 32 per bound session or authentication request. UI waits time out after 120 seconds. Cancellation,
+prompt settlement, session close, logout, and disconnect release pending interactions; late replies
+cannot settle a cancelled operation. Elicitation exchanges are transient. Only data deliberately
+returned as ordinary tool output is journaled; no new core turn phase or input event is introduced.
+
+MCP advertises matching elicitation capabilities and forwards form/URL requests only while that
+server has an active tool call. MCP form's omitted mode is mapped to explicit ACP form mode.
+Forwarded requests are session-scoped because MCP does not reliably identify the originating tool
+among concurrent calls. URL IDs are mapped per MCP connection, and completion notifications map
+back to the original ACP ID. Decline, cancel, invalid responses, and RPC failures propagate to the
+MCP caller. Unsupported modes do not silently fall back. Existing MCP call deadlines still apply.
+This does not implement MCP OAuth. Authentication callbacks can use request-scoped elicitation as
+described below.
+
+## Authentication
+
+Applications can supply an optional `AcpOptions.auth` binding with `methods`, a synchronous
+`isAuthenticated()` credential-availability check, an `authenticate(methodId, signal, context)` callback for
+agent login methods, and an optional `logout(signal)` callback. Exported `AcpAuth` describes this
+binding. Credential storage, browser/device-code flows, and interactive login executables belong to
+the application. The workspace example continues to use environment credentials and advertises no
+login or logout flow. MCP OAuth is separate and remains unsupported.
+
+The third authenticate argument is an `AcpAuthContext` with a capability-filtered `elicitation`
+port. Its requests carry the current `authenticate` request ID, with no session or tool-call ID.
+This supports login UI before a session exists. The same form validation, URL restrictions,
+completion handling, and size limits apply. Forms may collect non-sensitive setup choices; secrets
+must use a secure external flow. Missing URL support does not cause a form fallback.
+
+For a browser login, the application calls `context.elicitation.url(...)`, checks the returned
+action, then completes and verifies its external workflow using the callback's AbortSignal. Only
+after verification should it store credentials and call the handle's `complete()`. Return from the
+callback only after the credential store is ready. URL consent alone does not authenticate, and
+no credentials may be returned through the UI or written into a URL. The adapter still checks
+`isAuthenticated()` before acknowledging success. OAuth providers, callback endpoints, identity
+verification, and credential persistence remain application responsibilities.
+
+The request-scoped port closes when authenticate returns, fails, is cancelled, or disconnects.
+Completion after that boundary emits nothing; an unanswered UI request receives ACP cancellation.
+A callback that ignores cancellation cannot grant late access on that connection. Existing
+callbacks accepting only methodId and signal remain compatible.
+
+The adapter copies and validates up to 32 method descriptors (64 KiB total), advertises them in
+`initialize.authMethods`, and advertises `agentCapabilities.auth.logout` only when a logout callback
+exists. Agent methods have `{ id, name, description? }`. Terminal methods additionally have
+`type: "terminal"`, optional `args` and `env`; they are advertised only when
+`clientCapabilities.auth.terminal` is true. The host reruns its configured agent command for terminal
+login and reconnects afterward. Terminal method IDs cannot be passed to `authenticate`; Labkit does
+not launch login commands itself. Descriptors, including terminal environment values, are public
+protocol metadata and must not contain credentials.
+
+With an auth binding, unauthenticated requests to create/load/resume/fork/list/delete sessions,
+prompt, or change configuration receive ACP `auth_required` before invoking the relevant operation.
+Successful `authenticate` requires both callback completion and `isAuthenticated() === true`.
+Logout succeeds only after its callback clears credential availability. Login changes and logout
+first cancel opening sessions and close this connection's live runtimes and MCP resources. Journaled
+sessions remain saved and can be loaded after authentication. Already committed writes and external
+tool effects are not rolled back. Cancellation and close remain available after credential expiry.
+
+Credential changes cannot overlap on one ACP connection. Cancellation stops waiting promptly but
+keeps the transition locked until the callback settles; late success cannot grant access on that
+connection. Failed or cancelled changes leave access denied until a successful login or reconnect.
+Callbacks must honor their signal and own cleanup of any credential-store effects. Disconnect aborts
+the callback signal. Bind per-connection credential state when isolation is needed; applications
+sharing a store across connections own cross-connection revocation. Credentials and authentication
+metadata never enter the session journal, and authentication never substitutes for tool permission.
+
 ## Run from a host
 
 Create a local configuration module that default-exports `AcpOptions`. Supply the same
@@ -213,7 +309,7 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
   The cwd must match the parent workspace, and MCP descriptors must remain identical (omitting
   `mcpServers` reuses a live parent's bindings). For a saved parent, supply the original MCP
   descriptors needed for compatible restoration; credentials remain outside the journal.
-  Additional roots remain unsupported. Cancellation before dispatch creates no child; cancellation after
+  The child uses its requested additional roots without changing the parent. Cancellation before dispatch creates no child; cancellation after
   dispatch cannot roll back a committed branch. If rebinding fails after publication, RPC error
   data includes the durable child ID so it can be loaded with compatible bindings. A cancelled
   request may leave a saved branch discoverable through session listing.
@@ -267,18 +363,35 @@ reads. Thinking/signature payloads are not replayed as visible reasoning.
 
 ## Client-supplied MCP tools
 
-New/load/resume connect supplied stdio, Streamable HTTP, and legacy SSE MCP servers using `@modelcontextprotocol/sdk` 1.30.1.
+New/load/resume connect supplied stdio, Streamable HTTP, legacy SSE, and ACP-proxied MCP servers using `@modelcontextprotocol/sdk` 1.30.1.
 Servers run directly (no command shell) with the session cwd, SDK baseline environment, and explicit
 ACP environment entries. Provider credentials are not inherited automatically. Server stderr goes
-to stderr; stdout belongs to that server's MCP transport. Only the primary workspace is advertised
+to stderr; stdout belongs to that server's MCP transport. The primary and requested additional workspaces are advertised
 through MCP `roots/list`; roots are advisory and do not sandbox an external server process.
 
 The adapter initializes each server, paginates `tools/list`, and freezes the resulting catalog for
 the session. Names use `mcp_<server>_<tool>_<hash>` to fit provider limits and avoid collisions. The
 catalog is sorted for stable restore manifests. Reopening reconnects and validates compatible tool
 schemas; it never reissues recorded calls. Tool-list-change notifications do not mutate a running
-session's registry. Sampling, elicitation, task-only tools, and resource/prompt browsing are not
-advertised. ACP-proxied MCP servers are not supported.
+session's registry. Sampling, task-only tools, and resource/prompt browsing are not
+advertised. Elicitation is forwarded only for explicitly supported client modes.
+
+Experimental MCP-over-ACP accepts `{ type: "acp", name, serverId }` and advertises
+`mcpCapabilities.acp: true`. Each session opens its own `mcp/connect` connection, initializes MCP,
+and uses the same frozen catalog, schema validation, and permission-gated tool path. Requests and
+notifications travel through `mcp/message`; reverse requests such as `roots/list` route to that
+specific connection. Unknown connection requests reject, and unknown notifications are ignored.
+Unsupported MCP requests still reject through the ordinary MCP client handlers.
+
+Connection IDs and request correlation stay outside the journal. Cancellation maps local MCP
+request IDs to the outer ACP request's cancellation, so late replies cannot settle cancelled tools.
+Close and failed setup unregister the connection before requesting `mcp/disconnect`, waiting at
+most two seconds for acknowledgement. A connect reply arriving after cancellation is also released.
+An unresponsive connect request stays observed until the ACP connection closes so a late ID can be
+cleaned up. Active connection-ID reuse is rejected without disconnecting the original owner.
+Disconnecting ACP leaves remaining remote-resource cleanup to the host; reconnect/load opens fresh
+MCP connections and never replays journaled tool calls. This transport remains an experimental SDK
+surface, distinct from the ACP stdio transport used to launch Labkit.
 
 HTTP/SSE connections forward the supplied headers, including authentication headers. URLs must
 use HTTP(S); redirects and cross-origin SSE endpoints are rejected. Supply the final endpoint URL.
@@ -302,6 +415,36 @@ these names in their own configuration selectors. The workspace example includes
 mode, and excludes them in read-only mode because external tools are outside its file sandbox.
 Commands, process handles, environment bindings, HTTP headers, and MCP clients never enter the journal; schemas,
 arguments and successful tool results do, as ordinary core tool data.
+
+## Additional workspace roots
+
+The workspace example advertises `sessionCapabilities.additionalDirectories`. New/load/resume/fork
+accept up to 32 absolute `additionalDirectories`. Each request supplies the complete active list;
+omitting it or passing an empty list activates only the primary cwd. A load, resume, or fork can
+select different additional roots while retaining the session's primary cwd. Fork changes apply
+only to the child, including when the parent is restored privately. Custom factories opt in with
+`AcpOptions.additionalDirectories: true` and receive a frozen list in `SessionOptionsContext`.
+
+Relative file paths resolve against the primary cwd. Absolute paths may address any allowed root.
+The example canonicalizes and deduplicates roots, includes their paths in tool descriptions, and
+uses the same checks for resource-link ingestion. Every root's `.labkit` subtree remains reserved,
+including when roots overlap; roots inside another root's reserved subtree are rejected. Local
+symlink, hard-link, traversal, size, and cancellation checks still apply. Client-delegated file
+access retains lexical checks, with client-owned resolution. MCP roots are advisory, not a process
+sandbox. Terminal commands still start in the primary cwd.
+
+Journal and blob storage stay under the primary cwd. `session/list` reports the last successfully
+bound canonical additional-root list, including after process restart. Scope metadata is separate
+from journal records; no journal version changes. Old stores without scope metadata report none.
+The example writes scope before returning a successful lifecycle response and removes it on session
+deletion. Removing a root prevents new file access but does not remove previously journaled blobs.
+
+`AcpSessionOptions.onReady(sessionId, signal)` optionally persists host metadata after runtime
+initialization and configuration validation, before visible publication. It is not called for a
+private fork-parent restore. A failed or cancelled hook closes the unpublished runtime; an already
+committed journal or metadata write cannot be rolled back. Hooks must honor cancellation and avoid
+late writes after cancellation. This lifecycle gate differs from best-effort `sessionInfo` display
+notifications, which never delay execution.
 
 ## Session metadata notifications
 
@@ -340,7 +483,7 @@ The initial agent manifest model remains unchanged by a policy selection, so kee
 ## Explicit limits
 
 This is an ACP v1 **session subset**, not a claim of full protocol conformance. Text, resource-link, image, and embedded-resource
-prompts are accepted. Local `file://` links and paths inside the session cwd are read through the
+prompts are accepted. Local `file://` links and paths inside the session workspace roots are read through the
 workspace path checks and stored with `putBlob` in that session before admitting the user input.
 The journal contains attachment refs, never file bytes. Outside paths are rejected without reading
 them. Non-file URLs remain textual references; the adapter never fetches them. Cancellation during
@@ -360,8 +503,8 @@ Provider media support is checked before storage/admission; attachments require 
 profile. Custom completion ports without a provider registry cannot resolve attachment media. Audio prompt blocks remain unadvertised and rejected.
 The existing provider text inline cap still applies to embedded resources.
 
-Client-supplied stdio, HTTP, and SSE MCP servers are supported. MCP OAuth and ACP-proxied MCP,
-remembered permissions, cross-provider switching, extra workspace roots,
+Client-supplied stdio, HTTP, SSE, and ACP-proxied MCP servers are supported. MCP OAuth,
+remembered permissions, cross-provider switching,
 and ACP HTTP transport remain unimplemented. No usage_update is fabricated from provider usage deltas:
 ACP requires a context-window size that core does not currently supply.
 
@@ -385,9 +528,12 @@ Protocol references: [stdio](https://agentclientprotocol.com/protocol/v1/transpo
 [session discovery](https://agentclientprotocol.com/protocol/v1/session-list),
 [experimental fork API](https://agentclientprotocol.github.io/typescript-sdk/types/ForkSessionRequest.html),
 [configuration](https://agentclientprotocol.com/protocol/v1/session-config-options),
+[authentication](https://agentclientprotocol.com/protocol/v1/authentication),
+[elicitation](https://agentclientprotocol.com/protocol/v1/elicitation),
 [filesystem](https://agentclientprotocol.com/protocol/v1/file-system),
 [terminals](https://agentclientprotocol.com/protocol/v1/terminals),
 [plans](https://agentclientprotocol.com/protocol/v1/agent-plan),
 [commands](https://agentclientprotocol.com/protocol/v1/slash-commands),
 [prompt turns](https://agentclientprotocol.com/protocol/v1/prompt-turn),
-[TypeScript SDK](https://agentclientprotocol.com/libraries/typescript).
+[TypeScript SDK](https://agentclientprotocol.com/libraries/typescript),
+[MCP-over-ACP wire reference](https://agentclientprotocol.github.io/rust-sdk/protocol.html).

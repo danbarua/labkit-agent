@@ -32,6 +32,10 @@ for await (const bytes of Bun.stdin.stream()) {
     if (!line) continue;
     const request = JSON.parse(line);
     log({ method: request.method, name: request.params?.name });
+    if (request.id === "roots-check" && request.result)
+      log({ method: "roots-result", roots: request.result.roots });
+    if (request.method === "notifications/initialized")
+      send({ jsonrpc: "2.0", id: "roots-check", method: "roots/list", params: {} });
     if (request.method === "initialize") {
       if (process.env.MCP_TEST_MODE !== "hang")
         result(request.id, {

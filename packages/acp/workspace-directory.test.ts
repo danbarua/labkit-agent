@@ -109,3 +109,45 @@ test("deletion resolves discovered workspaces, hides removed sessions, and leave
     rmSync(other, { recursive: true, force: true });
   }
 });
+
+test("scope metadata is durable, requires a live journal, and is removed on deletion", async () => {
+  const root = mkdtempSync(join(tmpdir(), "labkit-scope-"));
+  try {
+    const store = workspacePersistence(root);
+    const id = SessionIdSchema.parse(crypto.randomUUID());
+    await expect(store.setScope(id, ["/extra"], signal())).rejects.toThrow("missing");
+    await store.append(
+      {
+        sessionId: id,
+        appendId: AppendIdSchema.parse("create"),
+        expectedRevision: INITIAL_REVISION,
+        records: ["opaque"],
+      },
+      signal(),
+    );
+    await store.setScope(id, ["/extra", "/second"], signal());
+    expect(workspaceDirectory(root).list({}, signal()).sessions[0]?.additionalDirectories).toEqual([
+      "/extra",
+      "/second",
+    ]);
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await expect(store.setScope(id, [], cancelled.signal)).rejects.toThrow();
+    expect(workspaceDirectory(root).list({}, signal()).sessions[0]?.additionalDirectories).toEqual([
+      "/extra",
+      "/second",
+    ]);
+    await expect(store.setScope(id, ["relative"], signal())).rejects.toThrow("absolute");
+    await store.deleteSession(id, signal());
+    await expect(store.setScope(id, ["/extra"], signal())).rejects.toThrow("deleted");
+    const db = new Database(join(root, ".labkit/sessions/store.sqlite"), { readonly: true });
+    try {
+      expect(db.query("SELECT * FROM session_scope").all()).toEqual([]);
+    } finally {
+      db.close();
+    }
+    expect(workspaceDirectory(root).list({}, signal()).sessions).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

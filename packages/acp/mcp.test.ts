@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
@@ -8,7 +8,7 @@ import { mcpConnections, mcpToolName } from "./mcp.ts";
 
 const fixturePath = new URL("./testing/mcp-server.ts", import.meta.url).pathname;
 const signal = () => new AbortController().signal;
-async function fixture(mode = "normal") {
+async function fixture(mode = "normal", additionalDirectories: string[] = []) {
   const cwd = await mkdtemp(join(tmpdir(), "labkit-mcp-"));
   const server = {
     name: "fixture/server",
@@ -21,7 +21,7 @@ async function fixture(mode = "normal") {
       { name: "MCP_TEST_MODE", value: mode },
     ],
   };
-  const connection = mcpConnections([server], cwd);
+  const connection = mcpConnections([server], cwd, additionalDirectories);
   return {
     cwd,
     server,
@@ -136,5 +136,23 @@ test("MCP rejects invalid remote URLs, duplicate names, and cycling catalogs; ab
     expect((await hanging.events()).at(-1).method).toBe("closed");
   } finally {
     await hanging.cleanup();
+  }
+});
+
+test("MCP root discovery includes additional workspace roots without changing server cwd", async () => {
+  const { pathToFileURL } = await import("node:url");
+  const f = await fixture("normal", ["/additional/workspace"]);
+  try {
+    const tools = await f.connection.open(signal());
+    const output = await tools
+      .get(mcpToolName(f.server.name, "echo"))!
+      .run({ text: "roots" }, signal());
+    expect(output).toMatchObject({ structuredContent: { cwd: await realpath(f.cwd) } });
+    expect((await f.events()).find((event) => event.method === "roots-result")?.roots).toEqual([
+      { uri: pathToFileURL(f.cwd).href, name: "Workspace" },
+      { uri: "file:///additional/workspace", name: "Workspace 2" },
+    ]);
+  } finally {
+    await f.cleanup();
   }
 });
