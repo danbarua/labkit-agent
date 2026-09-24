@@ -62,7 +62,11 @@ capture so a bad response can be identified without reconstructing the request f
 ## Permission and display ports
 
 `requestPermission(request, signal)` is authoritative. With `permissions: "ask"`, the host validates
-inputs and resolves approval for calls in order. Return `allow-once`, `allow-session`, `reject-once`, or a
+inputs and resolves approval for calls in order. Under `return-error-and-continue`, an invalid input
+records an `invalid_input` decision without asking permission. After that decision commits, the
+host reports a failed tool result containing the validation cause; the invalid call never runs.
+Valid siblings still require approval. The model receives all committed results to choose its next
+action. `tool.input_rejected` explains the invalid call and consequence in diagnostics. Return `allow-once`, `allow-session`, `reject-once`, or a
 cancelled outcome. Every call must be allowed before the batch runs. A malformed response or callback
 failure fails closed; cancellation revokes in-memory grants, and late approval cannot start a tool.
 `allow-session` approves the named tool for all arguments in this host's live session. The host

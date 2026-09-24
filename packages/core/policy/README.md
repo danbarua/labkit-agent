@@ -17,7 +17,7 @@ mutating an options object does nothing to an open session.
 | `strict@1`                           | Each active turn must finish unchanged.                   | New input cannot barge in.                                                                                                           |
 | `queued@1`                           | Every accepted input needs its own turn.                  | Inputs persist in order; aborting the current turn does not discard its queued successors.                                           |
 | `abort-tools-on-user` input behavior | A new instruction should stop tool work first.            | The successor is saved before cancellation and starts only after the aborted turn commits. Already-started effects cannot be undone. |
-| `tolerant@1`                         | The model can use a tool error to choose its next action. | Ordinary admitted tool failures become error messages; permission refusal, cancellation, and timeout still stop work.                |
+| `tolerant@1`                         | The model can use a tool error to choose its next action. | Tool input and execution failures become error results; permission refusal, cancellation, and timeout still stop work.               |
 
 Selecting a pack resets its behavior fields; fields explicitly supplied in the same patch override
 that pack. Inspect the resulting committed policy rather than maintaining a second mutable copy.
@@ -58,7 +58,9 @@ Anthropic always requires an explicit output limit. Clear a manual budget with n
 thinking modes. Effort values are limited to the bound profile's declared
 values. `off` or omission disables thinking. These settings are distinct, not approximations.
 
-`permissions: "ask"` requires a permission binding and once-only approval for every tool call.
+`permissions: "ask"` requires a permission binding. Valid tool calls need explicit approval or a
+previous live-session approval for that tool; invalid arguments do not request permission under
+`return-error-and-continue`.
 `off` permits immediate execution after the intent receipt. Permission scope is a turn-boundary
 choice; a tolerant tool-error policy cannot override a user's refusal.
 
@@ -79,3 +81,8 @@ LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/
 
 Look for `policy.committed` in the environment diagnostics. A selected UI value or a submitted patch
 is not evidence that reconfiguration committed.
+
+A continued tool failure projects both the readable `error` and structured `failure` into the model
+result, including operation identity and the original cause. This lets the model distinguish a
+missing path from a provider/client error instead of seeing only a generic message. The original
+failed outcome remains in the journal; continuing does not retry the operation.

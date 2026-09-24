@@ -78,6 +78,17 @@ fail validation. Preserve compatible bindings for sessions you intend to reopen;
 software does not migrate historical journal formats. See
 [configuration binding details](protocol-reference.md#configuration-bindings).
 
+## Tool failures go back to the model
+
+The workspace harness reports ordinary tool failures as tool results and continues the turn.
+A missing file includes its path, underlying error, and a concrete `list_dir` request for discovering
+existing paths. Invalid arguments return the validator’s field-level errors without execution or a
+permission prompt; other calls in the batch finish, and the
+model can choose a corrected action. Failed tool cards and original journal outcomes stay failed.
+No tool is automatically retried. Permission refusal, cancellation, deadlines, and persistence
+failures retain their distinct stopping behavior. Reopening an existing session preserves its
+committed policy; changing the factory default does not silently rewrite that policy.
+
 ## Keep display, permission, and completion distinct
 
 A pending tool card describes intended work. Only `request_permission` approves a call, and every

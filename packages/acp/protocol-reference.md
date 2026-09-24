@@ -13,7 +13,9 @@ Set `LABKIT_ACP_MODEL` and the provider credential in the launch environment. Th
 provider is `anthropic`; `LABKIT_ACP_PROVIDER` also accepts `openai`, `openai-responses`, or
 `google`. These use ANTHROPIC_API_KEY, OPENAI_API_KEY and GOOGLE_API_KEY respectively.
 LABKIT_ACP_BASE_URL optionally overrides the endpoint. The example enables streaming and explicit
-permissions. File access, Model and Thinking selectors commit the same core policy contract.
+permissions. Ordinary tool failures are returned to the model with their structured causes so it
+can recover; sibling calls finish. Tool failure handling can commit that behavior to an existing
+session without editing its journal. File access, Model and Thinking selectors commit the same core policy contract.
 LABKIT_ACP_MODELS adds comma-separated model IDs to the environment's explicit model registry.
 No model catalog is inferred, and no historical adapter registry is installed during restore.
 
@@ -479,13 +481,16 @@ restore a runtime or access blobs. Private fork-parent restoration emits no meta
 `sessionOptions` may return `AcpSessionOptions`, which extends core options with a `config` array.
 Each `AcpConfigBinding` declares `id`, `name`, optional `category`/`description`, and a pure
 `current(policy)` selector. Select bindings have `options` (`value`, `name`, optional `description`,
-and a `PolicyPatch`). Boolean bindings declare `type: "boolean"`, return a boolean from `current`,
+and a `PolicyPatch`), or groups (`group`, `name`, `options`). Values must be unique across
+all groups; groups and individual values cannot be mixed. Group, value, and control `_meta` data
+is preserved. `selectChoices(binding)` exposes flattened choices for application logic. Boolean bindings declare `type: "boolean"`, return a boolean from `current`,
 and provide `patches: { true: PolicyPatch, false: PolicyPatch }`.
 The selector must derive its value from journaled policy; select values must match a declared option.
 Do not keep a separate mutable selection. Each patch must produce its corresponding selected value.
 Bindings are copied at session opening, while callbacks remain executable host resources. They are
 never written to the journal. Core validates tool/provider capability restrictions on each patch.
-Use one select binding with `category: "mode"` to also expose the legacy mode API. Applications without config
+The first select binding with `category: "mode"` also exposes the legacy mode API. Later
+mode-category controls remain in the ordered configuration list. Applications without config
 bindings retain their existing new/load/resume response shapes.
 
 Boolean controls are exposed only when the client advertises

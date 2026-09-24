@@ -1386,7 +1386,9 @@ test("invalid policy patches return errors without publishing a configuration ch
             : {
                 ...binding,
                 options: [
-                  ...binding.options,
+                  ...binding.options.flatMap((option) =>
+                    "group" in option ? [...option.options] : [option],
+                  ),
                   {
                     value: "unbound",
                     name: "Unbound",
@@ -4465,4 +4467,192 @@ test("ACP exposes structured storage failure from public settlement without reco
   } finally {
     await h.close();
   }
+});
+
+test("workspace ACP reports missing-file errors to the model, completes sibling reads, and supplies recovery instructions to the next completion", async () => {
+  const { mkdir, realpath } = await import("node:fs/promises");
+  const { resolve, join } = await import("node:path");
+  const { workspaceAgent } = await import("./examples/vscode-workspace.ts");
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = resolve(`.session-artifacts/acp-tool-recovery/${crypto.randomUUID()}`);
+  await mkdir(directory, { recursive: true });
+  const cwd = await realpath(directory);
+  await withFixtureDiagnostics(directory, {}, async () => {
+    const workspace = workspaceAgent({
+      LABKIT_ACP_MODEL: "review-model",
+      ANTHROPIC_API_KEY: "scripted-credential",
+    });
+    let completions = 0;
+    const modelRequests: unknown[] = [];
+    const h = harness({
+      ...workspace,
+      sessionOptions: async (context) => {
+        const options = await workspace.sessionOptions(context);
+        expect(options.configuration.policy?.toolFailure).toBe("return-error-and-continue");
+        return {
+          ...options,
+          config: undefined,
+          configuration: {
+            ...options.configuration,
+            policy: {
+              permissions: options.configuration.policy!.permissions,
+              toolFailure: options.configuration.policy!.toolFailure,
+            },
+          },
+          bindings: {
+            ...options.bindings,
+            providers: undefined,
+            complete: (request) => {
+              modelRequests.push(request);
+              completions++;
+              if (completions === 1)
+                return {
+                  kind: "tools",
+                  text: "Read the documentation",
+                  calls: [
+                    {
+                      id: "missing",
+                      name: "read_file",
+                      args: { path: "packages/core/agent/README.md" },
+                    },
+                    {
+                      id: "existing",
+                      name: "read_file",
+                      args: { path: "packages/acp/protocol-reference.md" },
+                    },
+                  ],
+                };
+              const results = request.messages.filter((message) => message.role === "tool");
+              if (completions === 2) {
+                expect(results).toHaveLength(2);
+                expect(JSON.stringify(results)).toContain("ENOENT");
+                expect(JSON.stringify(results)).toContain("list_dir");
+                expect(JSON.stringify(results)).toContain("discover existing names");
+                expect(JSON.stringify(results)).toContain("packages/core/agent/README.md");
+                expect(JSON.stringify(results)).toContain("Protocol documentation contents");
+                return {
+                  kind: "tools",
+                  text: "The requested README is absent; read the agent implementation instead",
+                  calls: [
+                    {
+                      id: "recovery",
+                      name: "read_file",
+                      args: { path: "packages/core/agent/agent.ts" },
+                    },
+                  ],
+                };
+              }
+              expect(JSON.stringify(results)).toContain("Agent implementation contents");
+              return {
+                kind: "answer",
+                text: "Review completed using the implementation and protocol reference; the agent README does not exist.",
+              };
+            },
+          },
+        };
+      },
+    });
+    try {
+      await h.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: { fs: { readTextFile: true } },
+      });
+      const opened = await h.request("session/new", { cwd, mcpServers: [] });
+      expect(opened.error).toBeUndefined();
+      const sessionId = opened.result.sessionId;
+      const turn = await h.start("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: "Review this project's documentation" }],
+      });
+      await until(() =>
+        h.messages.some((message) => message.method === "session/request_permission"),
+      );
+      const permission = h.messages.find(
+        (message) => message.method === "session/request_permission",
+      )!;
+      await h.send({
+        jsonrpc: "2.0",
+        id: permission.id,
+        result: { outcome: { outcome: "selected", optionId: "allow-session" } },
+      });
+      await until(
+        () => h.messages.filter((message) => message.method === "fs/read_text_file").length === 2,
+      );
+      const reads = h.messages.filter((message) => message.method === "fs/read_text_file");
+      for (const read of reads) {
+        if (read.params.path.endsWith("README.md"))
+          await h.send({
+            jsonrpc: "2.0",
+            id: read.id,
+            error: {
+              code: -32603,
+              message: "Internal error",
+              data: {
+                details: `Error: ENOENT: no such file or directory, open '${read.params.path}'`,
+              },
+            },
+          });
+        else
+          await h.send({
+            jsonrpc: "2.0",
+            id: read.id,
+            result: { content: "Protocol documentation contents" },
+          });
+      }
+      await until(
+        () => h.messages.filter((message) => message.method === "fs/read_text_file").length === 3,
+      );
+      const recovery = h.messages.filter((message) => message.method === "fs/read_text_file")[2]!;
+      expect(recovery.params.path).toBe(join(cwd, "packages/core/agent/agent.ts"));
+      await h.send({
+        jsonrpc: "2.0",
+        id: recovery.id,
+        result: { content: "Agent implementation contents" },
+      });
+      expect((await h.response(turn)).result.stopReason).toBe("end_turn");
+      expect(completions).toBe(3);
+      expect(
+        h.messages.filter((message) => message.method === "session/request_permission"),
+      ).toHaveLength(1);
+      const updates = h.updates().map((message) => message.update);
+      expect(
+        updates.some(
+          (update) =>
+            update.sessionUpdate === "tool_call_update" &&
+            update.toolCallId.endsWith("/missing") &&
+            update.status === "failed",
+        ),
+      ).toBe(true);
+      expect(
+        updates.some(
+          (update) =>
+            update.sessionUpdate === "tool_call_update" &&
+            update.toolCallId.endsWith("/existing") &&
+            update.status === "completed",
+        ),
+      ).toBe(true);
+    } finally {
+      await h.close();
+      await Bun.write(join(directory, "protocol.json"), JSON.stringify(h.messages, null, 2));
+      await Bun.write(
+        join(directory, "model-requests.json"),
+        JSON.stringify(modelRequests, null, 2),
+      );
+    }
+  });
+  const records = (await Bun.file(join(directory, "diagnostics.jsonl")).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const failure = records.find((record) => record.event === "client_file.failed");
+  expect(failure).toMatchObject({ level: "warning", operation: "fs/read_text_file" });
+  expect(failure.path).toContain("packages/core/agent/README.md");
+  expect(JSON.stringify(failure.error)).toContain("ENOENT");
+  expect(failure.toolCallId).toEndWith("/missing");
+  expect(
+    records.some(
+      (record) =>
+        record.event === "client_file.completed" && record.path.endsWith("protocol-reference.md"),
+    ),
+  ).toBe(true);
 });

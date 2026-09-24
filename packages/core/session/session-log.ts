@@ -1020,7 +1020,7 @@ export function journalMarkdown(
       ...(result.kind === "succeeded"
         ? result.value.map(
             (decision) =>
-              `- Call ${decision.callId}: **${decision.decision}**${decision.approval ? ` — ${decision.approval.scope}, ${decision.approval.source}, grant ${decision.approval.grantId}` : ""}`,
+              `- Call ${decision.callId}: **${decision.decision}**${decision.decision === "invalid_input" ? ` — ${decision.error.message}` : decision.approval ? ` — ${decision.approval.scope}, ${decision.approval.source}, grant ${decision.approval.grantId}` : ""}`,
           )
         : [
             `Permission operation: ${result.kind}${result.kind === "failed" ? ` — ${result.error.message}` : ""}.`,

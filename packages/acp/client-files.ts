@@ -73,7 +73,14 @@ export function clientFiles(
           error: diagnosticError(error),
         },
       );
-      throw error;
+      if (cancelled || timedOut) throw error;
+      const details = diagnosticError(error);
+      throw new Error(
+        `${operation} failed for ${path}: ${details.message ?? "Unknown client error"}${details.data === undefined ? "" : `; ${JSON.stringify(details.data)}`}`,
+        {
+          cause: error,
+        },
+      );
     }
   };
   return {

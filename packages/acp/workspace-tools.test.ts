@@ -188,7 +188,8 @@ test("workspace example validates environment, enables load and disables self-ha
             (binding): binding is AcpSelectBinding =>
               binding.type !== "boolean" && binding.id === "model",
           )
-          ?.options.map((option) => option.value),
+          ?.options.flatMap((option) => ("group" in option ? [...option.options] : [option]))
+          .map((option) => option.value),
       ).toEqual(["m", "m2"]);
       expect(
         options.config
@@ -196,7 +197,8 @@ test("workspace example validates environment, enables load and disables self-ha
             (binding): binding is AcpSelectBinding =>
               binding.type !== "boolean" && binding.id === "thinking",
           )
-          ?.options.map((option) => option.value),
+          ?.options.flatMap((option) => ("group" in option ? [...option.options] : [option]))
+          .map((option) => option.value),
       ).toEqual(
         provider!.startsWith("openai")
           ? ["off", "low", "medium", "high"]
@@ -235,7 +237,8 @@ test("workspace terminal tool requires explicit opt-in and client capability and
             (binding): binding is AcpSelectBinding =>
               binding.type !== "boolean" && binding.id === "mode",
           )
-          ?.options.find((option) => option.value === "read-only");
+          ?.options.flatMap((option) => ("group" in option ? [...option.options] : [option]))
+          .find((option) => option.value === "read-only");
         expect(readOnly?.patch.tools?.workspace).not.toContain("run_command");
         expect(options.configuration.policy?.permissions).toBe("ask");
       }
@@ -310,6 +313,33 @@ test("workspace restores committed model selection without invoking transport", 
       thinking: "adaptive",
     });
     await restored.close();
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("failed workspace reads provide an executable discovery step and preserve the cause", async () => {
+  const f = await fixture();
+  try {
+    const read = f.tools.get("read_file")!;
+    let observed: unknown;
+    try {
+      await read.run(await read.parseInput({ path: "missing.md" }), signal());
+    } catch (error) {
+      observed = error;
+    }
+    expect(observed).toBeInstanceOf(Error);
+    const error = observed as Error;
+    expect(error.message).toContain("list_dir");
+    expect(error.message).toContain(JSON.stringify({ path: f.cwd }));
+    expect(error.cause).toMatchObject({ code: "ENOENT" });
+    const list = f.tools.get("list_dir")!;
+    const listing = await list.run(await list.parseInput({ path: f.cwd }), signal());
+    expect(listing).toMatchObject({ entries: [{ name: "README.md", type: "file" }] });
+    expect(await read.run(await read.parseInput({ path: "README.md" }), signal())).toMatchObject({
+      text: "# workspace 🌍",
+    });
+    await expect(readFile(join(f.cwd, "missing.md"))).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     await f.cleanup();
   }

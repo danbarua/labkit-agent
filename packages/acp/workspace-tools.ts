@@ -1,4 +1,7 @@
+import { dirname } from "node:path";
+
 import { defineTool } from "@labkit-agent/core";
+import { diagnosticError } from "@labkit-agent/core/logging";
 import { z } from "zod";
 
 import type { ClientFiles } from "./client-files.ts";
@@ -12,17 +15,32 @@ export function workspaceTools(files: WorkspaceFiles, client: ClientFiles = {}) 
       "read_file",
       defineTool({
         description:
-          "Read a UTF-8 file inside the workspace, at most 256 KiB. Use list_dir to narrow large directories." +
+          "Read a UTF-8 file inside the workspace, at most 256 KiB. If a path is missing, use list_dir on its parent to discover actual names before another read. If that directory is also missing, list an existing ancestor or the workspace root. Do not invent file paths or create a missing file merely to read it." +
           scope,
         input: z.object({ path }),
         kind: "read",
         locations: ({ path }) => [{ path }],
-        run: async ({ path }, signal, context) => ({
-          path,
-          text: client.readText
-            ? await client.readText(path, signal, context)
-            : await files.readText(path, signal, context),
-        }),
+        run: async ({ path }, signal, context) => {
+          try {
+            return {
+              path,
+              text: client.readText
+                ? await client.readText(path, signal, context)
+                : await files.readText(path, signal, context),
+            };
+          } catch (error) {
+            if (signal.aborted || (error instanceof Error && error.name === "TimeoutError"))
+              throw error;
+            const cause = diagnosticError(error);
+            throw new Error(
+              `read_file failed for ${JSON.stringify(path)}: ${cause.message}. ` +
+                `For a missing or incorrect path, call list_dir with ${JSON.stringify({ path: dirname(path) })} to discover existing names, then read a path returned by that listing. ` +
+                `If the parent is missing, list an existing ancestor or list_dir with {"path":"."} (workspace root ${JSON.stringify(files.root)}). ` +
+                "A listing does not guarantee the requested file exists. Do not create or overwrite files to recover a read, or bypass a permission or workspace restriction.",
+              { cause: error },
+            );
+          }
+        },
       }),
     ],
     [

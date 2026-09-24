@@ -106,6 +106,23 @@ export function workspaceAgent(
         tools.set("run_command", terminalTool(terminal, files.root));
       const config: AcpConfigBinding[] = [
         {
+          id: "tool_failure",
+          name: "Tool failure handling",
+          current: (policy) => policy.toolFailure,
+          options: [
+            {
+              value: "return-error-and-continue",
+              name: "Report failure to the model and continue",
+              patch: { toolFailure: "return-error-and-continue" },
+            },
+            {
+              value: "fail-turn",
+              name: "Stop the turn on tool failure",
+              patch: { toolFailure: "fail-turn" },
+            },
+          ],
+        },
+        {
           id: "permissions",
           name: "Tool approvals",
           description:
@@ -246,6 +263,7 @@ export function workspaceAgent(
             provider: id,
             model,
             permissions: "ask",
+            toolFailure: "return-error-and-continue",
             stream: true,
             thinking: "off",
             maxOutputTokens,

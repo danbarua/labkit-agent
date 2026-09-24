@@ -309,7 +309,10 @@ export function effectiveToolResult(
   return result.kind === "failed" &&
     result.error.classification !== "timeout" &&
     policy?.toolFailure === "return-error-and-continue"
-    ? { kind: "succeeded", value: JSON.stringify({ error: result.error.message }) }
+    ? {
+        kind: "succeeded",
+        value: JSON.stringify({ error: result.error.message, failure: result.error }),
+      }
     : result;
 }
 

@@ -204,7 +204,14 @@ test("tool failure continuation preserves raw evidence and deterministic correla
     session.snapshot.durable.conversation.log[0]?.messages
       .filter((message) => message.role === "tool")
       .map((message) => message.text),
-  ).toEqual(['{"error":"broken"}', "ok"]);
+  ).toEqual([expect.stringContaining('"error":"broken"'), "ok"]);
+  const failedMessage = session.snapshot.durable.conversation.log[0]!.messages.find(
+    (message) => message.role === "tool",
+  )!;
+  expect(JSON.parse(failedMessage.text)).toMatchObject({
+    error: "broken",
+    failure: { message: "broken", operation: { kind: "tool", toolName: "echo" } },
+  });
   expect(
     (await restoreSession(options, session.snapshot.durable.conversation.sessionId)).snapshot
       .durable,

@@ -249,7 +249,9 @@ export const decideTurn = defineMachine<TurnState, TurnEvent, TurnCommand>({
       if (event.child.id !== state.child.id) return stay(state);
       if (event.result.kind !== "succeeded") return resultFailure(state.turn, event.result);
       const decisions = validatePermissionDecisions(state.completion.calls, event.result.value);
-      const refused = decisions.find((entry) => entry.decision !== "allow_once");
+      const refused = decisions.find(
+        (entry) => entry.decision === "reject_once" || entry.decision === "cancelled",
+      );
       if (refused)
         return done(
           state.turn,

@@ -1,23 +1,32 @@
 import { z } from "zod";
 
-import { ToolCallIdSchema, type ToolCalls } from "./types.ts";
+import { FailureSchema, ToolCallIdSchema, type ToolCalls } from "./types.ts";
 
 export const PermissionDecisionsSchema = z
   .array(
-    z
-      .strictObject({
-        callId: ToolCallIdSchema,
-        decision: z.enum(["allow_once", "reject_once", "cancelled"]),
-        approval: z
-          .object({
-            scope: z.literal("live-session-tool"),
-            source: z.enum(["user", "remembered"]),
-            grantId: z.string().min(1),
-          })
-          .readonly()
-          .optional(),
-      })
-      .readonly(),
+    z.union([
+      z
+        .strictObject({
+          callId: ToolCallIdSchema,
+          decision: z.enum(["allow_once", "reject_once", "cancelled"]),
+          approval: z
+            .object({
+              scope: z.literal("live-session-tool"),
+              source: z.enum(["user", "remembered"]),
+              grantId: z.string().min(1),
+            })
+            .readonly()
+            .optional(),
+        })
+        .readonly(),
+      z
+        .strictObject({
+          callId: ToolCallIdSchema,
+          decision: z.literal("invalid_input"),
+          error: FailureSchema,
+        })
+        .readonly(),
+    ]),
   )
   .min(1)
   .readonly();
@@ -30,9 +39,12 @@ export function validatePermissionDecisions(calls: ToolCalls, decisions: Permiss
     decisions.some(
       (entry, index) =>
         entry.callId !== calls[index]?.id ||
-        (index < decisions.length - 1 && entry.decision !== "allow_once"),
+        (index < decisions.length - 1 &&
+          entry.decision !== "allow_once" &&
+          entry.decision !== "invalid_input"),
     ) ||
-    (decisions.at(-1)?.decision === "allow_once" && decisions.length !== calls.length)
+    (["allow_once", "invalid_input"].includes(decisions.at(-1)?.decision ?? "") &&
+      decisions.length !== calls.length)
   )
     throw new Error("Permission decisions do not match admitted tool calls");
   return decisions;

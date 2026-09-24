@@ -500,3 +500,103 @@ test("refused batch discards uncommitted remembered approvals and tool scopes do
     await session.close();
   }
 });
+
+test("tolerant validation failures commit tool errors without permission or execution and restore without effects", async () => {
+  const { withFixtureDiagnostics } = await import("../logging/fixture-capture.ts");
+  const directory = `.session-artifacts/tool-validation/${crypto.randomUUID()}`;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    const f = setup();
+    let completions = 0;
+    const permissionReceipt = deferred<void>();
+    let waitingForReceipt = false;
+    const options: SessionOptions = {
+      ...f.options,
+      persistence: {
+        ...f.options.persistence,
+        append: async (request, signal) => {
+          if (
+            request.records.some(
+              (raw) => JSON.parse(raw).body.event?.event?.type === "permission_settled",
+            )
+          ) {
+            waitingForReceipt = true;
+            await permissionReceipt.promise;
+          }
+          return f.options.persistence.append(request, signal);
+        },
+      },
+      configuration: {
+        ...f.options.configuration,
+        policy: { permissions: "ask", toolFailure: "return-error-and-continue" },
+      },
+      bindings: {
+        ...f.options.bindings,
+        complete: (request) => {
+          completions++;
+          if (completions === 1)
+            return {
+              kind: "tools",
+              text: "Read files",
+              calls: [
+                { id: "invalid", name: "echo", args: { path: 42 } },
+                { id: "valid", name: "echo", args: { path: "/tmp/valid" } },
+              ],
+            };
+          const results = request.messages.filter((message) => message.role === "tool");
+          expect(results).toHaveLength(2);
+          const invalid = JSON.parse(
+            results.find((message) => message.tool_call_id === "invalid")!.content,
+          );
+          expect(invalid.failure).toMatchObject({
+            classification: "invalid_input",
+            phase: "validate_input",
+            operation: { kind: "tool", callId: "invalid", toolName: "echo" },
+          });
+          expect(invalid.failure.cause.issues).toEqual([
+            expect.objectContaining({ path: ["path"], code: "invalid_type", expected: "string" }),
+          ]);
+          expect(invalid.error).toContain("path");
+          expect(invalid.error).toContain("string");
+          return {
+            kind: "answer",
+            text: "The invalid call was rejected; the valid read completed.",
+          };
+        },
+      },
+    };
+    const session = await createSession(options);
+    const sessionId = session.snapshot.durable.conversation.sessionId;
+    try {
+      const turn = session.input("Read");
+      await until(() => waitingForReceipt);
+      expect(completions).toBe(1);
+      expect(f.ran).toHaveLength(0);
+      permissionReceipt.resolve();
+      expect(await turn.settled).toMatchObject({
+        record: { outcome: { kind: "completed" } },
+      });
+      expect(f.requests).toHaveLength(1);
+      expect(f.requests[0]!.toolCall.toolCallId).toEndWith("/valid");
+      expect(f.ran).toEqual(["/tmp/valid/1"]);
+      expect(completions).toBe(2);
+      expect(journalJSONL(session.snapshot.durable)).toContain('"decision":"invalid_input"');
+    } finally {
+      permissionReceipt.resolve();
+      await session.close();
+    }
+    const restored = await restoreSession(options, sessionId);
+    await restored.close();
+    expect(f.requests).toHaveLength(1);
+    expect(f.ran).toHaveLength(1);
+    expect(completions).toBe(2);
+  });
+  const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const rejected = records.find((record) => record.event === "tool.input_rejected");
+  expect(rejected).toMatchObject({ level: "warning", toolName: "echo", callId: "invalid" });
+  expect(rejected.toolCallId).toEndWith("/invalid");
+  expect(rejected.error.message).toContain("path");
+  expect(rejected.consequence).toContain("will not execute or request approval");
+});

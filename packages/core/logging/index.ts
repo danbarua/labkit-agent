@@ -52,6 +52,8 @@ export function redactDiagnostics(value: unknown, secrets: readonly string[] = [
         output.message = redactText(input.message, secrets);
         if (input.stack) output.stack = redactText(input.stack, secrets);
         if (input.cause !== undefined) output.cause = visit(input.cause);
+        // Zod keeps field-level issues non-enumerable; preserve them as data, not just prose.
+        if ("issues" in input && Array.isArray(input.issues)) output.issues = visit(input.issues);
       }
       for (const [key, item] of entries) {
         output[key] = secretField.test(key) ? "[REDACTED]" : visit(item);

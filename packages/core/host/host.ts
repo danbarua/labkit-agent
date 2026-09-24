@@ -159,6 +159,7 @@ export function createHost(
       batchId: ActorId;
       approved: boolean;
       inputs: Map<string, unknown>;
+      invalidInputs: Map<string, Failure>;
       pending: HostToolNotification[];
       remembered: Map<string, string>;
     }
@@ -568,6 +569,7 @@ export function createHost(
           batchId: command.batch.id,
           approved: false,
           inputs: new Map<string, unknown>(),
+          invalidInputs: new Map<string, Failure>(),
           pending: [] as HostToolNotification[],
           remembered: new Map<string, string>(),
         };
@@ -732,17 +734,32 @@ export function createHost(
                   decisions.push({ callId: call.id, decision, ...(approval ? { approval } : {}) });
                   if (decision !== "allow_once") break;
                 } catch (error) {
-                  throw failure(error, {
-                    classification: phase === "validate_input" ? "invalid_input" : "execution",
+                  const invalidInput = phase === "validate_input" && !signal.aborted;
+                  const detail = failure(error, {
+                    classification: invalidInput ? "invalid_input" : "execution",
                     phase,
                     operation: {
-                      id: command.child.id,
-                      kind: "permission",
+                      id: invalidInput ? `${command.batch.id}/${call.id}` : command.child.id,
+                      kind: invalidInput ? "tool" : "permission",
                       sessionId: bindings.sessionId,
                       turnId,
                       callId: call.id,
                       toolName: call.name,
                     },
+                  });
+                  if (!invalidInput || context.toolFailure !== "return-error-and-continue")
+                    throw detail;
+                  grant.invalidInputs.set(call.id, detail);
+                  decisions.push({ callId: call.id, decision: "invalid_input", error: detail });
+                  diagnostic("host", "warning", "tool.input_rejected", {
+                    sessionId: bindings.sessionId,
+                    turnId,
+                    toolCallId: detail.operation?.id,
+                    toolName: call.name,
+                    callId: call.id,
+                    error: detail,
+                    consequence:
+                      "Tool will not execute or request approval; validation error will be committed as a tool result for the model to correct",
                   });
                 }
               }
@@ -753,7 +770,9 @@ export function createHost(
           (result) => {
             if (
               result.kind !== "succeeded" ||
-              result.value.some((entry) => entry.decision !== "allow_once")
+              result.value.some(
+                (entry) => entry.decision === "reject_once" || entry.decision === "cancelled",
+              )
             )
               revoke(command.child.id);
             else grant.approved = true;
@@ -768,7 +787,9 @@ export function createHost(
           command.permission &&
           (!grant?.approved ||
             grant.batchId !== command.child.id ||
-            command.completion.calls.some((call) => !grant.inputs.has(call.id)))
+            command.completion.calls.some(
+              (call) => !grant.inputs.has(call.id) && !grant.invalidInputs.has(call.id),
+            ))
         )
           throw new Error("Missing tool permission grant");
         for (const [toolName, grantId] of grant?.remembered ?? []) {
@@ -802,7 +823,11 @@ export function createHost(
                 ...identity,
                 toolName: batchCommand.call.name,
                 kind: tool.kind ?? "other",
-                permission: grant ? "approved" : "not_required",
+                permission: grant?.invalidInputs.has(batchCommand.call.id)
+                  ? "not_requested_invalid_input"
+                  : grant
+                    ? "approved"
+                    : "not_required",
               });
               if (!grant)
                 notifyTool({
@@ -833,7 +858,11 @@ export function createHost(
                     },
                   },
                   parseInput: async (raw) => {
-                    if (grant) return grant.inputs.get(batchCommand.call.id);
+                    if (grant) {
+                      const invalid = grant.invalidInputs.get(batchCommand.call.id);
+                      if (invalid) throw invalid;
+                      return grant.inputs.get(batchCommand.call.id);
+                    }
                     const input = await tool.parseInput(raw);
                     if (!closed && status === "pending" && tool.locations) {
                       try {

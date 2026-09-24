@@ -6,7 +6,14 @@ export {
 } from "./adapter.ts";
 export { serveAcpStdio } from "./stdio.ts";
 
-export type { AcpConfigBinding, AcpSelectBinding, AcpBooleanBinding } from "./session-config.ts";
+export {
+  selectChoices,
+  type AcpSelectOption,
+  type AcpSelectGroup,
+  type AcpConfigBinding,
+  type AcpSelectBinding,
+  type AcpBooleanBinding,
+} from "./session-config.ts";
 
 export type { ClientFiles } from "./client-files.ts";
 
