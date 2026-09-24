@@ -64,7 +64,7 @@ export const ProviderSettingsSchema = z
   .strictObject({
     provider: z.string().regex(/^.+@\d+$/),
     thinking: ThinkingSchema.optional(),
-    stream: z.literal(false).optional(),
+    stream: z.boolean().optional(),
     maxOutputTokens: z.number().int().positive().optional(),
   })
   .readonly();
@@ -84,7 +84,7 @@ export const CompletionRequestSchema = z
     continuations: z.array(ContinuationSchema).readonly().optional(),
     tools: z.array(ToolAdvertisementSchema).readonly(),
     thinking: ThinkingSchema.optional(),
-    stream: z.literal(false).optional(),
+    stream: z.boolean().optional(),
     temperature: z.number().finite().optional(),
     maxOutputTokens: z.number().int().positive().optional(),
     successors: z.array(z.string().min(1)).readonly(),
@@ -94,23 +94,45 @@ export type CompletionRequest = z.infer<typeof CompletionRequestSchema>;
 /** Relative endpoint: no origin or credentials are visible to profiles. */
 export type HttpRequest = Readonly<{
   path: string;
+  query?: Readonly<Record<string, string>>;
   method: "POST";
   headers: Readonly<Record<string, string>>;
   body: unknown;
 }>;
 export type HttpResponse = Readonly<{ status: number; headers: Headers; body: unknown }>;
+export const StreamDeltaSchema = z
+  .strictObject({
+    text: z.string().optional(),
+    thinking: z.string().optional(),
+    usage: z.record(z.string(), z.json()).readonly().optional(),
+  })
+  .readonly();
+export type StreamDelta = z.infer<typeof StreamDeltaSchema>;
+export type StreamDeltaSink = (delta: StreamDelta) => unknown;
+export type StreamEvent = Readonly<{ event?: string; data: string }>;
+/** One assembler per operation; finish rejects incomplete protocol sequences. */
+export type StreamAssembler = {
+  push(event: StreamEvent): readonly StreamDelta[];
+  finish(): unknown;
+};
 export type CompletionProfile = Readonly<{
   id: string;
   capabilities: Readonly<{
     thinking: ThinkingCapability;
-    stream: false;
+    stream: boolean;
     media: readonly MediaKind[];
   }>;
   encode(request: CompletionRequest, blobs?: BlobResolver): HttpRequest;
+  stream?: () => StreamAssembler;
   decode(response: HttpResponse, request?: CompletionRequest): DecodedCompletion;
 }>;
-export function parseRequest(raw: unknown, profileId?: string): CompletionRequest {
+export function parseRequest(
+  raw: unknown,
+  profileId?: string,
+  supportsStream = false,
+): CompletionRequest {
   const request = freeze(CompletionRequestSchema.parse(raw));
+  if (request.stream && !supportsStream) throw new Error("Unsupported streaming setting");
   const owners = request.messages.flatMap((message) =>
     message.role === "assistant" && message.owner ? [JSON.stringify(message.owner)] : [],
   );

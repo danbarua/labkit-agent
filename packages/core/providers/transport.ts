@@ -5,6 +5,7 @@ import { blobRefs, type BlobResolver } from "../agent/content.ts";
 import { CompletionSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import { HANDOFF_TOOL } from "./shared.ts";
+import { assembleStream } from "./stream.ts";
 import {
   parseRequest,
   ProviderSettingsSchema,
@@ -13,6 +14,8 @@ import {
   type DecodedCompletion,
   type HttpRequest,
   type HttpResponse,
+  type StreamAssembler,
+  type StreamDeltaSink,
 } from "./types.ts";
 
 /** Origin/version prefix and credentials are environment-owned, never journaled. */
@@ -31,7 +34,11 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
     throw new Error("Transport base URL must not contain credentials, query, or fragment");
   const headers = { ...binding.headers };
   const fetcher = binding.fetch ?? fetch;
-  return async (request: HttpRequest, signal: AbortSignal): Promise<HttpResponse> => {
+  return async (
+    request: HttpRequest,
+    signal: AbortSignal,
+    streaming?: { assembler: StreamAssembler; sink?: StreamDeltaSink },
+  ): Promise<HttpResponse> => {
     signal.throwIfAborted();
     if (
       !request.path.startsWith("/") ||
@@ -40,7 +47,8 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
       request.path.split("/").includes("..")
     )
       throw new Error("Profile endpoint must be a relative API path");
-    const response = await fetcher(base + request.path, {
+    const query = request.query ? `?${new URLSearchParams(request.query)}` : "";
+    const response = await fetcher(base + request.path + query, {
       method: request.method,
       ...(legacyChatErrors ? {} : { redirect: "error" as const }),
       headers: { "Content-Type": "application/json", ...request.headers, ...headers },
@@ -54,6 +62,12 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
         );
       throw new Error(`Completion HTTP failure (${response.status})`);
     }
+    if (streaming)
+      return {
+        status: response.status,
+        headers: response.headers,
+        body: await assembleStream(response, streaming.assembler, signal, streaming.sink),
+      };
     let body: unknown;
     try {
       body = await response.json();
@@ -66,39 +80,43 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
   };
 }
 export function canonicalRequest(prepared: PreparedModel) {
-  return parseRequest({
-    provider: prepared.provider,
-    model: prepared.model,
-    messages: prepared.messages.map((message) => {
-      if (message.role === "tool")
-        return { role: "tool", text: message.content, callId: message.tool_call_id };
-      if (message.role === "assistant" && message.tool_calls)
+  return parseRequest(
+    {
+      provider: prepared.provider,
+      model: prepared.model,
+      messages: prepared.messages.map((message) => {
+        if (message.role === "tool")
+          return { role: "tool", text: message.content, callId: message.tool_call_id };
+        if (message.role === "assistant" && message.tool_calls)
+          return {
+            role: "assistant",
+            text: message.content,
+            ...(message.parts ? { parts: message.parts } : {}),
+            ...(message.owner ? { owner: message.owner } : {}),
+            calls: message.tool_calls.map((call) => ({
+              id: call.id,
+              name: call.function.name,
+              args: JSON.parse(call.function.arguments),
+            })),
+          };
         return {
-          role: "assistant",
+          role: message.role,
           text: message.content,
           ...(message.parts ? { parts: message.parts } : {}),
-          ...(message.owner ? { owner: message.owner } : {}),
-          calls: message.tool_calls.map((call) => ({
-            id: call.id,
-            name: call.function.name,
-            args: JSON.parse(call.function.arguments),
-          })),
+          ...(message.role === "assistant" && message.owner ? { owner: message.owner } : {}),
         };
-      return {
-        role: message.role,
-        text: message.content,
-        ...(message.parts ? { parts: message.parts } : {}),
-        ...(message.role === "assistant" && message.owner ? { owner: message.owner } : {}),
-      };
-    }),
-    continuations: prepared.continuations,
-    tools: (prepared.tools ?? []).map((tool) => tool.function),
-    temperature: prepared.temperature,
-    thinking: prepared.thinking,
-    stream: prepared.stream,
-    maxOutputTokens: prepared.maxOutputTokens,
-    successors: prepared.successors ?? [],
-  });
+      }),
+      continuations: prepared.continuations,
+      tools: (prepared.tools ?? []).map((tool) => tool.function),
+      temperature: prepared.temperature,
+      thinking: prepared.thinking,
+      stream: prepared.stream,
+      maxOutputTokens: prepared.maxOutputTokens,
+      successors: prepared.successors ?? [],
+    },
+    undefined,
+    true,
+  );
 }
 export type ProviderBindings = ReadonlyMap<
   string,
@@ -123,6 +141,12 @@ export function bindProviders(bindings: ProviderBindings) {
   );
   return Object.freeze({
     ids: Object.freeze([...bound.keys()]),
+    streams: new Map(
+      [...bound].map(([id, binding]) => [
+        id,
+        binding.profile.capabilities.stream && !!binding.profile.stream,
+      ]),
+    ),
     media: new Map([...bound].map(([id, binding]) => [id, binding.profile.capabilities.media])),
     capabilities: new Map(
       [...bound].map(([id, binding]) => [
@@ -134,6 +158,7 @@ export function bindProviders(bindings: ProviderBindings) {
       request: PreparedModel,
       signal: AbortSignal,
       blobs?: BlobResolver,
+      onDelta?: StreamDeltaSink,
     ): Promise<DecodedCompletion> => {
       if (!request.provider) throw new Error("Prepared request has no provider");
       ProviderSettingsSchema.parse({
@@ -145,11 +170,17 @@ export function bindProviders(bindings: ProviderBindings) {
       const binding = bound.get(request.provider);
       if (!binding) throw new Error("Missing versioned provider binding");
       validateThinking(request.thinking, binding.profile.capabilities.thinking);
+      if (request.stream && (!binding.profile.capabilities.stream || !binding.profile.stream))
+        throw new Error("Unsupported streaming setting");
       const input = canonicalRequest(request);
       for (const ref of blobRefs(input.messages))
         if (!binding.profile.capabilities.media.includes(ref.media))
           throw new Error(`Provider does not support attachment media: ${ref.media}`);
-      const response = await binding.http(binding.profile.encode(input, blobs), signal);
+      const response = await binding.http(
+        binding.profile.encode(input, blobs),
+        signal,
+        request.stream ? { assembler: binding.profile.stream!(), sink: onDelta } : undefined,
+      );
       const decoded = binding.profile.decode(response, input);
       const result = CompletionSchema.parse(decoded.completion);
       if (result.kind === "handoff" && !input.successors.includes(result.agent))

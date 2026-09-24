@@ -7,3 +7,9 @@ export { googleGenerate } from "./google-generate.ts";
 export { anthropicMessagesV2 } from "./anthropic-messages-v2.ts";
 export { googleGenerateV2 } from "./google-generate-v2.ts";
 export { openaiResponsesV2 } from "./openai-responses-v2.ts";
+export {
+  openaiChatV2,
+  anthropicMessagesV3,
+  googleGenerateV3,
+  openaiResponsesV3,
+} from "./streaming-profiles.ts";

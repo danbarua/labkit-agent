@@ -6,6 +6,7 @@ import { createChatCompletion, type PreparedModel } from "../agent/agent.ts";
 import type { BlobResolver } from "../agent/content.ts";
 import { AgentIdSchema, ToolNameSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
+import type { StreamDeltaSink } from "../providers/types.ts";
 
 export const ToolKindSchema = z.enum([
   "read",
@@ -75,6 +76,7 @@ export type CompletionPort = (
   request: PreparedModel,
   signal: AbortSignal,
   blobs?: BlobResolver,
+  onDelta?: StreamDeltaSink,
 ) => unknown | Promise<unknown>;
 export type ExecutionBindings = Readonly<{
   agents: ReadonlyMap<string, AgentDefinition>;

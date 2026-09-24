@@ -5,10 +5,14 @@ import { BlobInputMetaSchema, type BlobRef } from "../agent/content.ts";
 import { PolicyPatchSchema } from "../policy/policy.ts";
 import {
   anthropicMessagesV2,
+  anthropicMessagesV3,
   googleGenerate,
   googleGenerateV2,
+  googleGenerateV3,
   openaiChat,
+  openaiChatV2,
   openaiResponsesV2,
+  openaiResponsesV3,
 } from "../providers/index.ts";
 import { journalJSONL, journalMarkdown } from "./session-log.ts";
 import type { LegacySessionOptions, SessionOptions } from "./session-runtime.ts";
@@ -166,10 +170,14 @@ async function runScenario(scenario: Scenario, directory: string) {
                   providers: new Map(
                     [
                       anthropicMessagesV2,
+                      anthropicMessagesV3,
                       googleGenerate,
                       googleGenerateV2,
+                      googleGenerateV3,
                       openaiChat,
+                      openaiChatV2,
                       openaiResponsesV2,
+                      openaiResponsesV3,
                     ].map((profile) => [
                       profile.id,
                       {
@@ -181,6 +189,14 @@ async function runScenario(scenario: Scenario, directory: string) {
                             const response = scenario.completions[completionIndex++];
                             if (response === undefined)
                               throw new Error("Fixture provider script exhausted");
+                            if (
+                              typeof response === "object" &&
+                              response !== null &&
+                              "sse" in response
+                            )
+                              return new Response(z.string().parse(response.sse), {
+                                headers: { "content-type": "text/event-stream" },
+                              });
                             return Response.json(response);
                           }) as typeof fetch,
                         },

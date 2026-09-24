@@ -335,3 +335,14 @@ pending tool_call. Parsed-input locations arrive before tool.run, followed by op
 updates. Completed is a display status, not a persistence receipt: per-tool result append and
 releaseTool still control batch progression. Notifications never enter session reduction or the
 journal, and restore does not replay them. Observer failures cannot fail the session.
+
+## Streaming without turn-state changes
+
+Provider-bound stream:true requests are journaled in the existing prepared DTO. The completion
+child owns fetch, SSE framing, a fresh profile assembler and cancellation. Its fourth host sink
+emits completion identity/status plus incremental text/thinking/usage, using the same best-effort
+notification helper as tool display. Nothing in decideTurn consumes those notifications. Only one
+fully assembled body reaches decode and admission; the normal model_settled event then follows.
+Truncation/error/cancellation produces a failed/cancelled outcome, never partial authoritative text.
+Continuation storage and commit-before-dispatch are unchanged. Request permission remains separate
+work requiring a phase between admitted tools and run_tools.

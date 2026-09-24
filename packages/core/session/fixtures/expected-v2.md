@@ -721,3 +721,207 @@ Outcome: {"kind":"completed"}
 
 - user: {"role":"user","text":"Switch back to Google"}
 - assistant: {"role":"assistant","text":"Google again","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/3","generation":2}}
+
+---
+
+# stream-openai-chat-2: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"openai-chat@2","thinking":"high","stream":true,"maxOutputTokens":2048,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Stream and use tools"}
+- assistant: {"role":"assistant","text":"Hello 🌍","calls":[{"id":"c1","name":"echo","args":{"text":"Hello 🌍"}}]}
+- tool: {"role":"tool","text":"Hello 🌍","callId":"c1"}
+- assistant: {"role":"assistant","text":"Hello 🌍"}
+
+# stream-openai-chat-2: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"openai-chat@2","thinking":"high","stream":true,"maxOutputTokens":2048,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Stream and use tools"}
+- assistant: {"role":"assistant","text":"Hello 🌍","calls":[{"id":"c1","name":"echo","args":{"text":"Hello 🌍"}}]}
+- tool: {"role":"tool","text":"Hello 🌍","callId":"c1"}
+- assistant: {"role":"assistant","text":"Hello 🌍"}
+
+---
+
+# stream-anthropic-messages-3: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"anthropic-messages@3","thinking":"adaptive","stream":true,"maxOutputTokens":2048,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Stream and use tools"}
+- assistant: {"role":"assistant","text":"Hello 🌍","calls":[{"id":"c1","name":"echo","args":{"text":"Hello 🌍"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"Hello 🌍","callId":"c1"}
+- assistant: {"role":"assistant","text":"Hello 🌍","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+
+# stream-anthropic-messages-3: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"anthropic-messages@3","thinking":"adaptive","stream":true,"maxOutputTokens":2048,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Stream and use tools"}
+- assistant: {"role":"assistant","text":"Hello 🌍","calls":[{"id":"c1","name":"echo","args":{"text":"Hello 🌍"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"Hello 🌍","callId":"c1"}
+- assistant: {"role":"assistant","text":"Hello 🌍","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+
+---
+
+# stream-google-generate-3: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"google-generate@3","thinking":"adaptive","stream":true,"maxOutputTokens":2048,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Stream and use tools"}
+- assistant: {"role":"assistant","text":"Hello 🌍","calls":[{"id":"c1","name":"echo","args":{"text":"Hello 🌍"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"Hello 🌍","callId":"c1"}
+- assistant: {"role":"assistant","text":"Hello 🌍","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+
+# stream-google-generate-3: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"google-generate@3","thinking":"adaptive","stream":true,"maxOutputTokens":2048,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Stream and use tools"}
+- assistant: {"role":"assistant","text":"Hello 🌍","calls":[{"id":"c1","name":"echo","args":{"text":"Hello 🌍"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"Hello 🌍","callId":"c1"}
+- assistant: {"role":"assistant","text":"Hello 🌍","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+
+---
+
+# stream-openai-responses-3: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"openai-responses@3","thinking":"high","stream":true,"maxOutputTokens":2048,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Stream and use tools"}
+- assistant: {"role":"assistant","text":"Hello 🌍","calls":[{"id":"c1","name":"echo","args":{"text":"Hello 🌍"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"Hello 🌍","callId":"c1"}
+- assistant: {"role":"assistant","text":"Hello 🌍","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+
+# stream-openai-responses-3: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"openai-responses@3","thinking":"high","stream":true,"maxOutputTokens":2048,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Stream and use tools"}
+- assistant: {"role":"assistant","text":"Hello 🌍","calls":[{"id":"c1","name":"echo","args":{"text":"Hello 🌍"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"Hello 🌍","callId":"c1"}
+- assistant: {"role":"assistant","text":"Hello 🌍","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+
+---
+
+# stream-truncated: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"openai-chat@2","stream":true,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: failed (a)
+
+Outcome: {"kind":"failed","error":{"message":"Incomplete completion stream"}}
+
+- user: {"role":"user","text":"Truncated"}
+
+# stream-truncated: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"openai-chat@2","stream":true,"steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: failed (a)
+
+Outcome: {"kind":"failed","error":{"message":"Incomplete completion stream"}}
+
+- user: {"role":"user","text":"Truncated"}

@@ -31,8 +31,11 @@ import { effectiveToolResult, type Policy } from "../policy/policy.ts";
 import {
   ContinuationSchema,
   matchingContinuations,
+  StreamDeltaSchema,
   type Continuation,
+  type StreamDelta,
 } from "../providers/types.ts";
+import { notify } from "./notifications.ts";
 import {
   copyRegistries,
   ToolLocationSchema,
@@ -74,6 +77,19 @@ export type HostToolNotification = Readonly<
 >;
 export type ToolUpdateSink = (notification: HostToolNotification) => unknown;
 
+export type HostStreamNotification = Readonly<
+  {
+    sessionId?: string;
+    turnId: ActorId;
+    completionId: ActorId;
+    generation: number;
+    sessionUpdate: "completion" | "completion_update";
+    status?: "pending" | "in_progress" | "completed" | "failed";
+    error?: string;
+  } & StreamDelta
+>;
+export type StreamUpdateSink = (notification: HostStreamNotification) => unknown;
+
 export type ExecutionContext = Readonly<{
   prompt?: PromptInput;
   loadBlobs?: (
@@ -106,6 +122,7 @@ export function createHost(
     turn: (turnId: ActorId, event: TurnEvent) => void;
     tool: (outcome: HostToolOutcome) => void;
     toolUpdate?: ToolUpdateSink;
+    streamUpdate?: StreamUpdateSink;
   },
 ) {
   const { agents, tools } = copyRegistries(bindings);
@@ -120,11 +137,10 @@ export function createHost(
   >();
   let closed = false;
   const toolUpdate = sinks.toolUpdate;
+  const streamUpdate = sinks.streamUpdate;
   const notifyTool = (notification: HostToolNotification) => {
     if (closed || !toolUpdate) return;
-    try {
-      void Promise.resolve(toolUpdate(freeze(structuredClone(notification)))).catch(() => {});
-    } catch {}
+    notify(toolUpdate, notification);
   };
   const post: typeof sinks.turn = (turnId, event) => {
     if (!closed) sinks.turn(turnId, event);
@@ -244,6 +260,18 @@ export function createHost(
         break;
       }
       case "complete": {
+        const identity = {
+          ...(bindings.sessionId ? { sessionId: bindings.sessionId } : {}),
+          turnId,
+          completionId: command.child.id,
+          generation: command.turn.generation,
+        };
+        let status = "pending";
+        const notifyStream = (fields: Omit<HostStreamNotification, keyof typeof identity>) => {
+          if (!closed && command.request.stream) notify(streamUpdate, { ...identity, ...fields });
+        };
+        notifyStream({ sessionUpdate: "completion", status: "pending" });
+        if (closed) break;
         const admitted = admittedCompletionSchema(
           new Set(
             command.request.successors ??
@@ -260,7 +288,11 @@ export function createHost(
             run: async (request, signal) => {
               const blobs = await context.loadBlobs?.(request, signal, true);
               signal.throwIfAborted();
-              const raw = await bindings.complete(request, signal, blobs);
+              const raw = await bindings.complete(request, signal, blobs, (delta) => {
+                const parsed = StreamDeltaSchema.safeParse(delta);
+                if (parsed.success && !signal.aborted && status === "in_progress")
+                  notifyStream({ ...parsed.data, sessionUpdate: "completion_update" });
+              });
               signal.throwIfAborted();
               const wrapped = raw !== null && typeof raw === "object" && "completion" in raw;
               const output = wrapped
@@ -305,6 +337,27 @@ export function createHost(
                 ? { continuation: result.value.continuation }
                 : {}),
             }),
+          (state) => {
+            const next =
+              state.status === "succeeded"
+                ? "completed"
+                : state.status === "failed" || state.status === "cancelled"
+                  ? "failed"
+                  : state.status === "running" || state.status === "validating_output"
+                    ? "in_progress"
+                    : "pending";
+            if (next === status) return;
+            status = next;
+            notifyStream({
+              sessionUpdate: "completion_update",
+              status: next,
+              ...(state.status === "failed"
+                ? { error: state.error.message }
+                : state.status === "cancelled"
+                  ? { error: "Completion cancelled" }
+                  : {}),
+            });
+          },
         );
         break;
       }

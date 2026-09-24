@@ -49,10 +49,11 @@ startState=Launching, endState=Finished, execTime=241548ms`.
 
 `packages/core/host/host.ts` and `ports.ts`. `createHost(bindings, sinks)` is an execution adapter:
 `dispatch` runs the conversation's turn commands (`prepare_model`, `complete`, `prepare_handoff`,
-`run_tools`, `cancel`) through operation actors and a tool batch. Three sinks report back: `turn` posts
+`run_tools`, `cancel`) through operation actors and a tool batch. Four sinks report back: `turn` posts
 typed `TurnEvent`s; `tool` posts a `HostToolOutcome` — `turnId`, `batchId`, `callId`, `result` — for
 each tool call **after it has run**. Optional `toolUpdate` emits non-authoritative display
-notifications before execution and on operation transitions. That outcome is held in `pendingTools` until the caller invokes
+notifications before execution and on operation transitions. Optional `streamUpdate` reports
+completion status and text/thinking/usage deltas without changing decisions. That outcome is held in `pendingTools` until the caller invokes
 `releaseTool(outcome)`, which passes it to the batch as `tool_settled` through the `toolFailure` policy
 (`fail-turn` or `return-error-and-continue`). `close()` cancels everything held. `ExecutionContext.
 allowedTools` narrows which tools a completion may be admitted with, per turn.
@@ -98,10 +99,10 @@ agent's proposal; a file-keyed read of session narration did not.
 1. **Implemented:** `kind` and `locations` in `defineTool`.
 2. **Implemented:** `tool_call` on spawn and `tool_call_update` from operation-actor transitions,
    as the third, non-authoritative sink beside `turn` and `tool`.
-3. **Next separate slice:** streaming as a fourth sink, profile streaming support and transport
-   assembly. Enable policy stream:true only after that sink exists. Decode one assembled body and
-   retain one model_settled outcome; incomplete streams fail/cancel without partial settlement.
-4. `request_permission` as a new phase between admitted tools and run_tools.
+3. **Implemented:** streaming as a fourth sink, versioned profile assemblers and shared SSE transport.
+   Supported profiles accept policy stream:true. One assembled body passes through decode, retaining
+   one model_settled outcome; incomplete streams fail/cancel without partial settlement.
+4. **Next separate slice:** `request_permission` as a new phase between admitted tools and run_tools.
 5. A JSON-RPC ACP adapter carrying notifications and permission requests across the process boundary.
 
 These core slices are sequential because they share the host, ports and sink list. Attachment

@@ -264,3 +264,13 @@ Completed/failed display notifications do not certify persistence: the existing 
 receipt still gates batch release. Notifications are not journaled or replayed, cannot decide turn
 state, and callback failures are isolated. Forks inherit the captured sink and report their own
 session/operation IDs. See [host notification contract](../host/README.md#tool-display-notifications).
+
+## Streaming completion display
+
+Set policy stream:true with a streaming profile and optionally bind `streamUpdate(notification)`.
+The callback is captured like toolUpdate, inherited by forks, and never journaled or replayed.
+Prepared stream settings commit before fetch. Text/thinking/usage updates are non-authoritative;
+only an assembled, decoded and admitted completion produces a successful model_settled, whose
+receipt still gates tools. Interrupted streams fail/cancel with no partial assistant message or
+continuation. Idle restore emits no stream updates and performs no HTTP. Barge-in keeps its existing
+same-turn semantics while cancelling the old completion reader. See [provider streaming](../providers/README.md#streaming).

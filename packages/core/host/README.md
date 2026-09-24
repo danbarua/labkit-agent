@@ -76,4 +76,16 @@ suppresses further notifications; cancellation while open emits one terminal upd
 validation/output. Consumers should use session snapshots for authoritative state.
 
 ACP steps 1–2 are implemented in process. Request permissions and JSON-RPC are not implemented.
-Streaming remains deferred; a future stream sink can use the same notification-only pattern.
+Streaming uses the same notification-only helper through a fourth sink, `streamUpdate`.
+It receives frozen `HostStreamNotification` values with sessionId, turnId, completionId (child ID),
+generation, and `sessionUpdate: "completion" | "completion_update"`. Status transitions are
+pending → in_progress → completed/failed; cancellation maps to failed. Intermediate updates carry
+append-only text/thinking strings or provider-native usage fields, omitting unchanged fields.
+CompletionPort's optional fourth argument receives these deltas without ownership or journal data.
+The host validates delta shape, adds identity, and drops notifications after cancellation/settlement.
+
+Only the final assembled body is decoded and admitted. Completed display status follows admission
+and any continuation blob storage but does not certify a journal receipt. Incomplete/error streams
+fail the completion child and never publish a successful partial model_settled. Stream callbacks,
+like tool callbacks, cannot fail operations or hold the execution gate. Both runtimes capture the
+optional streamUpdate binding; session provider profiles opt into streaming through policy.

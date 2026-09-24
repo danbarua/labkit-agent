@@ -53,6 +53,7 @@ export type PolicyPack = Readonly<
     Partial<Pick<Policy, "thinking">>
 >;
 export type PolicyResolvers = Readonly<{
+  providerStreams?: ReadonlyMap<string, boolean>;
   providerCapabilities?: ReadonlyMap<string, ThinkingCapability>;
   providerIds?: ReadonlySet<string>;
   packs?: ReadonlyMap<string, PolicyPack>;
@@ -104,6 +105,7 @@ export const builtinResolvers: PolicyResolvers = {
 };
 export function copyResolvers(resolvers: PolicyResolvers = builtinResolvers): PolicyResolvers {
   return {
+    providerStreams: resolvers.providerStreams ? new Map(resolvers.providerStreams) : undefined,
     providerCapabilities: resolvers.providerCapabilities
       ? new Map(
           [...resolvers.providerCapabilities].map(([id, value]) => [
@@ -158,6 +160,8 @@ export function validatePolicy(
     if (!capability) throw new Error("Missing provider capabilities");
     validateThinking(policy.thinking, capability);
   }
+  if (policy.stream && (!policy.provider || !resolvers.providerStreams?.get(policy.provider)))
+    throw new Error("Unsupported streaming setting");
   const agents = new Map(capabilities.agents);
   if (
     Object.keys(policy.tools).length !== agents.size ||

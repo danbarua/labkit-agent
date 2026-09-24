@@ -96,7 +96,8 @@ Decode rejects malformed, truncated, refused, built-in-tool, and unsupported con
 data where exposed by the dialect. The host validates completion shape and permissions.
 
 The built-in IDs are openai-chat@1, openai-responses@1, anthropic-messages@1,
-anthropic-messages@2, google-generate@1, google-generate@2, and openai-responses@2. Responses sends the complete projected input with store:false and
+anthropic-messages@2, google-generate@1, google-generate@2, and openai-responses@2.
+Streaming adds openai-chat@2, anthropic-messages@3, google-generate@3, and openai-responses@3. Responses sends the complete projected input with store:false and
 never sends previous_response_id or a server conversation reference. Anthropic combines
 tool results into user content blocks. Google emits function declarations using
 parametersJsonSchema and pairs function responses with call IDs and names. When Google
@@ -105,6 +106,51 @@ scoped to the domain tool batch.
 
 Anthropic requires max_tokens; its profile uses maxOutputTokens or an explicit profile
 default of 1024. This default is part of anthropic-messages@1's versioned behavior.
+
+## Streaming
+
+Enable `policy.stream: true` with a streaming-capable profile. Bind the optional
+`bindings.streamUpdate(notification)` callback to render progress. The fourth host sink carries
+completion ID, turn/generation and session identity, pending/in_progress/completed/failed status,
+and incremental `text`, `thinking`, or `usage` fields. Text/thinking values append; usage objects
+are provider-native snapshots/updates. These are display data, never journal evidence. Consumers
+can discard them; the completion still assembles and settles normally without a callback.
+
+| New streaming profile  | Base nonstream dialect | Required terminal evidence                                  |
+| ---------------------- | ---------------------- | ----------------------------------------------------------- |
+| `openai-chat@2`        | `openai-chat@1`        | Valid finish_reason followed by `[DONE]`                    |
+| `anthropic-messages@3` | `anthropic-messages@2` | Closed content blocks, valid stop_reason, then message_stop |
+| `google-generate@3`    | `google-generate@2`    | Candidate finishReason STOP                                 |
+| `openai-responses@3`   | `openai-responses@2`   | response.completed with complete output                     |
+
+Existing IDs still reject stream:true. New profiles retain their base nonstream wire shapes when
+stream is off/omitted, including thinking, attachment and continuation rules. Their envelopes use
+the new provider ID and join only to that exact ID. Switching between IDs does not inject old
+continuations into the new profile.
+
+Each profile's `stream()` creates a fresh operation-local assembler. Transport performs one fetch
+and parses SSE across arbitrary byte/UTF-8/line boundaries. Chat assembles indexed function-call
+argument fragments; Anthropic assembles content blocks, JSON arguments and signatures. Google
+preserves streamed parts, attaching a signature-only fragment to its preceding part. Responses
+uses the complete output from response.completed, retaining encrypted reasoning. Only the assembled
+body passes through `decode`, once. No tool or handoff can execute from a delta.
+
+OpenAI and Anthropic use stream:true on their usual endpoints; Chat also requests usage. Google
+uses streamGenerateContent with alt=sse. Neither retries nor server conversation IDs are introduced.
+Malformed/unsupported events, invalid UTF-8, provider errors, missing terminal evidence, or a
+truncated SSE frame fail the completion. SSE frames are capped at 16,777,216 characters. Cancellation
+uses the completion child's AbortSignal and cancels the body reader. Failed/cancelled operations
+never publish a successful partial completion or continuation. Closing/barge-in suppresses late data.
+
+The host emits completed only after final decode, completion admission and continuation storage;
+the journal still commits one model_settled event per operation. The display status can precede its
+append receipt, so dependent tools wait for the existing receipt gate. Policy and transport both
+reject unsupported streaming before fetch. Prepared records capture stream:true using the existing
+provider-settings journal gate (v3 or later); there is no new journal version or turn phase.
+
+Wire references: [OpenAI streaming](https://developers.openai.com/api/docs/guides/streaming-responses),
+[Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), and
+[Google streamGenerateContent](https://ai.google.dev/api/generate-content#method:-models.streamgeneratecontent).
 
 ## Handoff and persistence
 
@@ -117,7 +163,7 @@ Successors are registry capabilities; changing them requires a compatible new se
 not mutating an existing registry.
 
 Provider-aware sessions start at v3, use v4 for non-off thinking or continuations, and
-upgrade to v5 for blob refs. A stream never downgrades its journal version. Existing v1/v2 streams retain their original bytes. A first provider
+upgrade to v5 for blob refs. A journal never downgrades its record version. Existing v1/v2 streams retain their original bytes. A first provider
 policy patch appends the explicit v3/v4 policy boundary; a v1 stream
 first includes its existing v2 policy upgrade in the same atomic append. Prepared events
 capture effective model, provider/settings, successors, and policy version. Replay checks
@@ -146,7 +192,7 @@ plain text and markdown attachments; additional media and replay support are ver
 | `anthropic-messages@1` | None                         | Rejects thinking blocks     | None                  |
 | `anthropic-messages@2` | adaptive → 1024-token budget | Signed/redacted thinking    | PNG, JPEG, PDF        |
 
-Streaming and the ACP permission/JSON-RPC adapter are **not done**.
+The ACP permission/JSON-RPC adapter is **not done**.
 The shared host now provides in-process tool lifecycle notifications (ACP steps 1–2). No profile starts a server conversation or uses a Files API.
 OpenAI Chat remains unchanged: off maps to none; omission leaves effort absent.
 
@@ -243,7 +289,7 @@ Text blobs of at most 65,536 bytes are decoded as UTF-8 and inlined. Larger text
 `[attached: NAME sha256:FULL_HASH]`; the ref remains on the request. This includes markdown on
 Anthropic `@2`: a 70 KiB DESIGN.md sends only the hash stub, not its contents or a document block.
 The model cannot review those omitted contents. Raising the inline cap or adding markdown document encoding
-requires an explicit versioned profile change (for example Anthropic `@3`); current profiles never
+requires an explicit versioned profile change (a later Anthropic revision); current profiles never
 silently decode text beyond 64 KiB. No summarization, filesystem path reads, model calls, or implicit
 PDF conversion occur. Invalid UTF-8 or mismatched bytes fail encoding before HTTP. Existing
 text-only encode vectors remain unchanged.

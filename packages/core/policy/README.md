@@ -47,3 +47,10 @@ context-only policies keep refs on retained messages; slim handoff keeps refs on
 assistant only. Capability checks and blob reads occur after projection. Projectors perform no I/O:
 text attachment inlining (up to 64 KiB) or named hash stubs are produced at encode time through an
 operation-local resolver. Custom projections should retain parts for attachments they intend to send.
+
+`providerStreams` records each bound profile's stream capability and assembler availability.
+`stream: true` requires a matching supported provider; off/omitted retains nonstream behavior.
+Policy validation (including restore and patches) and transport independently reject unsupported
+streaming before HTTP. Switching to a nonstream profile requires patching stream:false. Stream
+notifications remain outside policy/turn decisions; the captured prepared request controls the
+operation and one assembled completion determines its outcome.
