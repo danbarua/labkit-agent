@@ -123,7 +123,8 @@ const lines: string[] = ["# Peer-review spike", ""];
 lines.push(`Acts: ${record.acts.length}. Verbs used: ${[...new Set(record.acts.map((a) => a.verb))].join(", ")}.`, "");
 for (const r of record.of<{ model: string; transcript: string }>("record_review_round")) {
   const mine = findings.filter((f) => f.input.round === r.handle);
-  const kinds = mine.reduce<Record<string, number>>((n, f) => ((n[f.input.kind] = (n[f.input.kind] ?? 0) + 1), n), {});
+  const kinds: Record<string, number> = {};
+  for (const f of mine) kinds[f.input.kind] = (kinds[f.input.kind] ?? 0) + 1;
   lines.push(`## ${r.handle} — ${r.input.model} — ${r.input.transcript.split("/").pop()}`, "");
   lines.push(`${mine.length} findings: ${JSON.stringify(kinds)}`, "");
   for (const f of mine) lines.push(`- ${f.handle} ${f.input.numbered} ${f.input.title}`);
