@@ -54,6 +54,13 @@ export type TurnView = {
   messages: MessageView[];
 };
 
+export type CatalogModelOption = {
+  id: string;
+  label: string;
+  stream: boolean;
+  thinking: string[];
+};
+
 export type ProviderOption = {
   id: string;
   label: string;
@@ -61,6 +68,7 @@ export type ProviderOption = {
   thinking: string[];
   media: MediaKind[];
   defaultModel: string;
+  models: CatalogModelOption[];
 };
 
 export type HostInfo = {

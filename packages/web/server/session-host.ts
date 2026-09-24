@@ -10,7 +10,7 @@ import {
 } from "../../core/agent/types.ts";
 import type { PermissionPort, PermissionRequest } from "../../core/host/ports.ts";
 import {
-  anthropicMessagesV3,
+  anthropicMessagesV4,
   googleGenerateV3,
   openaiChatV2,
   openaiResponses,
@@ -53,19 +53,29 @@ const ADMITTED: Record<string, true> = {
 };
 
 type Subscriber = (event: ConsoleEvent) => void;
-type BoundProfile = {
+
+type CatalogModel = {
   id: string;
+  label: string;
+  wireModel: string;
   profile: CompletionProfile;
+};
+
+type CatalogProvider = {
+  id: string;
   label: string;
   defaultModel: string;
   baseUrl: string;
   headers: Record<string, string>;
+  models: CatalogModel[];
 };
+
 type PendingPermission = {
   request: PermissionRequest;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
 };
+
 type Hosted = {
   runtime: SessionRuntime;
   model: string;
@@ -86,78 +96,95 @@ function thinkingChoices(profile: CompletionProfile) {
   return values;
 }
 
-function boundProfiles(): BoundProfile[] {
+function model(id: string, label: string, profile: CompletionProfile): CatalogModel {
+  return { id, label, wireModel: id, profile };
+}
+
+function providerCatalog(): CatalogProvider[] {
   const openai = process.env.OPENAI_API_KEY;
   const anthropic = process.env.ANTHROPIC_API_KEY;
   const google = process.env.GOOGLE_API_KEY;
   const xai = process.env.XAI_API_KEY;
-  const bound: BoundProfile[] = [];
-  const add = (
-    profiles: CompletionProfile[],
-    labelFor: (profile: CompletionProfile) => string,
-    defaultModel: string,
-    baseUrl: string,
-    headers: Record<string, string>,
-  ) => {
-    for (const profile of profiles) {
-      bound.push({
-        id: profile.id.split("@")[0]!,
-        profile,
-        label: labelFor(profile),
-        defaultModel,
-        baseUrl,
-        headers,
-      });
-    }
-  };
+  const catalog: CatalogProvider[] = [];
   if (openai) {
-    add(
-      [openaiResponsesV3, openaiChatV2],
-      (profile) => profile.id.split("@")[0]!,
-      "gpt-4.1-mini",
-      "https://api.openai.com/v1",
-      { Authorization: `Bearer ${openai}` },
-    );
-  } else if (xai) {
-    add([openaiChatV2], () => "xAI", "grok-3", "https://api.x.ai/v1", {
-      Authorization: `Bearer ${xai}`,
+    catalog.push({
+      id: "openai",
+      label: "OpenAI",
+      defaultModel: "gpt-4.1-mini",
+      baseUrl: "https://api.openai.com/v1",
+      headers: { Authorization: `Bearer ${openai}` },
+      models: [
+        model("gpt-4.1-mini", "GPT-4.1 mini", openaiResponsesV3),
+        model("gpt-4.1", "GPT-4.1", openaiResponsesV3),
+      ],
+    });
+  }
+  if (xai) {
+    catalog.push({
+      id: "xai",
+      label: "xAI",
+      defaultModel: "grok-3",
+      baseUrl: "https://api.x.ai/v1",
+      headers: { Authorization: `Bearer ${xai}` },
+      models: [model("grok-3", "Grok 3", openaiChatV2)],
     });
   }
   if (anthropic) {
-    add(
-      [anthropicMessagesV3],
-      (profile) => profile.id.split("@")[0]!,
-      "claude-sonnet-4-5",
-      "https://api.anthropic.com/v1",
-      { "x-api-key": anthropic },
-    );
+    catalog.push({
+      id: "anthropic",
+      label: "Anthropic",
+      defaultModel: "claude-sonnet-4-5",
+      baseUrl: "https://api.anthropic.com/v1",
+      headers: { "x-api-key": anthropic },
+      models: [model("claude-sonnet-4-5", "Claude Sonnet 4.5", anthropicMessagesV4)],
+    });
   }
   if (google) {
-    add(
-      [googleGenerateV3],
-      (profile) => profile.id.split("@")[0]!,
-      "gemini-2.5-flash",
-      "https://generativelanguage.googleapis.com/v1beta",
-      { "x-goog-api-key": google },
-    );
+    catalog.push({
+      id: "google",
+      label: "Google",
+      defaultModel: "gemini-2.5-flash",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      headers: { "x-goog-api-key": google },
+      models: [model("gemini-2.5-flash", "Gemini 2.5 Flash", googleGenerateV3)],
+    });
   }
-  return bound;
+  return catalog;
 }
 
-function publicProvider(profile: BoundProfile): ProviderOption {
+function fixtureProvider(): CatalogProvider {
   return {
-    id: profile.id,
-    label: profile.label,
-    stream: profile.profile.capabilities.stream,
-    thinking: thinkingChoices(profile.profile),
-    media: [...profile.profile.capabilities.media],
-    defaultModel: profile.defaultModel,
+    id: "fixture",
+    label: "Fixture",
+    defaultModel: "fixture",
+    baseUrl: "https://fixture.invalid/v1",
+    headers: {},
+    models: [model("fixture", "Fixture", openaiResponses)],
+  };
+}
+
+function publicProvider(provider: CatalogProvider): ProviderOption {
+  const fallback = provider.models[0];
+  return {
+    id: provider.id,
+    label: provider.label,
+    stream: provider.models.some((entry) => entry.profile.capabilities.stream),
+    thinking: thinkingChoices(fallback?.profile ?? openaiResponses),
+    media: [...new Set(provider.models.flatMap((entry) => entry.profile.capabilities.media))],
+    defaultModel: provider.defaultModel,
+    models: provider.models.map((entry) => ({
+      id: entry.id,
+      label: entry.label,
+      stream: entry.profile.capabilities.stream,
+      thinking: thinkingChoices(entry.profile),
+    })),
   };
 }
 
 export function hostInfo(): HostInfo {
-  const providers = boundProfiles().map(publicProvider);
-  return { mode: providers.length ? "live" : "fixture", providers };
+  const catalog = providerCatalog();
+  if (!catalog.length) return { mode: "fixture", providers: [publicProvider(fixtureProvider())] };
+  return { mode: "live", providers: catalog.map(publicProvider) };
 }
 
 function publish(hosted: Hosted, event: ConsoleEvent) {
@@ -482,10 +509,18 @@ function requestPermissionFor(hosted: Hosted): PermissionPort {
 }
 
 export async function openSession(input: CreateSessionBody = {}) {
-  const bound = boundProfiles();
-  const selected = bound.find((profile) => profile.id === input.providerId) ?? bound[0];
-  const model = input.model?.trim() || selected?.defaultModel || "fixture";
-  const stream = Boolean(input.stream && selected?.profile.capabilities.stream);
+  const catalog = providerCatalog();
+  const fixture = !catalog.length;
+  const providers = fixture ? [fixtureProvider()] : catalog;
+  const selected = providers.find((provider) => provider.id === input.providerId) ?? providers[0];
+  if (!selected) throw new Error("No provider is configured");
+  const chosen =
+    selected.models.find((entry) => entry.id === input.model?.trim()) ??
+    selected.models.find((entry) => entry.id === selected.defaultModel) ??
+    selected.models[0];
+  if (!chosen) throw new Error(`Provider ${selected.label} has no models`);
+  const model = chosen.id;
+  const stream = Boolean(input.stream && chosen.profile.capabilities.stream);
   const thinking = input.thinking || "off";
   const subscribers = new Set<Subscriber>();
   const hosted: Hosted = {
@@ -540,70 +575,46 @@ export async function openSession(input: CreateSessionBody = {}) {
     requestPermission: requestPermissionFor(hosted),
   };
   const permissions = "ask" as const;
-  hosted.runtime = selected
-    ? await createSession({
-        persistence,
-        configuration: {
-          ...configuration,
-          policy: {
-            provider: selected.id,
-            stream,
-            thinking: thinking as "off",
-            ...(input.maxOutputTokens === undefined
-              ? {}
-              : { maxOutputTokens: input.maxOutputTokens }),
-            ...(input.thinkingBudgetTokens == null
-              ? {}
-              : { thinkingBudgetTokens: input.thinkingBudgetTokens }),
-            permissions,
+  hosted.runtime = await createSession({
+    persistence,
+    configuration: {
+      ...configuration,
+      policy: {
+        provider: selected.id,
+        model,
+        stream,
+        thinking: thinking as "off",
+        ...(input.maxOutputTokens === undefined ? {} : { maxOutputTokens: input.maxOutputTokens }),
+        ...(input.thinkingBudgetTokens == null
+          ? {}
+          : { thinkingBudgetTokens: input.thinkingBudgetTokens }),
+        permissions,
+      },
+    },
+    bindings: {
+      ...bindings,
+      providers: new Map(
+        providers.map((provider) => [
+          provider.id,
+          {
+            profile: (provider.models.find((entry) => entry.id === provider.defaultModel) ??
+              provider.models[0])!.profile,
+            models: new Map(
+              provider.models.map((entry) => [
+                entry.id,
+                { wireModel: entry.wireModel, profile: entry.profile },
+              ]),
+            ),
+            transport: {
+              baseUrl: provider.baseUrl,
+              headers: provider.headers,
+              fetch: fixture ? fixtureFetch() : fetch,
+            },
           },
-        },
-        bindings: {
-          ...bindings,
-          providers: new Map(
-            bound.map((profile) => [
-              profile.id,
-              {
-                profile: profile.profile,
-                transport: { baseUrl: profile.baseUrl, headers: profile.headers, fetch },
-              },
-            ]),
-          ),
-        },
-      })
-    : await createSession({
-        persistence,
-        configuration: {
-          ...configuration,
-          policy: {
-            provider: openaiResponses.id,
-            stream: false,
-            thinking: "off",
-            ...(input.maxOutputTokens === undefined
-              ? {}
-              : { maxOutputTokens: input.maxOutputTokens }),
-            ...(input.thinkingBudgetTokens == null
-              ? {}
-              : { thinkingBudgetTokens: input.thinkingBudgetTokens }),
-            permissions,
-          },
-        },
-        bindings: {
-          ...bindings,
-          providers: new Map([
-            [
-              openaiResponses.id,
-              {
-                profile: openaiResponses,
-                transport: {
-                  baseUrl: "https://fixture.invalid/v1",
-                  fetch: fixtureFetch(),
-                },
-              },
-            ],
-          ]),
-        },
-      });
+        ]),
+      ),
+    },
+  });
   const sessionId = hosted.runtime.snapshot.durable.conversation.sessionId;
   sessions.set(sessionId, hosted);
   return {

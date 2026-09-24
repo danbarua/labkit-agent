@@ -152,6 +152,9 @@ export function Console() {
   }, [sessionId]);
 
   const provider = host.providers.find((item) => item.id === providerId);
+  const selectedModel = provider?.models.find((item) => item.id === model) ?? provider?.models[0];
+  const modelCanStream = selectedModel?.stream ?? provider?.stream ?? false;
+  const modelThinking = selectedModel?.thinking ?? provider?.thinking ?? ["off"];
   const active = view !== null && view.phase !== "idle";
   const messages = useMemo(() => {
     if (!view) return [];
@@ -207,11 +210,14 @@ export function Console() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         providerId: providerId || undefined,
-        model: model || undefined,
-        thinking,
-        thinkingBudgetTokens: thinking === "budget" ? Number(thinkingBudgetTokens) : null,
+        model: selectedModel?.id || model || undefined,
+        thinking: modelThinking.includes(thinking) ? thinking : "off",
+        thinkingBudgetTokens:
+          thinking === "budget" && modelThinking.includes("budget")
+            ? Number(thinkingBudgetTokens)
+            : null,
         maxOutputTokens: Number(maxOutputTokens),
-        stream: stream && provider?.stream,
+        stream: stream && modelCanStream,
       }),
     });
     if (!response.ok) {
@@ -281,13 +287,17 @@ export function Console() {
     if (!view) return;
     setNotice("");
     const patch: Record<string, unknown> = {
-      thinking,
-      thinkingBudgetTokens: thinking === "budget" ? Number(thinkingBudgetTokens) : null,
+      thinking: modelThinking.includes(thinking) ? thinking : "off",
+      thinkingBudgetTokens:
+        thinking === "budget" && modelThinking.includes("budget")
+          ? Number(thinkingBudgetTokens)
+          : null,
       maxOutputTokens: Number(maxOutputTokens),
-      stream: stream && Boolean(provider?.stream),
+      stream: stream && modelCanStream,
     };
     if (providerId) patch.provider = providerId;
-    if (model.trim()) patch.model = model.trim();
+    if (selectedModel) patch.model = selectedModel.id;
+    else if (model.trim()) patch.model = model.trim();
     const completionTimeout = Number(completionTimeoutMs);
     const toolTimeout = Number(toolTimeoutMs);
     if (completionTimeoutMs.trim()) {
@@ -690,6 +700,9 @@ function PolicyFields({
   onStream: (value: boolean) => void;
 }) {
   const provider = host.providers.find((item) => item.id === providerId) ?? host.providers[0];
+  const selected = provider?.models.find((item) => item.id === model) ?? provider?.models[0];
+  const thinkingOptions = selected?.thinking ?? provider?.thinking ?? ["off"];
+  const canStream = selected?.stream ?? provider?.stream ?? false;
   return (
     <div className="grid gap-3">
       <label className="grid gap-1 text-sm">
@@ -700,7 +713,11 @@ function PolicyFields({
           onChange={(event) => {
             onProvider(event.target.value);
             const next = host.providers.find((item) => item.id === event.target.value);
-            if (next) onModel(next.defaultModel);
+            if (!next) return;
+            onModel(next.defaultModel);
+            const nextModel =
+              next.models.find((item) => item.id === next.defaultModel) ?? next.models[0];
+            if (nextModel && !nextModel.thinking.includes(thinking)) onThinking("off");
           }}
           disabled={host.mode === "fixture"}
         >
@@ -714,20 +731,30 @@ function PolicyFields({
       </label>
       <label className="grid gap-1 text-sm">
         Model
-        <input
+        <select
           className="h-9 rounded-md border border-border bg-paper px-2"
-          value={model}
-          onChange={(event) => onModel(event.target.value)}
-        />
+          value={selected?.id ?? model}
+          onChange={(event) => {
+            onModel(event.target.value);
+            const next = provider?.models.find((item) => item.id === event.target.value);
+            if (next && !next.thinking.includes(thinking)) onThinking("off");
+          }}
+        >
+          {(provider?.models ?? []).map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.label}
+            </option>
+          ))}
+        </select>
       </label>
       <label className="grid gap-1 text-sm">
         Thinking
         <select
           className="h-9 rounded-md border border-border bg-paper px-2"
-          value={thinking}
+          value={thinkingOptions.includes(thinking) ? thinking : "off"}
           onChange={(event) => onThinking(event.target.value)}
         >
-          {(provider?.thinking ?? ["off"]).map((value) => (
+          {thinkingOptions.map((value) => (
             <option key={value} value={value}>
               {value}
             </option>
@@ -763,11 +790,11 @@ function PolicyFields({
       <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
-          checked={stream && Boolean(provider?.stream)}
-          disabled={!provider?.stream}
+          checked={stream && canStream}
+          disabled={!canStream}
           onChange={(event) => onStream(event.target.checked)}
         />
-        Stream{provider?.stream ? "" : " (profile cannot stream)"}
+        Stream{canStream ? "" : " (not available for this model)"}
       </label>
     </div>
   );
