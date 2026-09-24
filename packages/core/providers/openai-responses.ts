@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { ToolCallSchema } from "../agent/types.ts";
 import { advertisements, completion, jsonArguments, messageText, responseBody } from "./shared.ts";
-import { parseRequest, validateThinking, type CompletionProfile } from "./types.ts";
+import { parseRequest, validateProviderSettings, type CompletionProfile } from "./types.ts";
 
 const output = z.discriminatedUnion("type", [
   z.object({
@@ -28,7 +28,7 @@ export const openaiResponses: CompletionProfile = {
   },
   encode(raw, blobs) {
     const request = parseRequest(raw, "openai-responses@1");
-    validateThinking(request.thinking, this.capabilities.thinking);
+    validateProviderSettings(request, this.capabilities);
     const input: unknown[] = [];
     for (const message of request.messages) {
       const text = messageText(message, blobs);

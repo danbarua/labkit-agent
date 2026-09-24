@@ -11139,6 +11139,7 @@
           "version": 1,
           "provider": "google-generate@1",
           "thinking": "off",
+          "thinkingBudgetTokens": null,
           "maxOutputTokens": 2048,
           "steps": 4,
           "admission": "reject-during-tools",
@@ -11217,6 +11218,7 @@
                   "version": 0,
                   "provider": "anthropic-messages@2",
                   "thinking": "budget",
+                  "thinkingBudgetTokens": 1024,
                   "maxOutputTokens": 2048,
                   "steps": 4,
                   "admission": "reject-during-tools",
@@ -11270,6 +11272,7 @@
                     "value": {
                       "provider": "anthropic-messages@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
                       "model": "test-model",
@@ -11435,6 +11438,7 @@
                     "value": {
                       "provider": "anthropic-messages@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
                       "model": "test-model",
@@ -11641,6 +11645,7 @@
                     "value": {
                       "provider": "anthropic-messages@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
                       "model": "test-model",
@@ -11932,13 +11937,15 @@
               "kind": "policy",
               "patch": {
                 "provider": "google-generate@1",
-                "thinking": "off"
+                "thinking": "off",
+                "thinkingBudgetTokens": null
               },
               "policy": {
                 "id": "default@1",
                 "version": 1,
                 "provider": "google-generate@1",
                 "thinking": "off",
+                "thinkingBudgetTokens": null,
                 "maxOutputTokens": 2048,
                 "steps": 4,
                 "admission": "reject-during-tools",
@@ -11991,6 +11998,7 @@
                     "value": {
                       "provider": "google-generate@1",
                       "thinking": "off",
+                      "thinkingBudgetTokens": null,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
                       "model": "test-model",
@@ -12322,6 +12330,7 @@
           "version": 0,
           "provider": "anthropic-messages@2",
           "thinking": "budget",
+          "thinkingBudgetTokens": 1024,
           "maxOutputTokens": 2048,
           "steps": 4,
           "admission": "reject-during-tools",
@@ -12400,6 +12409,7 @@
                   "version": 0,
                   "provider": "anthropic-messages@2",
                   "thinking": "budget",
+                  "thinkingBudgetTokens": 1024,
                   "maxOutputTokens": 2048,
                   "steps": 4,
                   "admission": "reject-during-tools",
@@ -12453,6 +12463,7 @@
                     "value": {
                       "provider": "anthropic-messages@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
                       "model": "test-model",
@@ -12618,6 +12629,7 @@
                     "value": {
                       "provider": "anthropic-messages@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
                       "model": "test-model",
@@ -12824,6 +12836,7 @@
                     "value": {
                       "provider": "anthropic-messages@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
                       "model": "test-model",
@@ -13329,6 +13342,7 @@
           "version": 0,
           "provider": "anthropic-messages@2",
           "thinking": "budget",
+          "thinkingBudgetTokens": 1024,
           "maxOutputTokens": 2048,
           "steps": 4,
           "admission": "reject-during-tools",
@@ -13474,6 +13488,7 @@
                   "version": 0,
                   "provider": "anthropic-messages@2",
                   "thinking": "budget",
+                  "thinkingBudgetTokens": 1024,
                   "maxOutputTokens": 2048,
                   "steps": 4,
                   "admission": "reject-during-tools",
@@ -13577,6 +13592,7 @@
                     "value": {
                       "provider": "anthropic-messages@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
                       "model": "test-model",
@@ -13886,6 +13902,7 @@
           "version": 0,
           "provider": "anthropic-messages@2",
           "thinking": "budget",
+          "thinkingBudgetTokens": 1024,
           "maxOutputTokens": 2048,
           "steps": 4,
           "admission": "reject-during-tools",
@@ -13966,6 +13983,7 @@
                   "version": 0,
                   "provider": "anthropic-messages@2",
                   "thinking": "budget",
+                  "thinkingBudgetTokens": 1024,
                   "maxOutputTokens": 2048,
                   "steps": 4,
                   "admission": "reject-during-tools",
@@ -14019,6 +14037,7 @@
                     "value": {
                       "provider": "anthropic-messages@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
                       "model": "test-model",
@@ -16007,7 +16026,8 @@
         "generationConfig": {
           "thinkingConfig": {
             "thinkingBudget": 1024
-          }
+          },
+          "maxOutputTokens": 16384
         }
       },
       {
@@ -16121,7 +16141,8 @@
         "generationConfig": {
           "thinkingConfig": {
             "thinkingBudget": 1024
-          }
+          },
+          "maxOutputTokens": 16384
         }
       },
       {
@@ -16291,7 +16312,8 @@
         "generationConfig": {
           "thinkingConfig": {
             "thinkingBudget": 1024
-          }
+          },
+          "maxOutputTokens": 16384
         }
       }
     ],
@@ -16554,6 +16576,8 @@
           "version": 0,
           "provider": "google-generate@2",
           "thinking": "budget",
+          "thinkingBudgetTokens": 1024,
+          "maxOutputTokens": 16384,
           "steps": 4,
           "admission": "reject-during-tools",
           "bargeIn": true,
@@ -16631,6 +16655,8 @@
                   "version": 0,
                   "provider": "google-generate@2",
                   "thinking": "budget",
+                  "thinkingBudgetTokens": 1024,
+                  "maxOutputTokens": 16384,
                   "steps": 4,
                   "admission": "reject-during-tools",
                   "bargeIn": true,
@@ -16683,6 +16709,8 @@
                     "value": {
                       "provider": "google-generate@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
+                      "maxOutputTokens": 16384,
                       "successors": ["a", "b"],
                       "model": "test-model",
                       "messages": [
@@ -16898,6 +16926,8 @@
                     "value": {
                       "provider": "google-generate@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
+                      "maxOutputTokens": 16384,
                       "successors": ["a", "b"],
                       "model": "test-model",
                       "messages": [
@@ -17190,6 +17220,8 @@
                     "value": {
                       "provider": "google-generate@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
+                      "maxOutputTokens": 16384,
                       "successors": ["a", "b"],
                       "model": "test-model",
                       "messages": [
@@ -17770,6 +17802,8 @@
           "version": 0,
           "provider": "google-generate@2",
           "thinking": "budget",
+          "thinkingBudgetTokens": 1024,
+          "maxOutputTokens": 16384,
           "steps": 4,
           "admission": "reject-during-tools",
           "bargeIn": true,
@@ -17847,6 +17881,8 @@
                   "version": 0,
                   "provider": "google-generate@2",
                   "thinking": "budget",
+                  "thinkingBudgetTokens": 1024,
+                  "maxOutputTokens": 16384,
                   "steps": 4,
                   "admission": "reject-during-tools",
                   "bargeIn": true,
@@ -17899,6 +17935,8 @@
                     "value": {
                       "provider": "google-generate@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
+                      "maxOutputTokens": 16384,
                       "successors": ["a", "b"],
                       "model": "test-model",
                       "messages": [
@@ -18114,6 +18152,8 @@
                     "value": {
                       "provider": "google-generate@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
+                      "maxOutputTokens": 16384,
                       "successors": ["a", "b"],
                       "model": "test-model",
                       "messages": [
@@ -18406,6 +18446,8 @@
                     "value": {
                       "provider": "google-generate@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
+                      "maxOutputTokens": 16384,
                       "successors": ["a", "b"],
                       "model": "test-model",
                       "messages": [
@@ -21045,7 +21087,8 @@
         "generationConfig": {
           "thinkingConfig": {
             "thinkingBudget": 1024
-          }
+          },
+          "maxOutputTokens": 16384
         }
       },
       {
@@ -21104,6 +21147,7 @@
             "strict": false
           }
         ],
+        "max_output_tokens": 16384,
         "include": ["reasoning.encrypted_content"],
         "reasoning": {
           "effort": "high"
@@ -21197,7 +21241,8 @@
         "generationConfig": {
           "thinkingConfig": {
             "thinkingBudget": 1024
-          }
+          },
+          "maxOutputTokens": 16384
         }
       }
     ],
@@ -21466,6 +21511,8 @@
           "version": 2,
           "provider": "google-generate@2",
           "thinking": "budget",
+          "thinkingBudgetTokens": 1024,
+          "maxOutputTokens": 16384,
           "steps": 4,
           "admission": "reject-during-tools",
           "bargeIn": true,
@@ -21543,6 +21590,8 @@
                   "version": 0,
                   "provider": "google-generate@2",
                   "thinking": "budget",
+                  "thinkingBudgetTokens": 1024,
+                  "maxOutputTokens": 16384,
                   "steps": 4,
                   "admission": "reject-during-tools",
                   "bargeIn": true,
@@ -21595,6 +21644,8 @@
                     "value": {
                       "provider": "google-generate@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
+                      "maxOutputTokens": 16384,
                       "successors": ["a", "b"],
                       "model": "test-model",
                       "messages": [
@@ -21719,13 +21770,16 @@
               "kind": "policy",
               "patch": {
                 "provider": "openai-responses@2",
-                "thinking": "high"
+                "thinking": "high",
+                "thinkingBudgetTokens": null
               },
               "policy": {
                 "id": "default@1",
                 "version": 1,
                 "provider": "openai-responses@2",
                 "thinking": "high",
+                "thinkingBudgetTokens": null,
+                "maxOutputTokens": 16384,
                 "steps": 4,
                 "admission": "reject-during-tools",
                 "bargeIn": true,
@@ -21777,6 +21831,8 @@
                     "value": {
                       "provider": "openai-responses@2",
                       "thinking": "high",
+                      "thinkingBudgetTokens": null,
+                      "maxOutputTokens": 16384,
                       "successors": ["a", "b"],
                       "model": "test-model",
                       "messages": [
@@ -21915,13 +21971,16 @@
               "kind": "policy",
               "patch": {
                 "provider": "google-generate@2",
-                "thinking": "budget"
+                "thinking": "budget",
+                "thinkingBudgetTokens": 1024
               },
               "policy": {
                 "id": "default@1",
                 "version": 2,
                 "provider": "google-generate@2",
                 "thinking": "budget",
+                "thinkingBudgetTokens": 1024,
+                "maxOutputTokens": 16384,
                 "steps": 4,
                 "admission": "reject-during-tools",
                 "bargeIn": true,
@@ -21973,6 +22032,8 @@
                     "value": {
                       "provider": "google-generate@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
+                      "maxOutputTokens": 16384,
                       "successors": ["a", "b"],
                       "model": "test-model",
                       "messages": [
@@ -22300,6 +22361,8 @@
           "version": 2,
           "provider": "google-generate@2",
           "thinking": "budget",
+          "thinkingBudgetTokens": 1024,
+          "maxOutputTokens": 16384,
           "steps": 4,
           "admission": "reject-during-tools",
           "bargeIn": true,
@@ -22377,6 +22440,8 @@
                   "version": 0,
                   "provider": "google-generate@2",
                   "thinking": "budget",
+                  "thinkingBudgetTokens": 1024,
+                  "maxOutputTokens": 16384,
                   "steps": 4,
                   "admission": "reject-during-tools",
                   "bargeIn": true,
@@ -22429,6 +22494,8 @@
                     "value": {
                       "provider": "google-generate@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
+                      "maxOutputTokens": 16384,
                       "successors": ["a", "b"],
                       "model": "test-model",
                       "messages": [
@@ -22553,13 +22620,16 @@
               "kind": "policy",
               "patch": {
                 "provider": "openai-responses@2",
-                "thinking": "high"
+                "thinking": "high",
+                "thinkingBudgetTokens": null
               },
               "policy": {
                 "id": "default@1",
                 "version": 1,
                 "provider": "openai-responses@2",
                 "thinking": "high",
+                "thinkingBudgetTokens": null,
+                "maxOutputTokens": 16384,
                 "steps": 4,
                 "admission": "reject-during-tools",
                 "bargeIn": true,
@@ -22611,6 +22681,8 @@
                     "value": {
                       "provider": "openai-responses@2",
                       "thinking": "high",
+                      "thinkingBudgetTokens": null,
+                      "maxOutputTokens": 16384,
                       "successors": ["a", "b"],
                       "model": "test-model",
                       "messages": [
@@ -22749,13 +22821,16 @@
               "kind": "policy",
               "patch": {
                 "provider": "google-generate@2",
-                "thinking": "budget"
+                "thinking": "budget",
+                "thinkingBudgetTokens": 1024
               },
               "policy": {
                 "id": "default@1",
                 "version": 2,
                 "provider": "google-generate@2",
                 "thinking": "budget",
+                "thinkingBudgetTokens": 1024,
+                "maxOutputTokens": 16384,
                 "steps": 4,
                 "admission": "reject-during-tools",
                 "bargeIn": true,
@@ -22807,6 +22882,8 @@
                     "value": {
                       "provider": "google-generate@2",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
+                      "maxOutputTokens": 16384,
                       "successors": ["a", "b"],
                       "model": "test-model",
                       "messages": [
@@ -24549,6 +24626,7 @@
           "version": 0,
           "provider": "anthropic-messages@3",
           "thinking": "budget",
+          "thinkingBudgetTokens": 1024,
           "stream": true,
           "maxOutputTokens": 2048,
           "steps": 4,
@@ -24628,6 +24706,7 @@
                   "version": 0,
                   "provider": "anthropic-messages@3",
                   "thinking": "budget",
+                  "thinkingBudgetTokens": 1024,
                   "stream": true,
                   "maxOutputTokens": 2048,
                   "steps": 4,
@@ -24682,6 +24761,7 @@
                     "value": {
                       "provider": "anthropic-messages@3",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "stream": true,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
@@ -24848,6 +24928,7 @@
                     "value": {
                       "provider": "anthropic-messages@3",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "stream": true,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
@@ -25167,6 +25248,7 @@
           "version": 0,
           "provider": "anthropic-messages@3",
           "thinking": "budget",
+          "thinkingBudgetTokens": 1024,
           "stream": true,
           "maxOutputTokens": 2048,
           "steps": 4,
@@ -25246,6 +25328,7 @@
                   "version": 0,
                   "provider": "anthropic-messages@3",
                   "thinking": "budget",
+                  "thinkingBudgetTokens": 1024,
                   "stream": true,
                   "maxOutputTokens": 2048,
                   "steps": 4,
@@ -25300,6 +25383,7 @@
                     "value": {
                       "provider": "anthropic-messages@3",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "stream": true,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
@@ -25466,6 +25550,7 @@
                     "value": {
                       "provider": "anthropic-messages@3",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "stream": true,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
@@ -26012,6 +26097,7 @@
           "version": 0,
           "provider": "google-generate@3",
           "thinking": "budget",
+          "thinkingBudgetTokens": 1024,
           "stream": true,
           "maxOutputTokens": 2048,
           "steps": 4,
@@ -26091,6 +26177,7 @@
                   "version": 0,
                   "provider": "google-generate@3",
                   "thinking": "budget",
+                  "thinkingBudgetTokens": 1024,
                   "stream": true,
                   "maxOutputTokens": 2048,
                   "steps": 4,
@@ -26145,6 +26232,7 @@
                     "value": {
                       "provider": "google-generate@3",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "stream": true,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
@@ -26326,6 +26414,7 @@
                     "value": {
                       "provider": "google-generate@3",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "stream": true,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
@@ -26687,6 +26776,7 @@
           "version": 0,
           "provider": "google-generate@3",
           "thinking": "budget",
+          "thinkingBudgetTokens": 1024,
           "stream": true,
           "maxOutputTokens": 2048,
           "steps": 4,
@@ -26766,6 +26856,7 @@
                   "version": 0,
                   "provider": "google-generate@3",
                   "thinking": "budget",
+                  "thinkingBudgetTokens": 1024,
                   "stream": true,
                   "maxOutputTokens": 2048,
                   "steps": 4,
@@ -26820,6 +26911,7 @@
                     "value": {
                       "provider": "google-generate@3",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "stream": true,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],
@@ -27001,6 +27093,7 @@
                     "value": {
                       "provider": "google-generate@3",
                       "thinking": "budget",
+                      "thinkingBudgetTokens": 1024,
                       "stream": true,
                       "maxOutputTokens": 2048,
                       "successors": ["a", "b"],

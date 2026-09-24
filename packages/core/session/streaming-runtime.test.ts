@@ -31,6 +31,7 @@ function setup(profile: CompletionProfile) {
       agents: new Map([["a", { model: "m", tools: ["echo"], successors: [] }]]),
       steps: 5,
       policy: {
+        thinkingBudgetTokens: profile.capabilities.thinking.mode === "budget" ? 1024 : null,
         provider: profile.id,
         stream: true,
         thinking:
@@ -272,7 +273,7 @@ test("policy rejects stream:true for unsupported profiles and provider switches 
       ...options,
       configuration: {
         ...options.configuration,
-        policy: { provider: openaiChat.id, stream: true },
+        policy: { maxOutputTokens: 16384, provider: openaiChat.id, stream: true },
       },
       bindings: { ...options.bindings, providers: registry },
     }),

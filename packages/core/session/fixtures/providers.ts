@@ -26,6 +26,7 @@ export const thinkingContinuationBranchesSwitchV2: Scenario = {
     policy: {
       provider: "anthropic-messages@2",
       thinking: "budget",
+      thinkingBudgetTokens: 1024,
       maxOutputTokens: 2048,
     },
     completions: thinkingContinuationBranchesSwitchV2Responses,
@@ -78,6 +79,7 @@ export const thinkingContinuationBranchesSwitchV2: Scenario = {
     const receipt7 = await root.updatePolicy({
       provider: "google-generate@1",
       thinking: "off",
+      thinkingBudgetTokens: null,
     });
     f.check("Policy update admission", receipt7.kind, "accepted");
     f.record({ op: "policy", session: "root", receipt: receipt7 });
@@ -137,9 +139,7 @@ export const markdownAttachmentRestoreForkCompactV2: Scenario = {
   dependencies: {
     format: 2,
     providerResponses: true,
-    policy: {
-      provider: "openai-chat@1",
-    },
+    policy: { provider: "openai-chat@1" },
     completions: markdownAttachmentRestoreForkCompactV2Responses,
   },
   async run(f) {
@@ -249,8 +249,10 @@ export const googleThinkingParallelToolsV2: Scenario = {
     format: 2,
     providerResponses: true,
     policy: {
+      maxOutputTokens: 16384,
       provider: "google-generate@2",
       thinking: "budget",
+      thinkingBudgetTokens: 1024,
     },
     completions: googleThinkingParallelToolsV2Responses,
   },
@@ -381,8 +383,10 @@ export const thinkingParityProviderSwitchV2: Scenario = {
     format: 2,
     providerResponses: true,
     policy: {
+      maxOutputTokens: 16384,
       provider: "google-generate@2",
       thinking: "budget",
+      thinkingBudgetTokens: 1024,
     },
     completions: thinkingParityProviderSwitchV2Responses,
   },
@@ -400,6 +404,7 @@ export const thinkingParityProviderSwitchV2: Scenario = {
     const receipt2 = await root.updatePolicy({
       provider: "openai-responses@2",
       thinking: "high",
+      thinkingBudgetTokens: null,
     });
     f.check("Policy update admission", receipt2.kind, "accepted");
     f.record({ op: "policy", session: "root", receipt: receipt2 });
@@ -414,6 +419,7 @@ export const thinkingParityProviderSwitchV2: Scenario = {
     const receipt4 = await root.updatePolicy({
       provider: "google-generate@2",
       thinking: "budget",
+      thinkingBudgetTokens: 1024,
     });
     f.check("Policy update admission", receipt4.kind, "accepted");
     f.record({ op: "policy", session: "root", receipt: receipt4 });
@@ -541,6 +547,7 @@ export const streamAnthropicMessages3V2: Scenario = {
       provider: "anthropic-messages@3",
       stream: true,
       thinking: "budget",
+      thinkingBudgetTokens: 1024,
       maxOutputTokens: 2048,
     },
     completions: streamAnthropicMessages3V2Responses,
@@ -599,6 +606,7 @@ export const streamGoogleGenerate3V2: Scenario = {
       provider: "google-generate@3",
       stream: true,
       thinking: "budget",
+      thinkingBudgetTokens: 1024,
       maxOutputTokens: 2048,
     },
     completions: streamGoogleGenerate3V2Responses,
@@ -711,10 +719,7 @@ export const streamTruncatedV2: Scenario = {
   dependencies: {
     format: 2,
     providerResponses: true,
-    policy: {
-      provider: "openai-chat@2",
-      stream: true,
-    },
+    policy: { provider: "openai-chat@2", stream: true },
     completions: streamTruncatedV2Responses,
   },
   async run(f) {

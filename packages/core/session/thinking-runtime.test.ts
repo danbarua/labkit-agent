@@ -25,7 +25,12 @@ function setup(responses?: readonly unknown[]) {
       agent: "a",
       agents: new Map([["a", { model: "claude-sonnet-4-5", tools: ["echo"], successors: [] }]]),
       steps: 4,
-      policy: { provider: anthropicMessagesV2.id, thinking: "budget", maxOutputTokens: 2048 },
+      policy: {
+        provider: anthropicMessagesV2.id,
+        thinking: "budget",
+        thinkingBudgetTokens: 1024,
+        maxOutputTokens: 2048,
+      },
     },
     bindings: {
       id: deterministicIds(),
@@ -104,9 +109,15 @@ test("thinking survives two tool rounds, restore, fork; projection/switch omit a
   expect(bodies.at(-1)?.messages?.filter((m) => m.role === "assistant")).toEqual([]);
   const retained = session.snapshot.durable.continuations;
   expect((await session.updatePolicy({ provider: googleGenerate.id })).kind).toBe("failed");
-  expect((await session.updatePolicy({ provider: googleGenerate.id, thinking: "off" })).kind).toBe(
-    "accepted",
-  );
+  expect(
+    (
+      await session.updatePolicy({
+        provider: googleGenerate.id,
+        thinking: "off",
+        thinkingBudgetTokens: null,
+      })
+    ).kind,
+  ).toBe("accepted");
   await session.input("google").settled;
   expect(session.snapshot.durable.continuations).toEqual(retained);
   const prepared = session.snapshot.durable.records.findLast(

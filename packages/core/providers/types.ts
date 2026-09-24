@@ -9,7 +9,7 @@ export const ThinkingSchema = z.enum(["off", "low", "medium", "high", "adaptive"
 export type ThinkingCapability =
   | Readonly<{ mode: "off" }>
   | Readonly<{ mode: "effort"; values: readonly ("none" | "low" | "medium" | "high")[] }>
-  | Readonly<{ mode: "budget"; maxTokens: number }>
+  | Readonly<{ mode: "budget"; minTokens: number; maxTokens?: number }>
   | Readonly<{ mode: "adaptive" }>;
 
 export const ContinuationPayloadSchema = z
@@ -39,7 +39,28 @@ export type DecodedCompletion = Readonly<{ completion: unknown; continuationPayl
 export function validateThinking(
   thinking: z.infer<typeof ThinkingSchema> | undefined,
   capability: ThinkingCapability,
+  thinkingBudgetTokens?: number | null,
+  maxOutputTokens?: number,
 ) {
+  if (thinking !== "budget" && thinkingBudgetTokens != null)
+    throw new Error(
+      "thinkingBudgetTokens requires thinking: budget; clear the budget when changing thinking mode",
+    );
+  if (thinking === "budget" && capability.mode === "budget") {
+    if (
+      thinkingBudgetTokens == null ||
+      !Number.isSafeInteger(thinkingBudgetTokens) ||
+      thinkingBudgetTokens < capability.minTokens ||
+      (capability.maxTokens !== undefined && thinkingBudgetTokens > capability.maxTokens)
+    )
+      throw new Error(
+        `Set thinkingBudgetTokens explicitly between ${capability.minTokens} and ${capability.maxTokens ?? "the model's supported maximum"}; no thinking budget is chosen automatically`,
+      );
+    if (maxOutputTokens === undefined || maxOutputTokens <= thinkingBudgetTokens)
+      throw new Error(
+        `maxOutputTokens must exceed thinkingBudgetTokens (${thinkingBudgetTokens}) to leave room for the answer`,
+      );
+  }
   if (thinking === undefined || thinking === "off") return;
   if (
     thinking === "adaptive"
@@ -50,8 +71,32 @@ export function validateThinking(
   )
     return;
   throw new Error(
-    `Unsupported thinking setting ${thinking}; supported: off${capability.mode === "off" ? "" : capability.mode === "effort" ? `, ${capability.values.join(", ")}` : capability.mode === "budget" ? `, budget (${capability.maxTokens} tokens)` : ", adaptive"}`,
+    `Unsupported thinking setting ${thinking}; supported: off${capability.mode === "off" ? "" : capability.mode === "effort" ? `, ${capability.values.join(", ")}` : capability.mode === "budget" ? `, budget (explicit thinkingBudgetTokens >= ${capability.minTokens})` : ", adaptive"}`,
   );
+}
+
+export function validateProviderSettings(
+  request: Pick<CompletionRequest, "thinking" | "thinkingBudgetTokens" | "maxOutputTokens">,
+  capabilities: CompletionProfile["capabilities"],
+) {
+  validateThinking(
+    request.thinking,
+    capabilities.thinking,
+    request.thinkingBudgetTokens,
+    request.maxOutputTokens,
+  );
+  if (capabilities.outputTokens?.required && request.maxOutputTokens === undefined)
+    throw new Error(
+      "Set maxOutputTokens explicitly for this model; no output cap is chosen automatically",
+    );
+  if (
+    capabilities.outputTokens?.maxTokens !== undefined &&
+    request.maxOutputTokens !== undefined &&
+    request.maxOutputTokens > capabilities.outputTokens.maxTokens
+  )
+    throw new Error(
+      `maxOutputTokens exceeds this model's declared limit (${capabilities.outputTokens.maxTokens})`,
+    );
 }
 
 export function matchingContinuations(
@@ -70,11 +115,12 @@ export function matchingContinuations(
       ),
   );
 }
-/** Data only. More thinking modes can be added with a journal/metadata migration. */
+/** Data only. Settings are captured with each prepared request. */
 export const ProviderSettingsSchema = z
   .strictObject({
     provider: z.string().min(1),
     thinking: ThinkingSchema.optional(),
+    thinkingBudgetTokens: z.number().int().positive().nullable().optional(),
     stream: z.boolean().optional(),
     maxOutputTokens: z.number().int().positive().optional(),
   })
@@ -98,6 +144,7 @@ export const CompletionRequestSchema = z
     continuations: z.array(ContinuationSchema).readonly().optional(),
     tools: z.array(ToolAdvertisementSchema).readonly(),
     thinking: ThinkingSchema.optional(),
+    thinkingBudgetTokens: z.number().int().positive().nullable().optional(),
     stream: z.boolean().optional(),
     temperature: z.number().finite().optional(),
     maxOutputTokens: z.number().int().positive().optional(),
@@ -140,6 +187,7 @@ export type CompletionProfile = Readonly<{
   id: string;
   capabilities: Readonly<{
     thinking: ThinkingCapability;
+    outputTokens?: Readonly<{ required: boolean; maxTokens?: number }>;
     stream: boolean;
     media: readonly MediaKind[];
   }>;

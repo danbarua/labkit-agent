@@ -17,7 +17,7 @@ function options(fetcher: typeof fetch): SessionOptions {
       agent: "reviewer",
       agents: new Map([["reviewer", { model: "fast", tools: ["extract"] }]]),
       steps: 5,
-      policy: { provider: "openai", model: "fast" },
+      policy: { maxOutputTokens: 16384, provider: "openai", model: "fast" },
     },
     bindings: {
       tools: new Map([
@@ -304,7 +304,7 @@ test("EOF consumer retains partial SSE response, correlation and parser stage", 
     ...opts,
     configuration: {
       ...opts.configuration,
-      policy: { provider: "openai", model: "streaming", stream: true },
+      policy: { maxOutputTokens: 16384, provider: "openai", model: "streaming", stream: true },
     },
     bindings: {
       ...opts.bindings,
@@ -409,6 +409,7 @@ test("peer review separates growing coordinator history from independent Anthrop
             run: async ({ text }, signal, context) => {
               const result = await extractor.complete(
                 CompletionPortRequestSchema.parse({
+                  maxOutputTokens: 16384,
                   provider: "anthropic",
                   model: "scripted-extractor",
                   messages: [{ role: "user", content: text }],
@@ -593,7 +594,7 @@ test("in-progress stream evidence reaches disk before the operation finishes", a
     ...opts,
     configuration: {
       ...opts.configuration,
-      policy: { provider: "openai", model: "streaming", stream: true },
+      policy: { maxOutputTokens: 16384, provider: "openai", model: "streaming", stream: true },
     },
     bindings: {
       ...opts.bindings,

@@ -8,6 +8,7 @@ import { bindProviders, httpTransport } from "./transport.ts";
 const prepared = PreparedModelSchema.parse({
   provider: openaiChat.id,
   model: "m",
+  maxOutputTokens: 16384,
   messages: [{ role: "user", content: "hi" }],
   successors: ["b"],
 });

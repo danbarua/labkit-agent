@@ -10,16 +10,10 @@ import {
 } from "../../core/agent/types.ts";
 import type { PermissionPort, PermissionRequest } from "../../core/host/ports.ts";
 import {
-  anthropicMessages,
-  anthropicMessagesV2,
   anthropicMessagesV3,
-  googleGenerate,
-  googleGenerateV2,
   googleGenerateV3,
-  openaiChat,
   openaiChatV2,
   openaiResponses,
-  openaiResponsesV2,
   openaiResponsesV3,
   type CompletionProfile,
 } from "../../core/providers/index.ts";
@@ -60,6 +54,7 @@ const ADMITTED: Record<string, true> = {
 
 type Subscriber = (event: ConsoleEvent) => void;
 type BoundProfile = {
+  id: string;
   profile: CompletionProfile;
   label: string;
   defaultModel: string;
@@ -86,7 +81,8 @@ function thinkingChoices(profile: CompletionProfile) {
   if (capability.mode === "effort") {
     for (const value of capability.values) if (value !== "none") values.push(value);
   }
-  if (capability.mode === "adaptive" || capability.mode === "budget") values.push("adaptive");
+  if (capability.mode === "adaptive") values.push("adaptive");
+  if (capability.mode === "budget") values.push("budget");
   return values;
 }
 
@@ -104,30 +100,33 @@ function boundProfiles(): BoundProfile[] {
     headers: Record<string, string>,
   ) => {
     for (const profile of profiles) {
-      bound.push({ profile, label: labelFor(profile), defaultModel, baseUrl, headers });
+      bound.push({
+        id: profile.id.split("@")[0]!,
+        profile,
+        label: labelFor(profile),
+        defaultModel,
+        baseUrl,
+        headers,
+      });
     }
   };
   if (openai) {
     add(
-      [openaiResponses, openaiResponsesV2, openaiResponsesV3, openaiChat, openaiChatV2],
-      (profile) => profile.id,
+      [openaiResponsesV3, openaiChatV2],
+      (profile) => profile.id.split("@")[0]!,
       "gpt-4.1-mini",
       "https://api.openai.com/v1",
       { Authorization: `Bearer ${openai}` },
     );
   } else if (xai) {
-    add(
-      [openaiChat, openaiChatV2],
-      (profile) => `xAI via ${profile.id}`,
-      "grok-3",
-      "https://api.x.ai/v1",
-      { Authorization: `Bearer ${xai}` },
-    );
+    add([openaiChatV2], () => "xAI", "grok-3", "https://api.x.ai/v1", {
+      Authorization: `Bearer ${xai}`,
+    });
   }
   if (anthropic) {
     add(
-      [anthropicMessages, anthropicMessagesV2, anthropicMessagesV3],
-      (profile) => profile.id,
+      [anthropicMessagesV3],
+      (profile) => profile.id.split("@")[0]!,
       "claude-sonnet-4-5",
       "https://api.anthropic.com/v1",
       { "x-api-key": anthropic },
@@ -135,8 +134,8 @@ function boundProfiles(): BoundProfile[] {
   }
   if (google) {
     add(
-      [googleGenerate, googleGenerateV2, googleGenerateV3],
-      (profile) => profile.id,
+      [googleGenerateV3],
+      (profile) => profile.id.split("@")[0]!,
       "gemini-2.5-flash",
       "https://generativelanguage.googleapis.com/v1beta",
       { "x-goog-api-key": google },
@@ -147,7 +146,7 @@ function boundProfiles(): BoundProfile[] {
 
 function publicProvider(profile: BoundProfile): ProviderOption {
   return {
-    id: profile.profile.id,
+    id: profile.id,
     label: profile.label,
     stream: profile.profile.capabilities.stream,
     thinking: thinkingChoices(profile.profile),
@@ -272,6 +271,8 @@ export function project(
       provider: policy?.provider,
       model: policy?.model ?? resolved?.model ?? fallbackModel,
       thinking: policy?.thinking,
+      thinkingBudgetTokens: policy?.thinkingBudgetTokens,
+      maxOutputTokens: policy?.maxOutputTokens,
       stream: policy?.stream,
       permissions: policy?.permissions,
       completionTimeoutMs: policy?.completionTimeoutMs,
@@ -482,7 +483,7 @@ function requestPermissionFor(hosted: Hosted): PermissionPort {
 
 export async function openSession(input: CreateSessionBody = {}) {
   const bound = boundProfiles();
-  const selected = bound.find((profile) => profile.profile.id === input.providerId) ?? bound[0];
+  const selected = bound.find((profile) => profile.id === input.providerId) ?? bound[0];
   const model = input.model?.trim() || selected?.defaultModel || "fixture";
   const stream = Boolean(input.stream && selected?.profile.capabilities.stream);
   const thinking = input.thinking || "off";
@@ -545,10 +546,15 @@ export async function openSession(input: CreateSessionBody = {}) {
         configuration: {
           ...configuration,
           policy: {
-            provider: selected.profile.id,
+            provider: selected.id,
             stream,
             thinking: thinking as "off",
-            maxOutputTokens: 2048,
+            ...(input.maxOutputTokens === undefined
+              ? {}
+              : { maxOutputTokens: input.maxOutputTokens }),
+            ...(input.thinkingBudgetTokens == null
+              ? {}
+              : { thinkingBudgetTokens: input.thinkingBudgetTokens }),
             permissions,
           },
         },
@@ -556,7 +562,7 @@ export async function openSession(input: CreateSessionBody = {}) {
           ...bindings,
           providers: new Map(
             bound.map((profile) => [
-              profile.profile.id,
+              profile.id,
               {
                 profile: profile.profile,
                 transport: { baseUrl: profile.baseUrl, headers: profile.headers, fetch },
@@ -573,7 +579,12 @@ export async function openSession(input: CreateSessionBody = {}) {
             provider: openaiResponses.id,
             stream: false,
             thinking: "off",
-            maxOutputTokens: 2048,
+            ...(input.maxOutputTokens === undefined
+              ? {}
+              : { maxOutputTokens: input.maxOutputTokens }),
+            ...(input.thinkingBudgetTokens == null
+              ? {}
+              : { thinkingBudgetTokens: input.thinkingBudgetTokens }),
             permissions,
           },
         },

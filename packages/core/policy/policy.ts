@@ -72,6 +72,8 @@ export type PolicyResolvers = Readonly<{
     model: string | undefined,
     thinking: Policy["thinking"],
     stream?: boolean,
+    thinkingBudgetTokens?: number | null,
+    maxOutputTokens?: number,
   ) => void;
   providerStreams?: ReadonlyMap<string, boolean>;
   providerCapabilities?: ReadonlyMap<string, ThinkingCapability>;
@@ -178,9 +180,13 @@ export function validatePolicy(
     );
   if (
     !policy.provider &&
-    [policy.model, policy.thinking, policy.stream, policy.maxOutputTokens].some(
-      (value) => value !== undefined,
-    )
+    [
+      policy.model,
+      policy.thinking,
+      policy.stream,
+      policy.maxOutputTokens,
+      policy.thinkingBudgetTokens,
+    ].some((value) => value !== undefined)
   )
     throw new Error("Provider settings require a provider id");
   if (
@@ -189,11 +195,23 @@ export function validatePolicy(
   )
     throw new Error("Reserved handoff tool name");
   if (policy.provider && resolvers.validateSelection)
-    resolvers.validateSelection(policy.provider, policy.model, policy.thinking, policy.stream);
+    resolvers.validateSelection(
+      policy.provider,
+      policy.model,
+      policy.thinking,
+      policy.stream,
+      policy.thinkingBudgetTokens,
+      policy.maxOutputTokens,
+    );
   if (policy.provider && !resolvers.validateSelection && resolvers.providerCapabilities) {
     const capability = resolvers.providerCapabilities.get(policy.provider);
     if (!capability) throw new Error("Missing provider capabilities");
-    validateThinking(policy.thinking, capability);
+    validateThinking(
+      policy.thinking,
+      capability,
+      policy.thinkingBudgetTokens,
+      policy.maxOutputTokens,
+    );
   }
   if (
     !resolvers.validateSelection &&

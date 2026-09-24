@@ -52,8 +52,10 @@ not from guesses based on its name. Unsupported thinking, streaming, or media co
 before HTTP, including on restore and configuration changes. Patch incompatible settings together
 when switching models. See [model binding examples](../providers/README.md).
 
-Thinking `adaptive` means native adaptive support; `budget` means the declared manual budget
-(current shipped profiles: 1024 tokens). Effort values are limited to the bound profile's declared
+Thinking `adaptive` means native adaptive support. Manual `budget` requires an explicit
+`thinkingBudgetTokens` and a larger `maxOutputTokens`; the runtime never substitutes 1024.
+Anthropic always requires an explicit output limit. Clear a manual budget with null when changing
+thinking modes. Effort values are limited to the bound profile's declared
 values. `off` or omission disables thinking. These settings are distinct, not approximations.
 
 `permissions: "ask"` requires a permission binding and once-only approval for every tool call.

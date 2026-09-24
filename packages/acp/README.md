@@ -35,7 +35,10 @@ before importing the factory; use those logs or stderr for diagnostic output.
 The workspace example reads `LABKIT_ACP_MODEL` and provider credentials from the environment.
 `LABKIT_ACP_PROVIDER` selects `anthropic` (default), `openai`, `openai-responses`, or `google`.
 `LABKIT_ACP_MODELS` declares additional selectable models; no catalog is inferred. Anthropic defaults
-to native adaptive thinking; use `LABKIT_ACP_THINKING_MODE=budget` for manual 1024-token thinking.
+to native adaptive thinking; use `LABKIT_ACP_THINKING_MODE=budget` for manual thinking. Its selector names explicit 4096/8192/16384-token budgets.
+The separate output-limit control includes thinking and answer tokens; it must exceed a manual
+budget. `LABKIT_ACP_MAX_OUTPUT_TOKENS` sets the initial output limit (the example visibly starts at
+16384). These are application presets, not fixed adapter limits or guarantees of sufficient output.
 Choose a binding whose declared capabilities match the models you offer.
 
 ## Derive UI configuration from committed policy

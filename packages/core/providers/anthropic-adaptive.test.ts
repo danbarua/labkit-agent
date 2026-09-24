@@ -10,6 +10,7 @@ import {
 import { streamResponse, streamVector } from "./testing/stream-vectors.ts";
 
 const request = CompletionRequestSchema.parse({
+  maxOutputTokens: 16384,
   model: "claude-sonnet-5",
   messages: [],
   tools: [],
@@ -20,15 +21,20 @@ test("native adaptive thinking has its own wire version, with no manual budget r
   for (const stream of [false, true]) {
     expect(anthropicMessagesV4.encode({ ...request, stream }).body).toMatchObject({
       thinking: { type: "adaptive" },
-      max_tokens: 1024,
+      max_tokens: 16384,
       stream,
     });
     expect(JSON.stringify(anthropicMessagesV4.encode({ ...request, stream }).body)).not.toContain(
       "budget_tokens",
     );
     expect(
-      anthropicMessagesV3.encode({ ...request, thinking: "budget", maxOutputTokens: 4096, stream })
-        .body,
+      anthropicMessagesV3.encode({
+        ...request,
+        thinking: "budget",
+        thinkingBudgetTokens: 1024,
+        maxOutputTokens: 4096,
+        stream,
+      }).body,
     ).toMatchObject({ thinking: { type: "enabled", budget_tokens: 1024 } });
   }
   for (const thinking of [undefined, "off"] as const) {
@@ -37,7 +43,7 @@ test("native adaptive thinking has its own wire version, with no manual budget r
     });
   }
   expect(() => anthropicMessagesV3.encode({ ...request, thinking: "budget" })).toThrow(
-    "maxOutputTokens",
+    "thinkingBudgetTokens",
   );
 });
 
@@ -65,6 +71,7 @@ test("native adaptive streaming preserves signed tool continuation and exact pro
   );
   const result = await port.complete(
     PreparedModelSchema.parse({
+      maxOutputTokens: 16384,
       provider: profile.id,
       model: request.model,
       messages: [],

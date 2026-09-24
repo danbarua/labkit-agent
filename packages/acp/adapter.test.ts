@@ -432,6 +432,7 @@ for (const profile of streamingProfiles)
           configuration: {
             ...base.configuration,
             policy: {
+              thinkingBudgetTokens: profile.capabilities.thinking.mode === "budget" ? 1024 : null,
               provider: profile.id,
               stream: true,
               thinking:
@@ -586,7 +587,7 @@ test("incomplete stream reports an RPC failure, never successful end_turn", asyn
         ...base,
         configuration: {
           ...base.configuration,
-          policy: { provider: openaiChatV2.id, stream: true },
+          policy: { maxOutputTokens: 16384, provider: openaiChatV2.id, stream: true },
         },
         bindings: {
           ...base.bindings,
@@ -716,7 +717,10 @@ test("local resource links become session blob refs; outside paths reject before
       const base = await original(context);
       return {
         ...base,
-        configuration: { ...base.configuration, policy: { provider: openaiChat.id } },
+        configuration: {
+          ...base.configuration,
+          policy: { maxOutputTokens: 16384, provider: openaiChat.id },
+        },
         bindings: {
           ...base.bindings,
           complete: undefined,
@@ -834,7 +838,10 @@ test("cancel during attachment storage never admits a user event or starts compl
       const base = await original(context);
       return {
         ...base,
-        configuration: { ...base.configuration, policy: { provider: openaiChat.id } },
+        configuration: {
+          ...base.configuration,
+          policy: { maxOutputTokens: 16384, provider: openaiChat.id },
+        },
         bindings: {
           ...base.bindings,
           complete: undefined,
@@ -925,7 +932,7 @@ test("durable ACP reload resolves stored attachments without source files; denie
             ["workspace", { model: "m", tools: [...tools.keys()], successors: [] }],
           ]),
           steps: 6,
-          policy: { provider: openaiChat.id, permissions: "ask" },
+          policy: { maxOutputTokens: 16384, provider: openaiChat.id, permissions: "ask" },
         },
         bindings: {
           tools,
@@ -1114,7 +1121,7 @@ function configurable(complete: (model: string) => unknown | Promise<unknown> = 
               { ...agent, successors: [] },
             ]),
           ),
-          policy: { provider: openaiChat.id, model: "m" },
+          policy: { maxOutputTokens: 16384, provider: openaiChat.id, model: "m" },
         },
         bindings: {
           ...original.bindings,
@@ -1688,7 +1695,10 @@ test("ACP embedded image, PDF, and editor text reach provider wire through blobs
       const original = await base.options.sessionOptions(context);
       return {
         ...original,
-        configuration: { ...original.configuration, policy: { provider: anthropicMessagesV2.id } },
+        configuration: {
+          ...original.configuration,
+          policy: { maxOutputTokens: 16384, provider: anthropicMessagesV2.id },
+        },
         bindings: {
           ...original.bindings,
           complete: undefined,
@@ -2253,7 +2263,10 @@ test("commands are discovered on new/load and expand once before journal admissi
       return {
         ...original,
         commands,
-        configuration: { ...original.configuration, policy: { provider: openaiChat.id } },
+        configuration: {
+          ...original.configuration,
+          policy: { maxOutputTokens: 16384, provider: openaiChat.id },
+        },
         bindings: {
           ...original.bindings,
           complete: undefined,
@@ -2391,7 +2404,10 @@ test("ACP fork copies attachment history into an independent restorable child wi
       const original = await base.options.sessionOptions(context);
       return {
         ...original,
-        configuration: { ...original.configuration, policy: { provider: openaiChat.id } },
+        configuration: {
+          ...original.configuration,
+          policy: { maxOutputTokens: 16384, provider: openaiChat.id },
+        },
         bindings: {
           ...original.bindings,
           complete: undefined,
@@ -3172,7 +3188,10 @@ test("ACP admits an additional-root resource as a blob and passes its contents t
       const options = await base.options.sessionOptions(context);
       return {
         ...options,
-        configuration: { ...options.configuration, policy: { provider: openaiChat.id } },
+        configuration: {
+          ...options.configuration,
+          policy: { maxOutputTokens: 16384, provider: openaiChat.id },
+        },
         bindings: {
           ...options.bindings,
           complete: undefined,

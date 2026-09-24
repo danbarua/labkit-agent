@@ -18,7 +18,9 @@ LABKIT_ACP_MODELS adds comma-separated model IDs to the environment's explicit m
 No model catalog is inferred, and no historical adapter registry is installed during restore.
 
 Anthropic defaults to native adaptive thinking support. For models requiring manual thinking,
-set LABKIT_ACP_THINKING_MODE=budget; its Thinking selector offers the explicit 1024-token budget.
+set LABKIT_ACP_THINKING_MODE=budget; its Thinking selector offers explicit 4096/8192/16384-token budgets.
+The output-limit selector controls total thinking and answer tokens and must exceed a manual budget.
+LABKIT_ACP_MAX_OUTPUT_TOKENS sets its initial value (16384 in this example).
 Google also offers budget; OpenAI offers supported effort levels. Unsupported combinations reject
 before dispatch. Users select provider/model/settings; implementation profile IDs remain diagnostics.
 Keep model bindings stable when reopening saved sessions. The software is unreleased and does not

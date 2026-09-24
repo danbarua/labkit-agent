@@ -201,7 +201,7 @@ test("workspace example validates environment, enables load and disables self-ha
         provider!.startsWith("openai")
           ? ["off", "low", "medium", "high"]
           : provider === "google"
-            ? ["off", "budget"]
+            ? ["off", "budget:4096", "budget:8192", "budget:16384"]
             : ["off", "adaptive"],
       );
       expect(JSON.stringify(options.configuration)).not.toContain("TEST_SECRET");

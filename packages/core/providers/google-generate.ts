@@ -8,7 +8,7 @@ import {
   responseBody,
   systemAndMessages,
 } from "./shared.ts";
-import { parseRequest, validateThinking, type CompletionProfile } from "./types.ts";
+import { parseRequest, validateProviderSettings, type CompletionProfile } from "./types.ts";
 
 const part = z.union([
   z.strictObject({
@@ -34,7 +34,7 @@ export const googleGenerate: CompletionProfile = {
   },
   encode(raw, blobs) {
     const request = parseRequest(raw, "google-generate@1");
-    validateThinking(request.thinking, this.capabilities.thinking);
+    validateProviderSettings(request, this.capabilities);
     const split = systemAndMessages(request, blobs);
     const contents: { role: string; parts: unknown[] }[] = [];
     const calls = new Map<string, string>();

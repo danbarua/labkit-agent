@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { ToolCallSchema } from "../agent/types.ts";
 import { advertisements, completion, jsonArguments, messageText, responseBody } from "./shared.ts";
-import { parseRequest, validateThinking, type CompletionProfile } from "./types.ts";
+import { parseRequest, validateProviderSettings, type CompletionProfile } from "./types.ts";
 
 const response = z.object({
   choices: z
@@ -38,7 +38,7 @@ export const openaiChat: CompletionProfile = {
   },
   encode(raw, blobs) {
     const request = parseRequest(raw, "openai-chat@1");
-    validateThinking(request.thinking, this.capabilities.thinking);
+    validateProviderSettings(request, this.capabilities);
     const tools = advertisements(request);
     return {
       path: "/chat/completions",

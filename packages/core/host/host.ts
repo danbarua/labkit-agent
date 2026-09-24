@@ -113,7 +113,10 @@ export type ExecutionContext = Readonly<{
   continuations?: readonly Continuation[];
   allowedTools?: readonly string[];
   toolFailure?: Policy["toolFailure"];
-  provider?: Pick<Policy, "provider" | "model" | "thinking" | "stream" | "maxOutputTokens">;
+  provider?: Pick<
+    Policy,
+    "provider" | "model" | "thinking" | "thinkingBudgetTokens" | "stream" | "maxOutputTokens"
+  >;
   projectPrompt: (input: PromptInput, signal: AbortSignal) => unknown | Promise<unknown>;
   projectHandoff?: (
     input: PromptInput & { from: string; to: string },
@@ -303,6 +306,7 @@ export function createHost(
       provider: context.provider?.provider,
       model: context.provider?.model,
       thinking: context.provider?.thinking,
+      thinkingBudgetTokens: context.provider?.thinkingBudgetTokens,
       stream: context.provider?.stream,
       maxOutputTokens: context.provider?.maxOutputTokens,
       ...("turn" in command
@@ -337,6 +341,7 @@ export function createHost(
                   ? {
                       provider: context.provider.provider,
                       thinking: context.provider.thinking,
+                      thinkingBudgetTokens: context.provider.thinkingBudgetTokens,
                       stream: context.provider.stream,
                       maxOutputTokens: context.provider.maxOutputTokens,
                       successors: agent.successors ?? [...agents.keys()],

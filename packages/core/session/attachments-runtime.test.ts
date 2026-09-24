@@ -40,8 +40,11 @@ function setup(profile: CompletionProfile = openaiChat) {
       agents: new Map([["a", { model: "fixture-model", tools: [], successors: [] }]]),
       steps: 3,
       policy: {
+        maxOutputTokens: 16384,
         provider: profile.id,
-        ...(profile === anthropicMessagesV2 ? { thinking: "budget", maxOutputTokens: 2048 } : {}),
+        ...(profile === anthropicMessagesV2
+          ? { thinking: "budget", thinkingBudgetTokens: 1024, maxOutputTokens: 2048 }
+          : {}),
       },
     },
     bindings: {

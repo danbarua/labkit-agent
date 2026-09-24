@@ -84,6 +84,8 @@ export type SessionView = {
     provider?: string;
     model?: string;
     thinking?: string;
+    thinkingBudgetTokens?: number | null;
+    maxOutputTokens?: number;
     stream?: boolean;
     permissions?: string;
     completionTimeoutMs?: number | null;
@@ -135,6 +137,8 @@ export type ConsoleEvent =
       turnId: string;
       text?: string;
       thinking?: string;
+      thinkingBudgetTokens?: number | null;
+      maxOutputTokens?: number;
       status?: string;
     }
   | {
@@ -152,5 +156,7 @@ export type CreateSessionBody = {
   providerId?: string;
   model?: string;
   thinking?: string;
+  thinkingBudgetTokens?: number | null;
+  maxOutputTokens?: number;
   stream?: boolean;
 };

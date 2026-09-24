@@ -35,7 +35,12 @@ export function profileContract(profile: CompletionProfile, vector: ProfileVecto
   describe(profile.id, () => {
     test("encodes the full canonical transcript against the approved wire vector", () => {
       const before = JSON.stringify(request);
-      expect(profile.encode(request).body).toEqual(vector.expectedBody);
+      expect(
+        profile.encode({
+          ...request,
+          ...(profile.capabilities.outputTokens?.required ? { maxOutputTokens: 1024 } : {}),
+        }).body,
+      ).toEqual(vector.expectedBody);
       expect(JSON.stringify(request)).toBe(before);
     });
     test("decodes answer, ordered parallel calls, and reserved handoff", () => {

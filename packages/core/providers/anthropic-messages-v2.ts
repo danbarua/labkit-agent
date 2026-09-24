@@ -15,7 +15,7 @@ import {
 import {
   matchingContinuations,
   parseRequest,
-  validateThinking,
+  validateProviderSettings,
   type CompletionProfile,
 } from "./types.ts";
 
@@ -72,19 +72,14 @@ export function anthropicMessagesProfile(id: string, nativeAdaptive = false): Co
   return {
     id,
     capabilities: {
-      thinking: nativeAdaptive ? { mode: "adaptive" } : { mode: "budget", maxTokens: 1024 },
+      thinking: nativeAdaptive ? { mode: "adaptive" } : { mode: "budget", minTokens: 1024 },
+      outputTokens: { required: true },
       stream: false,
       media: ["text/plain", "text/markdown", "image/png", "image/jpeg", "application/pdf"],
     },
     encode(raw, blobs) {
       const request = parseRequest(raw, id);
-      validateThinking(request.thinking, this.capabilities.thinking);
-      if (
-        !nativeAdaptive &&
-        (request.thinking === "adaptive" || request.thinking === "budget") &&
-        (request.maxOutputTokens === undefined || request.maxOutputTokens <= 1024)
-      )
-        throw new Error("Budget thinking requires maxOutputTokens > 1024");
+      validateProviderSettings(request, this.capabilities);
       const split = systemAndMessages(request, blobs);
       const messages: { role: string; content: unknown[] }[] = [];
       for (const message of split.messages) {
@@ -123,7 +118,7 @@ export function anthropicMessagesProfile(id: string, nativeAdaptive = false): Co
         headers: { "anthropic-version": "2023-06-01" },
         body: {
           model: request.model,
-          max_tokens: request.maxOutputTokens ?? 1024,
+          max_tokens: request.maxOutputTokens,
           system: split.system.map((text) => ({ type: "text", text })),
           messages,
           tools: advertisements(request).map(({ parameters, ...tool }) => ({
@@ -134,7 +129,7 @@ export function anthropicMessagesProfile(id: string, nativeAdaptive = false): Co
             request.thinking === "adaptive" || request.thinking === "budget"
               ? nativeAdaptive
                 ? { type: "adaptive" }
-                : { type: "enabled", budget_tokens: 1024 }
+                : { type: "enabled", budget_tokens: request.thinkingBudgetTokens }
               : { type: "disabled" },
           stream: false,
           ...(request.temperature === undefined ? {} : { temperature: request.temperature }),

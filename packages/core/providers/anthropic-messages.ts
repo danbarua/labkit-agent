@@ -9,7 +9,7 @@ import {
   responseBody,
   systemAndMessages,
 } from "./shared.ts";
-import { parseRequest, validateThinking, type CompletionProfile } from "./types.ts";
+import { parseRequest, validateProviderSettings, type CompletionProfile } from "./types.ts";
 
 const block = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
@@ -24,12 +24,13 @@ export const anthropicMessages: CompletionProfile = {
   id: "anthropic-messages@1",
   capabilities: {
     thinking: { mode: "off" },
+    outputTokens: { required: true },
     stream: false,
     media: ["text/plain", "text/markdown"],
   },
   encode(raw, blobs) {
     const request = parseRequest(raw, "anthropic-messages@1");
-    validateThinking(request.thinking, this.capabilities.thinking);
+    validateProviderSettings(request, this.capabilities);
     const split = systemAndMessages(request, blobs);
     const messages: { role: string; content: unknown[] }[] = [];
     for (const message of split.messages) {
@@ -59,7 +60,7 @@ export const anthropicMessages: CompletionProfile = {
       headers: { "anthropic-version": "2023-06-01" },
       body: {
         model: request.model,
-        max_tokens: request.maxOutputTokens ?? 1024,
+        max_tokens: request.maxOutputTokens,
         system: split.system.map((text) => ({ type: "text", text })),
         messages,
         tools: advertisements(request).map(({ parameters, ...tool }) => ({

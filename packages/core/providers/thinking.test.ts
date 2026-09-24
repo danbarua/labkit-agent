@@ -27,10 +27,11 @@ const request = CompletionRequestSchema.parse({
   tools: [],
   successors: [],
   thinking: "budget",
+  thinkingBudgetTokens: 1024,
   maxOutputTokens: 2048,
 });
 
-test("Anthropic v2 exact adaptive body and off default", () => {
+test("Anthropic manual thinking uses explicit budgets and output limits", () => {
   expect(anthropicMessagesV2.encode(request).body).toEqual({
     model: request.model,
     max_tokens: 2048,
@@ -41,8 +42,13 @@ test("Anthropic v2 exact adaptive body and off default", () => {
     stream: false,
   });
   expect(
-    anthropicMessagesV2.encode({ ...request, thinking: "off", maxOutputTokens: undefined }).body,
-  ).toMatchObject({ max_tokens: 1024, thinking: { type: "disabled" } });
+    anthropicMessagesV2.encode({
+      ...request,
+      thinking: "off",
+      thinkingBudgetTokens: null,
+      maxOutputTokens: 8192,
+    }).body,
+  ).toMatchObject({ max_tokens: 8192, thinking: { type: "disabled" } });
   for (const maxOutputTokens of [undefined, 1024, 1])
     expect(() => anthropicMessagesV2.encode({ ...request, maxOutputTokens })).toThrow(
       "maxOutputTokens",
@@ -122,10 +128,12 @@ test("capability intersection rejects before HTTP and chat maps effort", async (
     await expect(
       port.complete(
         PreparedModelSchema.parse({
+          maxOutputTokens: 16384,
           model: "test",
           messages: [],
           provider: profile.id,
           thinking: "budget",
+          thinkingBudgetTokens: 1024,
         }),
         new AbortController().signal,
       ),
@@ -171,9 +179,14 @@ test("parseRequest rejects orphan and foreign-provider continuations", () => {
   expect(() => anthropicMessagesV2.encode({ ...input, provider: googleGenerate.id })).toThrow(
     "provider",
   );
-  expect(() => googleGenerate.encode({ ...input, provider: undefined, thinking: "off" })).toThrow(
-    "provider",
-  );
+  expect(() =>
+    googleGenerate.encode({
+      thinkingBudgetTokens: null,
+      ...input,
+      provider: undefined,
+      thinking: "off",
+    }),
+  ).toThrow("provider");
 });
 
 test("Anthropic refuses adjacent assistant merges involving thinking and preserves plain merges", () => {
@@ -253,7 +266,12 @@ test("orphan and foreign continuations fail before fetch at the transport bounda
   ])
     await expect(
       port.complete(
-        PreparedModelSchema.parse({ model: "test", provider: anthropicMessagesV2.id, ...patch }),
+        PreparedModelSchema.parse({
+          maxOutputTokens: 16384,
+          model: "test",
+          provider: anthropicMessagesV2.id,
+          ...patch,
+        }),
         new AbortController().signal,
       ),
     ).rejects.toThrow("Continuation");

@@ -64,7 +64,13 @@ for (const reason of ["max_tokens", "model_context_window_exceeded", "pause_turn
     );
     await expect(
       port.complete(
-        PreparedModelSchema.parse({ provider: profile.id, model: "m", messages: [], stream: true }),
+        PreparedModelSchema.parse({
+          maxOutputTokens: 16384,
+          provider: profile.id,
+          model: "m",
+          messages: [],
+          stream: true,
+        }),
         new AbortController().signal,
       ),
     ).rejects.toThrow(`stop_reason=${reason} (output_tokens=4096)`);

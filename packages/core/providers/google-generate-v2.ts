@@ -12,7 +12,7 @@ import {
 import {
   matchingContinuations,
   parseRequest,
-  validateThinking,
+  validateProviderSettings,
   type CompletionProfile,
 } from "./types.ts";
 
@@ -37,13 +37,13 @@ const payloadSchema = z.strictObject({ parts: z.array(part).min(1) });
 export const googleGenerateV2: CompletionProfile = {
   id: "google-generate@2",
   capabilities: {
-    thinking: { mode: "budget", maxTokens: 1024 },
+    thinking: { mode: "budget", minTokens: 1 },
     stream: false,
     media: ["text/plain", "text/markdown"],
   },
   encode(raw, blobs) {
     const request = parseRequest(raw, "google-generate@2");
-    validateThinking(request.thinking, this.capabilities.thinking);
+    validateProviderSettings(request, this.capabilities);
     const split = systemAndMessages(request, blobs);
     const contents: { role: string; parts: unknown[] }[] = [];
     const calls = new Map<string, string>();
@@ -103,7 +103,9 @@ export const googleGenerateV2: CompletionProfile = {
           },
         ],
         generationConfig: {
-          thinkingConfig: { thinkingBudget: request.thinking === "budget" ? 1024 : 0 },
+          thinkingConfig: {
+            thinkingBudget: request.thinking === "budget" ? request.thinkingBudgetTokens : 0,
+          },
           ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
           ...(request.maxOutputTokens === undefined
             ? {}

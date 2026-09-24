@@ -49,6 +49,7 @@ for (const profile of streamingProfiles) {
       );
       const result = await port.complete(
         PreparedModelSchema.parse({
+          thinkingBudgetTokens: profile.capabilities.thinking.mode === "budget" ? 1024 : null,
           provider: profile.id,
           model: "m",
           stream: true,
@@ -106,6 +107,7 @@ for (const profile of streamingProfiles) {
       await expect(
         port.complete(
           PreparedModelSchema.parse({
+            maxOutputTokens: 16384,
             provider: profile.id,
             model: "m",
             stream: true,
@@ -122,6 +124,7 @@ for (const profile of streamingProfiles) {
       streamingProfiles.indexOf(profile)
     ]!;
     const request = CompletionRequestSchema.parse({
+      maxOutputTokens: 16384,
       model: "m",
       messages: [],
       tools: [],
@@ -269,6 +272,7 @@ test("transport rejects unsupported streaming before fetch", async () => {
   await expect(
     port.complete(
       PreparedModelSchema.parse({
+        maxOutputTokens: 16384,
         provider: openaiChat.id,
         model: "m",
         stream: true,

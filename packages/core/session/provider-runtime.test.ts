@@ -47,7 +47,13 @@ function options(profile = openaiChat, calls: unknown[] = []): SessionOptions {
         ["a", { model: "default-model", tools: ["echo"], successors: ["b"] }],
         ["b", { model: "b-model", tools: [], successors: [] }],
       ]),
-      policy: { provider: profile.id, stream: false, thinking: "off" },
+      policy: {
+        maxOutputTokens: 16384,
+        provider: profile.id,
+        stream: false,
+        thinking: "off",
+        thinkingBudgetTokens: null,
+      },
     },
     bindings: {
       id: deterministicIds(),

@@ -10,13 +10,14 @@ import { assembleStream } from "./stream.ts";
 import {
   parseRequest,
   ProviderSettingsSchema,
-  validateThinking,
+  validateProviderSettings,
   type CompletionProfile,
   type DecodedCompletion,
   type HttpRequest,
   type HttpResponse,
   type StreamAssembler,
   type StreamDeltaSink,
+  type validateThinking,
 } from "./types.ts";
 
 export type ProviderDiagnosticContext = Readonly<{
@@ -278,6 +279,7 @@ export function canonicalRequest(prepared: PreparedModel) {
       tools: (prepared.tools ?? []).map((tool) => tool.function),
       temperature: prepared.temperature,
       thinking: prepared.thinking,
+      thinkingBudgetTokens: prepared.thinkingBudgetTokens,
       stream: prepared.stream,
       maxOutputTokens: prepared.maxOutputTokens,
       successors: prepared.successors ?? [],
@@ -366,6 +368,8 @@ export function bindProviders(bindings: ProviderBindings) {
       model: string | undefined,
       thinking: Parameters<typeof validateThinking>[0],
       stream?: boolean,
+      thinkingBudgetTokens?: number | null,
+      maxOutputTokens?: number,
     ) => {
       const binding = bound.get(provider);
       if (!binding)
@@ -376,7 +380,10 @@ export function bindProviders(bindings: ProviderBindings) {
           `Unknown model ${model ?? "(missing)"} for ${provider}; supported: ${[...binding.models.keys()].join(", ")}`,
         );
       const profile = selected?.profile ?? binding.profile;
-      validateThinking(thinking, profile.capabilities.thinking);
+      validateProviderSettings(
+        { thinking, thinkingBudgetTokens, maxOutputTokens },
+        profile.capabilities,
+      );
       if (stream && (!profile.capabilities.stream || !profile.stream))
         throw new Error(
           `Unsupported streaming for model ${model ?? "(default)"}; use stream:false`,
@@ -414,6 +421,7 @@ export function bindProviders(bindings: ProviderBindings) {
         model: request.model,
         stream: request.stream ?? false,
         thinking: request.thinking,
+        thinkingBudgetTokens: request.thinkingBudgetTokens,
         maxOutputTokens: request.maxOutputTokens,
         messageCount: request.messages.length,
         toolCount: request.tools?.length ?? 0,
@@ -426,6 +434,7 @@ export function bindProviders(bindings: ProviderBindings) {
         ProviderSettingsSchema.parse({
           provider: request.provider,
           thinking: request.thinking,
+          thinkingBudgetTokens: request.thinkingBudgetTokens,
           stream: request.stream,
           maxOutputTokens: request.maxOutputTokens,
         });
@@ -441,7 +450,7 @@ export function bindProviders(bindings: ProviderBindings) {
           profile: profile.id,
           wireModel: selected?.wireModel ?? request.model,
         });
-        validateThinking(request.thinking, profile.capabilities.thinking);
+        validateProviderSettings(request, profile.capabilities);
         if (request.stream && (!profile.capabilities.stream || !profile.stream))
           throw new Error("Unsupported streaming setting");
         const input = canonicalRequest(request);

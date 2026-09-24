@@ -57,6 +57,7 @@ test("continuation representation boundary, operation-only resolution, and exclu
     expect(entry.payload !== undefined).toBe(length <= 65536);
     expect(entry.payloadBlob !== undefined).toBe(length > 65536);
     const request = PreparedModelSchema.parse({
+      maxOutputTokens: 16384,
       model: "test",
       provider: googleGenerateV2.id,
       messages: [{ role: "assistant", content: "answer", owner }],
@@ -108,6 +109,8 @@ function setup(profile: CompletionProfile) {
       agents: new Map([["a", { model: "fixture-model", tools: ["echo"], successors: [] }]]),
       steps: 4,
       policy: {
+        thinkingBudgetTokens: profile === googleGenerateV2 ? 1024 : null,
+        maxOutputTokens: 16384,
         provider: profile.id,
         thinking: profile === googleGenerateV2 ? "budget" : "high",
       },

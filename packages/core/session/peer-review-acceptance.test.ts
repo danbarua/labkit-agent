@@ -153,6 +153,7 @@ for (const mode of [
                 counts.tool++;
                 const result = await extractor.complete(
                   CompletionPortRequestSchema.parse({
+                    maxOutputTokens: 16384,
                     provider: "anthropic",
                     model: "extractor",
                     messages: [{ role: "user", content: text }],

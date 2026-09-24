@@ -19,6 +19,7 @@ const ref = BlobRefSchema.parse({
   name: "DESIGN.md",
 });
 const input = CompletionRequestSchema.parse({
+  maxOutputTokens: 16384,
   model: "fixture-model",
   messages: [
     {

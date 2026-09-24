@@ -88,3 +88,39 @@ timeout identifies its 20 ms limit, malformed extraction retains the JSON parser
 reconciliation retains EDQUOT and the original volume-quota explanation. Successful peer-review
 configuration/repeat execution produced no warnings or errors. A killed process has no fabricated
 failure log or successful terminal record; its last retained operation remains visibly incomplete.
+
+## Correction: caller-controlled thinking and output limits
+
+The earlier acceptance missed a product defect: renaming a hardcoded 1024-token budget did not
+make thinking configurable. The runtime no longer supplies that budget, and Anthropic no longer
+gets a hidden 1024-token output cap. Manual thinking requires `thinkingBudgetTokens` and a larger
+`maxOutputTokens`; native adaptive thinking accepts no manual budget. Model bindings can declare
+upper limits. These checks reject invalid combinations before HTTP rather than silently adjusting
+them. This validates declared capabilities, not an exhaustive catalogue of remote model limits.
+
+ACP exposes named numeric budgets and a separate output limit; the console exposes numeric inputs.
+Their initial output limit is an explicit 16384-token application preset, not a runtime default.
+The console uses provider aliases rather than offering adapter generations as provider choices.
+Applications must choose limits for their task: a valid budget does not guarantee enough room for
+an answer. Output exhaustion still produces a failed completion with the provider's stop reason.
+
+`providers/token-settings.test.ts` verifies exact 4096-, 8192-, and 16384-token encoding, invalid
+settings rejected before dispatch, model-specific declared limits, captured in-flight settings,
+committed reconfiguration, and restoration without requests. Its persisted capture manifests,
+request bodies, and `diagnostics.jsonl` are under `.session-artifacts/token-settings/<run-id>`.
+The successful configuration and request sequence has no WARNING/ERROR records. Existing
+provider stop and streaming tests continue to verify exhaustion and incomplete-stream failures.
+
+Reviewed fixture differences add explicit budgets to configuration snapshots and explicit output
+limits to Google requests (retained on a subsequent provider switch). Clearing a manual budget on
+mode changes is represented by null. Conversation outcomes and dispatch counts are unchanged;
+no baseline change conceals a new outcome. Existing 1024-token test vectors now request that
+value explicitly and do not establish an application default.
+
+Verification for this correction: 543 core/ACP tests passed with DEBUG logging, type checking and
+the web build passed, and both fixture entry points passed (42 and 25 scenarios). Scoped formatting
+and diff checks passed. Biome's remaining finding in the changed-file scan is the pre-existing
+console auto-scroll effect dependency rule; changed core/ACP implementation checks pass. No live
+provider credits were used. The inspected token-settings run was
+`4203fc52-6d9e-4dbf-92bc-8aa29a6bb6b2`: retained requests show 8192/32768 followed by 4096/16384,
+and its persisted diagnostics contain no warnings or errors.

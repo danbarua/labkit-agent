@@ -21,7 +21,13 @@ const session = await createSession({
     agent: "researcher",
     agents: new Map([["researcher", { model: "reviewer", tools: [], successors: [] }]]),
     steps: 8,
-    policy: { provider: "anthropic", model: "reviewer", thinking: "adaptive", stream: true },
+    policy: {
+      provider: "anthropic",
+      model: "reviewer",
+      thinking: "adaptive",
+      maxOutputTokens: 32768,
+      stream: true,
+    },
   },
   bindings: {
     providers: new Map([
@@ -54,12 +60,12 @@ are never journal data. Restore validates persisted selections before external w
 
 ## Choose settings without silently changing their meaning
 
-| Setting           | What the binding must promise                              | Why rejection matters                                                    |
-| ----------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Adaptive thinking | Native adaptive capability.                                | A fixed token budget is a different user choice.                         |
-| Budget thinking   | Declared manual token budget.                              | The current profiles use 1024 tokens; arbitrary budgets are not implied. |
-| Streaming         | A supported dialect and complete-response assembler.       | Visible text alone cannot establish a valid answer or tool call.         |
-| Media             | Support for the supplied media in the bound model/profile. | A stored attachment ref does not mean its contents reached the model.    |
+| Setting           | What the binding must promise                              | Why rejection matters                                                 |
+| ----------------- | ---------------------------------------------------------- | --------------------------------------------------------------------- |
+| Adaptive thinking | Native adaptive capability.                                | A fixed token budget is a different user choice.                      |
+| Budget thinking   | Caller-selected token budget.                              | Send the requested budget exactly; never substitute the minimum.      |
+| Streaming         | A supported dialect and complete-response assembler.       | Visible text alone cannot establish a valid answer or tool call.      |
+| Media             | Support for the supplied media in the bound model/profile. | A stored attachment ref does not mean its contents reached the model. |
 
 Switching model and incompatible settings should be one policy patch. Unsupported combinations
 fail before HTTP, so the caller gets a configuration error instead of paying for a request the
@@ -70,19 +76,37 @@ not prove that a remote model deployment accepts them.
 
 All existing encoder/decoder implementations remain available to environment authors:
 
-| Profile                   | Thinking            | Streaming | Continuations            |
-| ------------------------- | ------------------- | --------- | ------------------------ |
-| openai-chat@1 / @2        | effort              | @2        | none                     |
-| openai-responses@1        | off                 | no        | none                     |
-| openai-responses@2 / @3   | effort              | @3        | encrypted reasoning      |
-| anthropic-messages@1      | off                 | no        | none                     |
-| anthropic-messages@2 / @3 | budget, 1024 tokens | @3        | signed/redacted thinking |
-| anthropic-messages@4      | native adaptive     | yes       | signed/redacted thinking |
-| google-generate@1         | off                 | no        | none                     |
-| google-generate@2 / @3    | budget, 1024 tokens | @3        | signed model parts       |
+| Profile                   | Thinking        | Streaming | Continuations            |
+| ------------------------- | --------------- | --------- | ------------------------ |
+| openai-chat@1 / @2        | effort          | @2        | none                     |
+| openai-responses@1        | off             | no        | none                     |
+| openai-responses@2 / @3   | effort          | @3        | encrypted reasoning      |
+| anthropic-messages@1      | off             | no        | none                     |
+| anthropic-messages@2 / @3 | explicit budget | @3        | signed/redacted thinking |
+| anthropic-messages@4      | native adaptive | yes       | signed/redacted thinking |
+| google-generate@1         | off             | no        | none                     |
+| google-generate@2 / @3    | explicit budget | @3        | signed model parts       |
 
-Anthropic manual thinking requires maxOutputTokens > 1024. Native adaptive thinking sends no manual
-budget; Anthropic's default max_tokens is 1024 when unspecified. Responses always sends store:false
+For manual thinking, set `thinking: "budget"`, `thinkingBudgetTokens`, and `maxOutputTokens`.
+The output limit must exceed the thinking budget so an answer has room. Anthropic's manual minimum
+is 1024; that is a validation floor, not a default or a useful workload recommendation. The encoder
+sends the caller's number unchanged. Google manual budgets likewise use the caller's number.
+
+All Anthropic bindings require an explicit `maxOutputTokens`, including when thinking is off or
+adaptive. There is no hidden 1024-token output cap. Adaptive sends no manual budget. A selected
+model's declared budget/output maxima are validated before admission and again before HTTP. The
+application must declare model-specific constraints; the adapter cannot infer them from a name.
+Clear a manual budget with `thinkingBudgetTokens: null` when selecting another thinking mode.
+
+For example, `{ thinking: "budget", thinkingBudgetTokens: 8192, maxOutputTokens: 32768 }` requests
+an 8192-token thinking budget inside a 32768-token total output ceiling. This is an explicit example,
+not a claim that those values fit every task. Output exhaustion still fails with the provider stop
+reason; the runtime does not accept a truncated answer or retry it automatically.
+
+Provider references: [Anthropic extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking)
+and [Gemini thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking).
+
+Responses always sends store:false
 and the complete projected input, never previous_response_id or a server conversation reference.
 `handoff_to` is reserved for agent routing; do not register a tool with that name. Mixed handoff/tool
 output is rejected because a single completion cannot both transfer control and start a local batch.

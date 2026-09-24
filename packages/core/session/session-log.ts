@@ -206,6 +206,7 @@ export function wireEvent(event: ConversationEvent): WireEvent {
       temperature,
       provider,
       thinking,
+      thinkingBudgetTokens,
       stream,
       maxOutputTokens,
       successors,
@@ -223,7 +224,9 @@ export function wireEvent(event: ConversationEvent): WireEvent {
             tools,
             temperature,
             ...(continuations ? { continuations } : {}),
-            ...(provider ? { provider, thinking, stream, maxOutputTokens, successors } : {}),
+            ...(provider
+              ? { provider, thinking, thinkingBudgetTokens, stream, maxOutputTokens, successors }
+              : {}),
           },
         },
       },
@@ -279,6 +282,7 @@ function domainEvent(
         ? {
             provider: state.policy.provider,
             thinking: state.policy.thinking,
+            thinkingBudgetTokens: state.policy.thinkingBudgetTokens,
             stream: state.policy.stream,
             maxOutputTokens: state.policy.maxOutputTokens,
             successors: agent.successors ?? state.configuration.agents.map(([id]) => id),
@@ -292,6 +296,7 @@ function domainEvent(
             ? {
                 provider: captured.provider,
                 thinking: captured.thinking,
+                thinkingBudgetTokens: captured.thinkingBudgetTokens,
                 stream: captured.stream,
                 maxOutputTokens: captured.maxOutputTokens,
                 successors: captured.successors,

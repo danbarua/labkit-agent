@@ -89,6 +89,8 @@ export function Console() {
   const [providerId, setProviderId] = useState("");
   const [model, setModel] = useState("");
   const [thinking, setThinking] = useState("off");
+  const [thinkingBudgetTokens, setThinkingBudgetTokens] = useState("4096");
+  const [maxOutputTokens, setMaxOutputTokens] = useState("16384");
   const [stream, setStream] = useState(false);
   const [completionTimeoutMs, setCompletionTimeoutMs] = useState("");
   const [toolTimeoutMs, setToolTimeoutMs] = useState("");
@@ -207,6 +209,8 @@ export function Console() {
         providerId: providerId || undefined,
         model: model || undefined,
         thinking,
+        thinkingBudgetTokens: thinking === "budget" ? Number(thinkingBudgetTokens) : null,
+        maxOutputTokens: Number(maxOutputTokens),
         stream: stream && provider?.stream,
       }),
     });
@@ -278,6 +282,8 @@ export function Console() {
     setNotice("");
     const patch: Record<string, unknown> = {
       thinking,
+      thinkingBudgetTokens: thinking === "budget" ? Number(thinkingBudgetTokens) : null,
+      maxOutputTokens: Number(maxOutputTokens),
       stream: stream && Boolean(provider?.stream),
     };
     if (providerId) patch.provider = providerId;
@@ -384,6 +390,10 @@ export function Console() {
             providerId={providerId}
             model={model}
             thinking={thinking}
+            thinkingBudgetTokens={thinkingBudgetTokens}
+            maxOutputTokens={maxOutputTokens}
+            onThinkingBudgetTokens={setThinkingBudgetTokens}
+            onMaxOutputTokens={setMaxOutputTokens}
             stream={stream}
             onProvider={setProviderId}
             onModel={setModel}
@@ -506,8 +516,12 @@ export function Console() {
               <p className="font-mono text-xs text-muted-foreground">
                 {view.resolved?.profile ?? view.policy.provider ?? "fixture"} ·{" "}
                 {view.resolved?.wireModel ?? view.policy.model ?? "fixture"} ·{" "}
-                {view.policy.thinking ?? "off"} · stream {view.policy.stream ? "on" : "off"} ·
-                permissions {view.policy.permissions ?? "off"}
+                {view.policy.thinking ?? "off"}
+                {view.policy.thinking === "budget"
+                  ? ` (${view.policy.thinkingBudgetTokens} tokens)`
+                  : ""}{" "}
+                · output cap {view.policy.maxOutputTokens ?? "provider default"} · stream{" "}
+                {view.policy.stream ? "on" : "off"} · permissions {view.policy.permissions ?? "off"}
                 {view.policy.completionTimeoutMs
                   ? ` · completion ${view.policy.completionTimeoutMs} ms`
                   : ""}
@@ -523,6 +537,10 @@ export function Console() {
                 providerId={providerId || view.policy.provider || ""}
                 model={model || view.policy.model || ""}
                 thinking={thinking}
+                thinkingBudgetTokens={thinkingBudgetTokens}
+                maxOutputTokens={maxOutputTokens}
+                onThinkingBudgetTokens={setThinkingBudgetTokens}
+                onMaxOutputTokens={setMaxOutputTokens}
                 stream={stream}
                 onProvider={setProviderId}
                 onModel={setModel}
@@ -647,6 +665,10 @@ function PolicyFields({
   providerId,
   model,
   thinking,
+  thinkingBudgetTokens,
+  maxOutputTokens,
+  onThinkingBudgetTokens,
+  onMaxOutputTokens,
   stream,
   onProvider,
   onModel,
@@ -657,6 +679,10 @@ function PolicyFields({
   providerId: string;
   model: string;
   thinking: string;
+  thinkingBudgetTokens: string;
+  maxOutputTokens: string;
+  onThinkingBudgetTokens: (value: string) => void;
+  onMaxOutputTokens: (value: string) => void;
   stream: boolean;
   onProvider: (value: string) => void;
   onModel: (value: string) => void;
@@ -707,6 +733,32 @@ function PolicyFields({
             </option>
           ))}
         </select>
+      </label>
+      {thinking === "budget" ? (
+        <label className="grid gap-1 text-sm">
+          Thinking budget tokens
+          <input
+            className="h-9 rounded-md border border-border bg-paper px-2"
+            type="number"
+            min="1"
+            step="1"
+            required
+            value={thinkingBudgetTokens}
+            onChange={(event) => onThinkingBudgetTokens(event.target.value)}
+          />
+        </label>
+      ) : null}
+      <label className="grid gap-1 text-sm">
+        Maximum output tokens (thinking and answer)
+        <input
+          className="h-9 rounded-md border border-border bg-paper px-2"
+          type="number"
+          min="1"
+          step="1"
+          required
+          value={maxOutputTokens}
+          onChange={(event) => onMaxOutputTokens(event.target.value)}
+        />
       </label>
       <label className="flex items-center gap-2 text-sm">
         <input

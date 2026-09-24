@@ -12,7 +12,7 @@ import {
 import {
   matchingContinuations,
   parseRequest,
-  validateThinking,
+  validateProviderSettings,
   type CompletionProfile,
 } from "./types.ts";
 
@@ -54,7 +54,7 @@ export const openaiResponsesV2: CompletionProfile = {
   },
   encode(raw, blobs) {
     const request = parseRequest(raw, "openai-responses@2");
-    validateThinking(request.thinking, this.capabilities.thinking);
+    validateProviderSettings(request, this.capabilities);
     const input: unknown[] = [];
     for (const message of request.messages) {
       const text = messageText(message, blobs);

@@ -14,6 +14,7 @@ import {
 const response = (body: unknown) => ({ status: 200, headers: new Headers(), body });
 
 const request = CompletionRequestSchema.parse({
+  maxOutputTokens: 16384,
   model: "fixture-model",
   messages: [{ role: "user", text: "Go" }],
   tools: [],
@@ -41,8 +42,10 @@ const reasoning = (round: number) => ({
 });
 
 test("Google v2 exact budget mapping, parallel calls, and two-owner signed parts round-trip", () => {
-  expect(googleGenerateV2.capabilities.thinking).toEqual({ mode: "budget", maxTokens: 1024 });
-  expect(googleGenerateV2.encode({ ...request, thinking: "budget" })).toEqual({
+  expect(googleGenerateV2.capabilities.thinking).toEqual({ mode: "budget", minTokens: 1 });
+  expect(
+    googleGenerateV2.encode({ thinkingBudgetTokens: 1024, ...request, thinking: "budget" }),
+  ).toEqual({
     path: "/models/fixture-model:generateContent",
     method: "POST",
     headers: {},
@@ -50,7 +53,7 @@ test("Google v2 exact budget mapping, parallel calls, and two-owner signed parts
       contents: [{ role: "user", parts: [{ text: "Go" }] }],
       systemInstruction: { parts: [] },
       tools: [{ functionDeclarations: [] }],
-      generationConfig: { thinkingConfig: { thinkingBudget: 1024 } },
+      generationConfig: { thinkingConfig: { thinkingBudget: 1024 }, maxOutputTokens: 16384 },
     },
   });
   for (const thinking of [undefined, "off"] as const)
@@ -63,6 +66,7 @@ test("Google v2 exact budget mapping, parallel calls, and two-owner signed parts
     const decoded = googleGenerateV2.decode(response(googleBody(parts)), {
       ...request,
       thinking: "budget",
+      thinkingBudgetTokens: 1024,
     });
     expect(decoded).toEqual({
       completion: {
@@ -92,6 +96,7 @@ test("Google v2 exact budget mapping, parallel calls, and two-owner signed parts
     CompletionRequestSchema.parse({
       ...request,
       thinking: "budget",
+      thinkingBudgetTokens: 1024,
       messages,
       continuations: envelopes.toReversed(),
     }),
@@ -119,11 +124,18 @@ test("Google v2 exact budget mapping, parallel calls, and two-owner signed parts
 test("Google v2 rejects stripped signatures with thinking on, including through transport; v1 stays strict", async () => {
   const parts = signedParts(0).map(({ thoughtSignature, ...part }) => part);
   expect(() =>
-    googleGenerateV2.decode(response(googleBody(parts)), { ...request, thinking: "budget" }),
+    googleGenerateV2.decode(response(googleBody(parts)), {
+      thinkingBudgetTokens: 1024,
+      ...request,
+      thinking: "budget",
+    }),
   ).toThrow("thoughtSignature");
   expect(
-    googleGenerateV2.decode(response(googleBody(parts)), { ...request, thinking: "off" })
-      .completion,
+    googleGenerateV2.decode(response(googleBody(parts)), {
+      thinkingBudgetTokens: null,
+      ...request,
+      thinking: "off",
+    }).completion,
   ).toMatchObject({ kind: "tools" });
   for (const parts of [
     [{ text: "private", thought: true }],
@@ -148,8 +160,10 @@ test("Google v2 rejects stripped signatures with thinking on, including through 
   await expect(
     port.complete(
       PreparedModelSchema.parse({
+        maxOutputTokens: 16384,
         provider: googleGenerateV2.id,
         thinking: "budget",
+        thinkingBudgetTokens: 1024,
         model: request.model,
         messages: [],
       }),
@@ -167,6 +181,7 @@ test("Responses v2 exact stateless body and effort mapping", () => {
       model: request.model,
       input: [{ role: "user", content: "Go" }],
       store: false,
+      max_output_tokens: 16384,
       stream: false,
       tools: [],
       include: ["reasoning.encrypted_content"],
@@ -176,6 +191,7 @@ test("Responses v2 exact stateless body and effort mapping", () => {
     const body = openaiResponsesV2.encode({ ...request, thinking }).body;
     expect(body).toMatchObject({
       store: false,
+      max_output_tokens: 16384,
       reasoning: { effort: thinking === "off" ? "none" : thinking },
     });
     expect(body).not.toHaveProperty("previous_response_id");

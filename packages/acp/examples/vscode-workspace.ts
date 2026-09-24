@@ -1,3 +1,4 @@
+import type { PolicyPatch } from "@labkit-agent/core";
 import {
   anthropicMessagesV3,
   anthropicMessagesV4,
@@ -44,6 +45,12 @@ export function workspaceAgent(
         .filter(Boolean),
     ]),
   ];
+  const maxOutputTokens = Number(env.LABKIT_ACP_MAX_OUTPUT_TOKENS ?? 16384);
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0)
+    throw new Error("LABKIT_ACP_MAX_OUTPUT_TOKENS must be a positive integer");
+  const outputLimits = [...new Set([4096, 8192, 16384, 32768, maxOutputTokens])].sort(
+    (a, b) => a - b,
+  );
   const capability = profile.capabilities.thinking;
   const thinking =
     capability.mode === "effort"
@@ -140,18 +147,34 @@ export function workspaceAgent(
           id: "thinking",
           name: "Thinking",
           category: "thought_level",
-          current: (policy) => policy.thinking ?? "off",
-          options: thinking.map((value) => ({
-            value,
-            name:
-              value === "off"
-                ? "Off"
-                : value === "adaptive"
-                  ? "Adaptive"
-                  : value === "budget"
-                    ? "Budget (1024 tokens)"
-                    : value,
-            patch: { thinking: value },
+          current: (policy) =>
+            policy.thinking === "budget"
+              ? `budget:${policy.thinkingBudgetTokens}`
+              : (policy.thinking ?? "off"),
+          options: thinking.flatMap<{ value: string; name: string; patch: PolicyPatch }>((value) =>
+            value === "budget"
+              ? [4096, 8192, 16384].map((tokens) => ({
+                  value: `budget:${tokens}`,
+                  name: `Manual thinking: ${tokens.toLocaleString("en-US")} tokens (output limit must be higher)`,
+                  patch: { thinking: "budget" as const, thinkingBudgetTokens: tokens },
+                }))
+              : [
+                  {
+                    value,
+                    name: value === "off" ? "Off" : value === "adaptive" ? "Adaptive" : value,
+                    patch: { thinking: value, thinkingBudgetTokens: null },
+                  },
+                ],
+          ),
+        },
+        {
+          id: "max_output_tokens",
+          name: "Maximum output tokens (thinking and answer)",
+          current: (policy) => String(policy.maxOutputTokens),
+          options: outputLimits.map((tokens) => ({
+            value: String(tokens),
+            name: tokens.toLocaleString("en-US"),
+            patch: { maxOutputTokens: tokens },
           })),
         },
       ];
@@ -204,7 +227,7 @@ export function workspaceAgent(
             permissions: "ask",
             stream: true,
             thinking: "off",
-            maxOutputTokens: 4096,
+            maxOutputTokens,
           },
         },
         bindings: {
