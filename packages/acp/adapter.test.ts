@@ -143,12 +143,12 @@ test("JSON-RPC initialization, framing, validation and baseline text/resource-li
     sessionId: id,
     prompt: [
       { type: "text", text: "Read 🌍" },
-      { type: "resource_link", name: "design", uri: "file:///tmp/DESIGN.md" },
+      { type: "resource_link", name: "design", uri: "https://example.invalid/DESIGN.md" },
     ],
   });
   expect(result.result).toEqual({ stopReason: "end_turn" });
   expect(seen).toHaveLength(1);
-  expect(seen[0]).toContain("file:///tmp/DESIGN.md");
+  expect(seen[0]).toContain("https://example.invalid/DESIGN.md");
   expect(h.updates().map((m) => m.update)).toEqual([
     expect.objectContaining({
       sessionUpdate: "agent_message_chunk",
@@ -662,4 +662,182 @@ test("output failure closes owned runtimes and cancels pending provider work", a
   await h.closed;
   expect(signal?.aborted).toBe(true);
   pending.resolve(answer);
+});
+
+test("local resource links become session blob refs; outside paths reject before admission; remote links never fetch", async () => {
+  const { mkdtemp, mkdir, writeFile, symlink, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const root = await mkdtemp(join(tmpdir(), "labkit-acp-attachments-"));
+  const cwd = join(root, "workspace");
+  await mkdir(cwd);
+  const body = "# Attachment-only sentinel 57193";
+  await writeFile(join(cwd, "DESIGN.md"), body);
+  await writeFile(join(root, "outside.md"), "outside sentinel");
+  await symlink(join(root, "outside.md"), join(cwd, "escape.md"));
+  let completions = 0;
+  const { options, persistence } = setup({
+    complete: () => {
+      completions++;
+      return answer;
+    },
+  });
+  const { openaiChat } = await import("@labkit-agent/core/providers");
+  const original = options.sessionOptions;
+  const h = harness({
+    ...options,
+    sessionOptions: async (context) => {
+      const base = await original(context);
+      return {
+        ...base,
+        configuration: { ...base.configuration, policy: { provider: openaiChat.id } },
+        bindings: {
+          ...base.bindings,
+          complete: undefined,
+          providers: new Map([
+            [
+              openaiChat.id,
+              {
+                profile: openaiChat,
+                transport: {
+                  baseUrl: "https://provider.invalid/v1",
+                  fetch: (async (url, init) => {
+                    expect(String(url)).toBe("https://provider.invalid/v1/chat/completions");
+                    completions++;
+                    if (completions <= 2) expect(String(init?.body)).toContain(body);
+                    return Response.json({ choices: [{ message: { content: "Done" } }] });
+                  }) as typeof fetch,
+                },
+              },
+            ],
+          ]),
+        },
+      };
+    },
+  });
+  try {
+    await h.initialize();
+    const id = (await h.request("session/new", { cwd, mcpServers: [] })).result.sessionId;
+    for (const uri of [
+      pathToFileURL(join(root, "outside.md")).href,
+      "../outside.md",
+      pathToFileURL(join(cwd, "escape.md")).href,
+    ]) {
+      expect(
+        (
+          await h.request("session/prompt", {
+            sessionId: id,
+            prompt: [{ type: "resource_link", name: "invalid", uri }],
+          })
+        ).error?.code,
+      ).toBe(-32602);
+    }
+    expect(completions).toBe(0);
+    for (const uri of [pathToFileURL(join(cwd, "DESIGN.md")).href, "DESIGN.md"]) {
+      expect(
+        (
+          await h.request("session/prompt", {
+            sessionId: id,
+            prompt: [
+              { type: "text", text: "Review" },
+              { type: "resource_link", name: "DESIGN.md", uri },
+            ],
+          })
+        ).result.stopReason,
+      ).toBe("end_turn");
+    }
+    const { SessionIdSchema } = await import("@labkit-agent/core/types");
+    const sessionId = SessionIdSchema.parse(id);
+    const loaded = await persistence.load(sessionId, new AbortController().signal);
+    if (loaded.kind !== "loaded") throw new Error("Missing journal");
+    const records = loaded.batches.flatMap((batch) => batch.records.map((raw) => JSON.parse(raw)));
+    const inputs = records.filter((r) => r.body.kind === "event" && r.body.event.type === "user");
+    expect(inputs).toHaveLength(2);
+    const ref = inputs[0].body.event.attachments[0];
+    expect(ref).toMatchObject({
+      media: "text/markdown",
+      name: "DESIGN.md",
+      bytes: Buffer.byteLength(body),
+    });
+    const blob = await persistence.getBlob(sessionId, ref.id, new AbortController().signal);
+    expect("bytes" in blob && new TextDecoder().decode(blob.bytes)).toBe(body);
+    expect(JSON.stringify(loaded.batches)).not.toContain(body);
+    // If a URL were fetched this deliberately invalid host could not succeed.
+    expect(
+      (
+        await h.request("session/prompt", {
+          sessionId: id,
+          prompt: [
+            {
+              type: "resource_link",
+              name: "remote",
+              uri: "https://must-not-fetch.invalid/README.md",
+            },
+          ],
+        })
+      ).result.stopReason,
+    ).toBe("end_turn");
+    expect(completions).toBe(3);
+  } finally {
+    await h.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cancel during attachment storage never admits a user event or starts completion", async () => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const cwd = await mkdtemp(join(tmpdir(), "labkit-acp-cancel-attachment-"));
+  await writeFile(join(cwd, "file.txt"), "body");
+  let entered = false;
+  let storageSignal: AbortSignal | undefined;
+  let completions = 0;
+  const pending = deferred<void>();
+  const { options, persistence } = setup({
+    complete: () => {
+      completions++;
+      return answer;
+    },
+  });
+  const original = options.sessionOptions;
+  const h = harness({
+    ...options,
+    sessionOptions: async (context) => ({
+      ...(await original(context)),
+      persistence: {
+        ...persistence,
+        putBlob: async (id, bytes, meta, signal) => {
+          entered = true;
+          storageSignal = signal;
+          await pending.promise;
+          return persistence.putBlob(id, bytes, meta, signal);
+        },
+      },
+    }),
+  });
+  try {
+    await h.initialize();
+    const id = (await h.request("session/new", { cwd, mcpServers: [] })).result.sessionId;
+    const promptId = await h.start("session/prompt", {
+      sessionId: id,
+      prompt: [{ type: "resource_link", name: "file", uri: "file.txt" }],
+    });
+    await until(() => entered);
+    await h.send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: id } });
+    await until(() => !!storageSignal?.aborted);
+    pending.resolve();
+    expect((await h.response(promptId)).result.stopReason).toBe("cancelled");
+    expect(completions).toBe(0);
+    const { SessionIdSchema } = await import("@labkit-agent/core/types");
+    const loaded = await persistence.load(SessionIdSchema.parse(id), new AbortController().signal);
+    expect(
+      loaded.kind === "loaded" && loaded.batches.flatMap((batch) => batch.records).length,
+    ).toBe(1);
+  } finally {
+    pending.resolve();
+    await h.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
 });

@@ -16,6 +16,7 @@
   },
   "files": [
     "*.ts",
+    "examples",
     "!*.test.ts",
     "!test-support.ts"
   ],

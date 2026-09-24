@@ -6,7 +6,6 @@ import {
   RequestError,
   type AgentConnection,
   type AgentContext,
-  type ContentBlock,
   type NewSessionRequest,
   type SessionUpdate,
   type Stream,
@@ -16,11 +15,14 @@ import {
   restoreSession,
   type BoundSessionOptions,
   type JournalState,
+  type SessionPersistence,
   type SessionRuntime,
   type SessionState,
 } from "@labkit-agent/core";
 import type { HostToolNotification } from "@labkit-agent/core/host";
 import type { AgentMessage } from "@labkit-agent/core/types";
+
+import { promptInput } from "./prompt-input.ts";
 
 export type SessionOptionsContext = Readonly<{
   cwd: string;
@@ -38,6 +40,8 @@ export type AcpOptions = Readonly<{
 }>;
 type Session = {
   runtime: SessionRuntime;
+  persistence: SessionPersistence;
+  promptController?: AbortController;
   cwd: string;
   busy: boolean;
   acceptingUpdates: boolean;
@@ -45,18 +49,6 @@ type Session = {
   streamed: Map<string, string>;
 };
 
-function promptText(blocks: ContentBlock[]): string {
-  const text = blocks
-    .map((block) => {
-      if (block.type === "text") return block.text;
-      if (block.type === "resource_link")
-        return `[Resource: ${block.name}] ${block.uri}${block.description ? `\n${block.description}` : ""}`;
-      throw RequestError.invalidParams(undefined, `Unsupported prompt content: ${block.type}`);
-    })
-    .join("\n");
-  if (!text.trim()) throw RequestError.invalidParams(undefined, "Prompt must not be empty");
-  return text;
-}
 function toolUpdate(event: HostToolNotification): SessionUpdate {
   if (event.sessionUpdate === "tool_call")
     return {
@@ -298,6 +290,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       if (closing) throw new Error("Connection closed");
       const entry = {
         cwd: params.cwd,
+        persistence: original.persistence,
         busy: false,
         acceptingUpdates: false,
         revision: 0,
@@ -421,17 +414,29 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     .onRequest("session/prompt", async ({ params, client, signal }) => {
       const entry = lookup(params.sessionId);
       if (entry.busy) throw new RequestError(-32000, "Session already has an active prompt");
-      const input = promptText(params.prompt);
       entry.busy = true;
+      const controller = new AbortController();
+      entry.promptController = controller;
+      const promptSignal = AbortSignal.any([signal, controller.signal, connection.signal]);
+      let admitted = false;
       let aborted = false;
       const abort = () => {
         aborted = true;
-        void entry.runtime.fire({ type: "abort" });
+        if (admitted) void entry.runtime.fire({ type: "abort" });
       };
-      signal.addEventListener("abort", abort, { once: true });
+      promptSignal.addEventListener("abort", abort, { once: true });
       try {
+        const input = await promptInput(
+          params.prompt,
+          entry.cwd,
+          entry.persistence,
+          entry.runtime.snapshot.durable.conversation.sessionId,
+          promptSignal,
+        );
+        promptSignal.throwIfAborted();
         const turn = entry.runtime.input(input);
-        if (signal.aborted) abort();
+        admitted = true;
+        if (promptSignal.aborted) abort();
         const receipt = await turn.accepted;
         if (receipt.kind !== "accepted")
           throw new RequestError(-32000, "Prompt admission failed", receipt);
@@ -465,20 +470,25 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
                 ? "max_turn_requests"
                 : "end_turn",
         };
+      } catch (error) {
+        if (promptSignal.aborted) return { stopReason: "cancelled" };
+        throw error;
       } finally {
-        signal.removeEventListener("abort", abort);
+        promptSignal.removeEventListener("abort", abort);
+        entry.promptController = undefined;
         entry.busy = false;
         entry.streamed.clear();
       }
     })
     .onNotification("session/cancel", async ({ params }) => {
       const entry = lookup(params.sessionId);
-      if (entry.busy) await entry.runtime.fire({ type: "abort" });
+      entry.promptController?.abort();
     })
     .onRequest("session/close", async ({ params }) => {
       const entry = lookup(params.sessionId);
       // Close is terminal for this runtime, even if the client never answers permission requests.
       entry.acceptingUpdates = false;
+      entry.promptController?.abort();
       await entry.runtime.close();
       sessions.delete(params.sessionId);
       await writes;

@@ -4,6 +4,29 @@
 `@agentclientprotocol/sdk` 1.5.0 fluent API and newline-delimited JSON-RPC over stdin/stdout.
 Core remains transport-independent: no journal version, turn decision or host port changes.
 
+## Workspace agent for VS Code
+
+Use [examples/vscode-workspace.ts](examples/vscode-workspace.ts) for a runnable workspace
+agent. See [VS Code setup](../../docs/vscode-acp.md) for the ACP Client launch configuration.
+Set `LABKIT_ACP_MODEL` and the provider credential in the launch environment. The default
+profile is `anthropic-messages@3`; `LABKIT_ACP_PROVIDER` also accepts `openai-chat@2`,
+`openai-responses@3`, or `google-generate@3`. These use `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+and `GOOGLE_API_KEY`, respectively. `LABKIT_ACP_BASE_URL` optionally overrides the API base URL.
+The example enables streaming and once-only permissions, with one agent and `successors: []`.
+Omitting successors permits handoff to all registered agents, including itself.
+
+The example journals sessions and stores blobs **in memory only**. It prints a warning to
+stderr and advertises `loadSession: false`. Restart loses both journal and blobs. Applications
+can supply their own durable `SessionPersistence`; this example does not claim restart recovery.
+
+Workspace tools are `read_file` (read), `write_file` (edit), and `list_dir` (search). Every
+location is absolute and bound to the session cwd. Parent traversal, outside paths, symlink
+components, and hard-linked files are rejected. Reads require UTF-8 and reads/writes are capped
+at 256 KiB. Listings are shallow and capped at 1,000 entries and 256 KiB of entry data. Writes
+require existing parent directories. Rejected permission prevents execution. Cancellation after
+a write starts cannot undo bytes already written. These filesystem checks are not an OS sandbox
+against hostile concurrent ancestor-directory renames. There is no shell tool.
+
 ## Run from a host
 
 Create a local configuration module that default-exports `AcpOptions`. Supply the same
@@ -104,9 +127,17 @@ reads. Thinking/signature payloads are not replayed as visible reasoning.
 ## Explicit limits
 
 This is an ACP v1 **session subset**, not a claim of full protocol conformance. Text and resource-link
-prompts are accepted; resource links become textual references, with no automatic file/network reads.
-Image, audio and embedded-resource prompts are not advertised and are rejected. Core attachments
-remain available through its session API; ACP content-to-blob ingestion is a separate increment.
+prompts are accepted. Local `file://` links and paths inside the session cwd are read through the
+workspace path checks and stored with `putBlob` in that session before admitting the user input.
+The journal contains attachment refs, never file bytes. Outside paths are rejected without reading
+them. Non-file URLs remain textual references; the adapter never fetches them. Cancellation during
+ingestion admits no user turn (an unreferenced blob may already have been stored).
+
+Local attachments retain the 8 MiB blob cap. Extensions select markdown, PDF, PNG, JPEG, or UTF-8
+plain text; the bound provider must support the selected media. The existing 64 KiB provider text
+inline cap is unchanged. Attaching a local resource is an explicit user input and does not create
+a tool permission request. Model-initiated file access still uses the permission-gated tools.
+Image, audio and embedded-resource prompt blocks are not advertised and are rejected.
 
 Client-supplied MCP servers are rejected, including stdio MCP (required by the full ACP baseline).
 Tools currently come from session bindings. MCP connections, client filesystem/terminal delegation,
