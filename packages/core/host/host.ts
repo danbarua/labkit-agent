@@ -533,6 +533,7 @@ export function createHost(
                 const permissionStartedAt = performance.now();
                 const permissionContext = {
                   ...identity,
+                  childId: command.child.id,
                   requestId: `${command.child.id}/${call.id}`,
                   toolName: call.name,
                   locations,
@@ -576,6 +577,21 @@ export function createHost(
                   decision,
                   durationMs: Math.round(performance.now() - permissionStartedAt),
                 });
+                if (decision === "reject_once") {
+                  diagnostic("host", "warning", "permission.refused", {
+                    ...permissionContext,
+                    operation: "tool_execution",
+                    outcome: "blocked",
+                    decision,
+                    reasonCode: "permission_refused",
+                    reason:
+                      "User refused permission for a model-requested tool; no tools in this batch will run",
+                    toolKind: tool.kind ?? "other",
+                    rawInput: call.args,
+                    blockedCallCount: command.completion.calls.length,
+                    durationMs: Math.round(performance.now() - permissionStartedAt),
+                  });
+                }
                 decisions.push({ callId: call.id, decision });
                 if (decision !== "allow_once") break;
               }

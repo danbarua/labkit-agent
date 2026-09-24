@@ -353,3 +353,9 @@ Failures retain their diagnostic files. Re-running the same artifact directory r
 logs; use `runFixtures({ artifactDirectory: "..." })` to retain separate runs. Read a failure with
 `cat .session-artifacts/latest/failure/diagnostics.log`, then join its session/turn/append IDs to the
 journal in that directory. The fixture artifacts supplement, rather than replace, launcher logs.
+
+A `turn.settled` diagnostic describes an **agent turn**, with agent ID and triggering child/event.
+Failed turns are Warning with a direct cause; completed, aborted and exhausted turns are Info.
+Permission refusal has its own host Warning (`permission.refused`); its subsequent failed-turn
+summary reports the committed consequence. Tests preserve those production severities even when
+failure is the expected scenario outcome. See [the severity contract](../logging/README.md).

@@ -4,6 +4,7 @@ import { runFixture } from "./fixture-runner.ts";
 import { plainConversationV1 } from "./fixtures/conversation.ts";
 import { interruptedRecoveryV1, rejectedAppendV1 } from "./fixtures/persistence.ts";
 import { partialCancellationLateResultV1, permissionRejectBatchV2 } from "./fixtures/tools.ts";
+import { approveToolUsage, denyToolUsage } from "./fixtures/usage.ts";
 import { createSession } from "./session-runtime.ts";
 
 const directory = ".session-artifacts/reporting";
@@ -115,4 +116,47 @@ test("cancelled work and a rejected admission are explained as expected outcomes
   expect(rejected.report).toContain("**PASS**");
   expect(rejected.report).toContain("Input admission is failed");
   expect(rejected.transcript).toContain("No terminal turns have been committed");
+});
+
+test("warning-only logs expose user refusal and its consequence; approved work emits no warnings", async () => {
+  for (const scenario of [denyToolUsage, approveToolUsage]) {
+    const location = `${directory}/${scenario.name}-warning-scan`;
+    await runFixture(scenario, { artifactDirectory: location });
+    const records = (await Bun.file(`${location}/diagnostics.jsonl`).text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const signals = records.filter(
+      (record) => record.level === "warning" || record.level === "error",
+    );
+    const decision = records.find((record) => record.event === "permission.decided");
+    expect(decision.level).toBe("info");
+    if (scenario === denyToolUsage) {
+      expect(signals.map((record) => record.event)).toEqual(["permission.refused", "turn.settled"]);
+      expect(signals[0]).toMatchObject({
+        reasonCode: "permission_refused",
+        toolName: "read_note",
+        rawInput: { name: "design" },
+        outcome: "blocked",
+        blockedCallCount: 1,
+      });
+      expect(signals[1]).toMatchObject({
+        operation: "agent_turn",
+        agentId: "reviewer",
+        outcome: "failed",
+        reason: "Tool permission rejected",
+        trigger: "permission_settled",
+        childId: signals[0].childId,
+        turnId: signals[0].turnId,
+      });
+      const text = await Bun.file(`${location}/diagnostics.log`).text();
+      const warningLines = text.split("\n").filter((line) => line.includes(" WARNING "));
+      expect(warningLines[0]).toContain("permission.refused");
+      expect(warningLines[0]).toContain("User refused permission");
+      expect(warningLines[1]).toContain("Agent turn failed: Tool permission rejected");
+    } else {
+      expect(signals).toEqual([]);
+      expect(records.find((record) => record.event === "turn.settled").level).toBe("info");
+    }
+  }
 });

@@ -564,6 +564,11 @@ function configure(raw: SessionOptions, restoring = false) {
           afterCommit.get(command.submission.id)?.();
           afterCommit.delete(command.submission.id);
           if (terminal?.kind === "terminal") {
+            const input = command.submission.input;
+            const trigger =
+              input.kind === "event" && input.event.type === "child"
+                ? input.event.event
+                : undefined;
             diagnostic(
               "session",
               terminal.record.outcome.kind === "failed" ? "warning" : "info",
@@ -571,13 +576,26 @@ function configure(raw: SessionOptions, restoring = false) {
               {
                 sessionId,
                 turnId: terminal.turnId,
+                operation: "agent_turn",
+                agentId: terminal.record.agent,
+                message: `Agent turn ${terminal.record.outcome.kind}${terminal.record.outcome.kind === "failed" ? `: ${terminal.record.outcome.error.message}` : ""}`,
+                ...(trigger
+                  ? {
+                      trigger: trigger.type,
+                      childId: trigger.child.id,
+                      childOperation: trigger.child.kind,
+                    }
+                  : { trigger: input.kind === "event" ? input.event.type : input.kind }),
                 outcome: terminal.record.outcome.kind,
                 revision: command.durable.revision,
                 appendId: command.submission.appendId,
                 requestId: command.submission.id,
                 stepLimit: command.durable.conversation.allowance,
                 ...(terminal.record.outcome.kind === "failed"
-                  ? { error: diagnosticError(terminal.record.outcome.error) }
+                  ? {
+                      reason: terminal.record.outcome.error.message,
+                      error: diagnosticError(terminal.record.outcome.error),
+                    }
                   : {}),
                 ...(terminal.record.outcome.kind === "exhausted"
                   ? { reason: "Turn step allowance exhausted; user continuation required" }

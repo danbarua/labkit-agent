@@ -113,7 +113,10 @@ Return `{ outcome: { outcome: "selected", optionId: "allow-once" } }` (or `rejec
 fail closed. Remembered choices are not supported.
 
 Calls are presented in admitted order. Every call must be allowed before any tool in the batch runs.
-A rejection fails the turn; cancellation aborts it. Neither fabricates a tool result for an unrun
+A rejection fails the turn; cancellation aborts it. Every valid response emits Info
+`permission.decided`. Rejection additionally emits Warning `permission.refused`, identifying the
+tool, arguments, locations, permission child, blocked batch size and refusal reason so that a
+warning-only scan exposes the intervention. Neither fabricates a tool result for an unrun
 call. Pending tool notifications and permission requests share the eventual tool child ID. Permission
 approval does not mark a tool in_progress: that transition still belongs to actual execution.
 

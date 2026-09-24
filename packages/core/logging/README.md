@@ -71,6 +71,21 @@ Debug carries routine operation detail. Info carries terminal/session lifecycle
 events. Warning carries failed children, unsuccessful storage outcomes, reconciliation,
 and recovery. Error reports failed session status/admission.
 
+Severity must support a warning/error-only investigation. `permission.decided` stays Info for
+all valid choices; `permission.refused` is a separate Warning identifying the intervention:
+`decision=reject_once`, `reasonCode=permission_refused`, `operation=tool_execution`,
+`outcome=blocked`, tool name/kind, arguments, locations, blocked batch size, and correlation IDs.
+It reports a refusal received through the permission port, not a durable journal receipt or a
+claim that the tool ran. Refusals remain distinguishable from cancelled permission dialogs.
+
+`turn.settled` is Warning only for a failed agent turn. Completed, aborted, and exhausted turns
+are Info; expected negative test scenarios use the same production severity, not a test-specific
+threshold. The failed-turn record names the operation and agent, explains the failure in `message`
+and `reason`, retains `error`, and identifies the triggering event and child when available.
+A refusal warning records the intervention; the subsequent failed-turn warning records its
+committed consequence. Join them by session/turn/child IDs. Do not suppress the category to hide
+an unexplained warning; make the cause and scope legible on the warning itself.
+
 ### Common fields and correlation
 
 Use the same field name for the same identity across modules. Include identities that

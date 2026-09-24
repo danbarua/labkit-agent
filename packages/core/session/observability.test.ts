@@ -14,13 +14,17 @@ import {
 import { createMemoryPersistence } from "./testing/memory-persistence.ts";
 
 function observeLogs() {
-  const records: { event: string; fields: Record<string, unknown> }[] = [];
+  const records: { event: string; level: string; fields: Record<string, unknown> }[] = [];
   const spies = ["host", "session", "persistence", "provider"].flatMap((category) => {
     const logger = getLogger(["labkit", category]);
     const original = logger.emit.bind(logger);
     return [
       spyOn(logger, "emit").mockImplementation((record) => {
-        records.push({ event: String(record.rawMessage), fields: record.properties });
+        records.push({
+          event: String(record.rawMessage),
+          level: record.level,
+          fields: record.properties,
+        });
         original(record);
       }),
     ];
@@ -88,7 +92,35 @@ test("permission logs identify the file, wait, refusal and committed turn failur
       decision: "reject_once",
       durationMs: expect.any(Number),
     });
-    expect(capture.records.find((r) => r.event === "turn.settled")?.fields).toMatchObject({
+    expect(capture.records.find((r) => r.event === "permission.decided")?.level).toBe("info");
+    const refusal = capture.records.find((r) => r.event === "permission.refused");
+    expect(refusal?.level).toBe("warning");
+    expect(refusal?.fields).toMatchObject({
+      sessionId: waiting.sessionId,
+      turnId: waiting.turnId,
+      childId: waiting.childId,
+      batchId: waiting.batchId,
+      toolCallId: waiting.toolCallId,
+      requestId: waiting.requestId,
+      operation: "tool_execution",
+      outcome: "blocked",
+      reasonCode: "permission_refused",
+      reason: expect.stringContaining("User refused permission"),
+      toolName: "read",
+      rawInput: { path: "/workspace/README.md" },
+      locations: [{ path: "/workspace/README.md" }],
+      blockedCallCount: 1,
+    });
+    const terminal = capture.records.find((r) => r.event === "turn.settled");
+    expect(terminal?.level).toBe("warning");
+    expect(terminal?.fields).toMatchObject({
+      operation: "agent_turn",
+      agentId: "a",
+      message: "Agent turn failed: Tool permission rejected",
+      reason: "Tool permission rejected",
+      trigger: "permission_settled",
+      childOperation: "permission",
+      childId: waiting.childId,
       outcome: "failed",
       appendId: expect.any(String),
       error: { message: expect.any(String) },
@@ -131,6 +163,7 @@ test("storage diagnostics retain uncertainty and recovery evidence; exhausted tu
       stepLimit: 1,
       reason: expect.stringContaining("allowance exhausted"),
     });
+    expect(capture.records.find((r) => r.event === "turn.settled")?.level).toBe("info");
     expect(capture.records.some((r) => r.event === "tool.awaiting_release")).toBe(true);
     expect(capture.records.some((r) => r.event === "tool.released")).toBe(true);
     await expect(restoreSession(options, "00000000-0000-4000-8000-000000000099")).rejects.toThrow();
@@ -189,6 +222,7 @@ test("cancellation identifies the active completion and preserves its terminal o
       ),
     ).toBe(true);
     expect(capture.records.find((r) => r.event === "turn.settled")?.fields.outcome).toBe("aborted");
+    expect(capture.records.find((r) => r.event === "turn.settled")?.level).toBe("info");
     expect(signal?.aborted).toBe(true);
     await until(() => capture.records.some((r) => r.event === "child.cancelled"));
     expect(
