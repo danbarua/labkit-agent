@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { anthropicStopReason } from "./anthropic-stop.ts";
 import type { StreamAssembler, StreamDelta, StreamEvent } from "./types.ts";
 
 const object = z.record(z.string(), z.json());
@@ -172,7 +173,7 @@ export function anthropicAssembler(): StreamAssembler {
         case "message_delta": {
           if (active || reason) throw new Error("Invalid message_delta");
           const delta = object.parse(item.delta);
-          reason = z.enum(["end_turn", "tool_use", "stop_sequence"]).parse(delta.stop_reason);
+          reason = anthropicStopReason(delta.stop_reason, item.usage);
           return usageDelta(item.usage);
         }
         case "message_stop":

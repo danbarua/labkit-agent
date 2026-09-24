@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { BlobResolver } from "../agent/content.ts";
 import { ToolCallSchema, type AgentMessage } from "../agent/types.ts";
+import { anthropicStopReason } from "./anthropic-stop.ts";
 import {
   advertisements,
   attachmentBytes,
@@ -137,13 +138,15 @@ export function anthropicMessagesProfile(id: string, nativeAdaptive = false): Co
       };
     },
     decode(res) {
+      const raw = z.record(z.string(), z.unknown()).parse(responseBody(res));
+      anthropicStopReason(raw.stop_reason, raw.usage);
       const body = z
         .object({
           role: z.literal("assistant"),
           stop_reason: z.enum(["end_turn", "tool_use", "stop_sequence"]),
           content: z.array(block).min(1),
         })
-        .parse(responseBody(res));
+        .parse(raw);
       const decoded = completion(
         body.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
         body.content.flatMap((part) =>

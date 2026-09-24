@@ -2,7 +2,7 @@ import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createSession } from "@labkit-agent/core";
+import { createSession, restoreSession } from "@labkit-agent/core";
 import { createMemoryPersistence } from "@labkit-agent/core/testing";
 import { expect, test } from "@logtape/testing-bun/autoload";
 
@@ -278,6 +278,61 @@ test("additional roots preserve primary relative paths and enforce every root's 
       "reserved",
     );
     await expect(workspaceFiles(extra, [join(extra, ".labkit")])).rejects.toThrow("reserved");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("workspace restores the saved Anthropic wire version after changing the launch default", async () => {
+  const f = await fixture();
+  try {
+    const env = { LABKIT_ACP_MODEL: "claude-sonnet-5", ANTHROPIC_API_KEY: "TEST_SECRET" };
+    for (const [saved, current] of [
+      ["anthropic-messages@4", "anthropic-messages@3"],
+      ["anthropic-messages@3", "anthropic-messages@4"],
+    ]) {
+      const original = await workspaceAgent({ ...env, LABKIT_ACP_PROVIDER: saved }).sessionOptions({
+        cwd: f.cwd,
+        signal: signal(),
+      });
+      const requestPermission = async () => ({ outcome: { outcome: "cancelled" as const } });
+      const session = await createSession({
+        ...original,
+        bindings: { ...original.bindings, requestPermission },
+      });
+      const id = session.snapshot.durable.conversation.sessionId;
+      await session.updatePolicy({ thinking: "adaptive" });
+      await session.close();
+      const rebound = await workspaceAgent({ ...env, LABKIT_ACP_PROVIDER: current }).sessionOptions(
+        { cwd: f.cwd, sessionId: id, signal: signal() },
+      );
+      let requests = 0;
+      const providers = new Map(
+        [...rebound.bindings.providers!].map(([key, binding]) => [
+          key,
+          {
+            ...binding,
+            transport: {
+              ...binding.transport,
+              fetch: (async () => {
+                requests++;
+                throw new Error("Restore must not fetch");
+              }) as unknown as typeof fetch,
+            },
+          },
+        ]),
+      );
+      const restored = await restoreSession(
+        { ...rebound, bindings: { ...rebound.bindings, providers, requestPermission } },
+        id,
+      );
+      expect(restored.snapshot.durable.policy).toMatchObject({
+        provider: saved,
+        thinking: "adaptive",
+      });
+      expect(requests).toBe(0);
+      await restored.close();
+    }
   } finally {
     await f.cleanup();
   }

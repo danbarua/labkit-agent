@@ -142,6 +142,12 @@ truncated SSE frame fail the completion. SSE frames are capped at 16,777,216 cha
 uses the completion child's AbortSignal and cancels the body reader. Failed/cancelled operations
 never publish a successful partial completion or continuation. Closing/barge-in suppresses late data.
 
+Rejected Anthropic stop reasons produce an explicit failure with the bounded stop-reason identifier
+and available numeric input/output token counts. `max_tokens` reports output truncation;
+`model_context_window_exceeded` reports context exhaustion. These messages survive as the ordinary
+failed completion error in the journal and ACP response. Provider content is excluded. This does not
+enable a diagnostic file sink or retain raw HTTP bodies, and cannot recover evidence from old errors.
+
 The host emits completed only after final decode, completion admission and continuation storage;
 the journal still commits one model_settled event per operation. The display status can precede its
 append receipt, so dependent tools wait for the existing receipt gate. Policy and transport both

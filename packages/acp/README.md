@@ -25,7 +25,9 @@ For Sonnet 5, set `LABKIT_ACP_PROVIDER=anthropic-messages@4` and start a new ses
 sends native adaptive thinking; @3 retains the manual 1024-token budget required by older models.
 Sonnet 5 rejects that manual format with HTTP 400. The UI labels @4's choice Adaptive and @3's
 choice Provider budget (1024 tokens). The default profile remains @3 for compatibility; reopen old
-sessions with their original provider configuration.
+sessions with credentials and an endpoint for the same provider dialect. The factory binds all shipped
+versions of that dialect, so changing the launch default does not remove a saved session's binding.
+Restore retains the journaled provider version; it does not migrate old sessions to the new default.
 
 The example enables experimental session forking and persists under `<cwd>/.labkit/sessions/store.sqlite` and advertises
 `loadSession: true`. Bun SQLite transactions store ordered journal batches and their stable
@@ -51,6 +53,13 @@ at 256 KiB. Listings are shallow and capped at 1,000 entries and 256 KiB of entr
 require existing parent directories. Rejected permission prevents execution. Cancellation after
 a write starts cannot undo bytes already written. These filesystem checks are not an OS sandbox
 against hostile concurrent ancestor-directory renames. Command execution is disabled by default.
+
+Permission titles include the tool name and its validated absolute locations (including line numbers
+when provided). This makes file targets visible in clients whose permission picker displays only the
+title. Paths are quoted and control characters escaped; file contents and other arguments are not
+copied into the title. The structured `locations` field is still supplied separately.
+Live tool cards receive the same title when locations resolve, and retain it through completion.
+Location-only updates include the current status so clients do not mistake them for completion.
 
 When the client advertises `fs.readTextFile` or `fs.writeTextFile`, the example delegates that
 operation to the client, allowing reads of unsaved editor buffers and editor-managed writes.

@@ -1,8 +1,15 @@
 import {
+  anthropicMessages,
+  anthropicMessagesV2,
   anthropicMessagesV3,
   anthropicMessagesV4,
+  googleGenerate,
+  googleGenerateV2,
   googleGenerateV3,
+  openaiChat,
   openaiChatV2,
+  openaiResponses,
+  openaiResponsesV2,
   openaiResponsesV3,
 } from "@labkit-agent/core/providers";
 
@@ -30,6 +37,17 @@ export function workspaceAgent(
   const id = env.LABKIT_ACP_PROVIDER ?? anthropicMessagesV3.id;
   const profile = profiles.find((entry) => entry.id === id);
   if (!profile) throw new Error("LABKIT_ACP_PROVIDER must name a supported streaming profile");
+  // Creation default is not a restore filter: saved policy owns its exact wire version.
+  const compatibleProfiles = [
+    ...profiles,
+    anthropicMessages,
+    anthropicMessagesV2,
+    googleGenerate,
+    googleGenerateV2,
+    openaiChat,
+    openaiResponses,
+    openaiResponsesV2,
+  ].filter((candidate) => candidate.id.split("@")[0] === profile.id.split("@")[0]);
   const model = env.LABKIT_ACP_MODEL;
   if (!model) throw new Error("Set LABKIT_ACP_MODEL to your provider's model ID");
   const models = [
@@ -204,7 +222,12 @@ export function workspaceAgent(
         },
         bindings: {
           tools,
-          providers: new Map([[profile.id, { profile, transport: { baseUrl, headers } }]]),
+          providers: new Map(
+            compatibleProfiles.map((profile) => [
+              profile.id,
+              { profile, transport: { baseUrl, headers } },
+            ]),
+          ),
         },
       };
     },

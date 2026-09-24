@@ -14,6 +14,7 @@ import {
   type SessionInfoUpdate,
   type SessionUpdate,
   type Stream,
+  type ToolCallStatus,
 } from "@agentclientprotocol/sdk";
 import {
   createSession,
@@ -117,7 +118,14 @@ type Session = {
   revision: number;
   streamed: Map<string, string>;
   terminals: Map<string, string[]>;
+  toolCards: Map<string, { baseTitle: string; title: string; status: ToolCallStatus }>;
 };
+
+function locatedTitle(title: string, locations?: readonly { path: string; line?: number }[]) {
+  return locations?.length
+    ? `${title}: ${locations.map(({ path, line }) => `${JSON.stringify(path)}${line === undefined ? "" : `:${line}`}`).join(", ")}`
+    : title;
+}
 
 function toolUpdate(event: HostToolNotification, terminals: readonly string[] = []): SessionUpdate {
   if (event.sessionUpdate === "tool_call")
@@ -563,6 +571,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         revision: 0,
         streamed: new Map(),
         terminals: new Map<string, string[]>(),
+        toolCards: new Map(),
       };
       const bound: BoundSessionOptions = {
         ...original,
@@ -588,14 +597,26 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
             observeSafely(subscribers.observe, snapshot);
           },
           toolUpdate: (event) => {
+            if (event.sessionUpdate === "tool_call")
+              entry.toolCards.set(event.toolCallId, {
+                baseTitle: event.title,
+                title: event.title,
+                status: event.status,
+              });
+            const card = entry.toolCards.get(event.toolCallId);
+            if (card && event.sessionUpdate === "tool_call_update") {
+              if (event.locations) card.title = locatedTitle(card.baseTitle, event.locations);
+              if (event.status) card.status = event.status;
+            }
             if (entry.acceptingUpdates && event.sessionId)
-              send(
-                client,
-                event.sessionId,
-                toolUpdate(event, entry.terminals.get(event.toolCallId)),
-              );
-            if (event.status === "completed" || event.status === "failed")
+              send(client, event.sessionId, {
+                ...toolUpdate(event, entry.terminals.get(event.toolCallId)),
+                ...(card ? { title: card.title, status: card.status } : {}),
+              });
+            if (event.status === "completed" || event.status === "failed") {
               entry.terminals.delete(event.toolCallId);
+              entry.toolCards.delete(event.toolCallId);
+            }
             observeSafely(subscribers.toolUpdate, event);
           },
           streamUpdate: (event) => {
@@ -631,7 +652,13 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
                   "session/request_permission",
                   {
                     sessionId: request.sessionId!,
-                    toolCall: { ...toolCall, ...(locations ? { locations: [...locations] } : {}) },
+                    toolCall: {
+                      ...toolCall,
+                      // Some clients show only the title in their approval picker.
+                      // Use validated locations, never arbitrary tool argument contents.
+                      title: locatedTitle(toolCall.title, locations),
+                      ...(locations ? { locations: [...locations] } : {}),
+                    },
                     options: [...request.options],
                   },
                   { cancellationSignal: permissionSignal },
@@ -1074,6 +1101,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         finishPrompt();
         entry.streamed.clear();
         entry.terminals.clear();
+        entry.toolCards.clear();
       }
     })
     .onNotification("session/cancel", async ({ params }) => {

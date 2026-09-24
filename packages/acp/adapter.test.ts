@@ -222,6 +222,7 @@ test("permission response correlation and both durable gates precede tool execut
   await until(() => h.messages.some((m) => m.method === "session/request_permission"));
   const permission = h.messages.find((m) => m.method === "session/request_permission")!;
   expect(permission.params.toolCall).toMatchObject({
+    title: 'echo: "/tmp/DESIGN.md":3',
     locations: [{ path: "/tmp/DESIGN.md", line: 3 }],
     status: "pending",
   });
@@ -256,7 +257,21 @@ test("permission response correlation and both durable gates precede tool execut
       .filter((u) => "toolCallId" in u && u.toolCallId === permission.params.toolCall.toolCallId)
       .map((u: any) => u.status)
       .filter(Boolean),
-  ).toEqual(["pending", "in_progress", "completed"]);
+  ).toEqual(["pending", "pending", "in_progress", "completed"]);
+  const cardUpdates = updates.filter(
+    (u) =>
+      u.sessionUpdate === "tool_call_update" &&
+      u.toolCallId === permission.params.toolCall.toolCallId,
+  );
+  expect(cardUpdates[0]).toMatchObject({
+    title: 'echo: "/tmp/DESIGN.md":3',
+    status: "pending",
+    locations: [{ path: "/tmp/DESIGN.md", line: 3 }],
+  });
+  expect(cardUpdates.at(-1)).toMatchObject({
+    title: 'echo: "/tmp/DESIGN.md":3',
+    status: "completed",
+  });
   expect(h.messages.at(-1)?.id).toBe(requestId);
   await h.close();
 });
