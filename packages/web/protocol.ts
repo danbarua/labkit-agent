@@ -58,6 +58,7 @@ export type SessionView = {
     model?: string;
     thinking?: string;
     stream?: boolean;
+    permissions?: string;
   };
   log: TurnView[];
   live: MessageView[];
@@ -66,6 +67,24 @@ export type SessionView = {
 export type PublicReceipt = {
   kind: string;
   message?: string;
+};
+
+export type PermissionPrompt = {
+  requestId: string;
+  turnId: string;
+  tool: {
+    toolCallId: string;
+    title: string;
+    name: string;
+    kind: string;
+    rawInput: unknown;
+    locations?: Array<Record<string, unknown>>;
+  };
+  options: Array<{
+    optionId: "allow-once" | "reject-once";
+    name: string;
+    kind: string;
+  }>;
 };
 
 export type ConsoleEvent =
@@ -89,7 +108,9 @@ export type ConsoleEvent =
       status?: string;
       args?: unknown;
       result?: unknown;
-    };
+    }
+  | { kind: "permission"; request: PermissionPrompt }
+  | { kind: "permission_clear"; requestId: string };
 
 export type CreateSessionBody = {
   providerId?: string;

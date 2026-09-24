@@ -1,4 +1,4 @@
-import { ArrowUp, Paperclip, Square } from "lucide-react";
+import { ArrowUp, Paperclip, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { Mark } from "../components/brand/mark.tsx";
@@ -11,12 +11,14 @@ import type {
   HostInfo,
   MediaKind,
   MessageView,
+  PermissionPrompt,
   PublicReceipt,
   SessionView,
 } from "../protocol.ts";
 
 type Draft = { text: string; thinking: string };
 type Preview = { chip: BlobChip; url: string; text?: string };
+type AttachmentFile = { key: string; file: File };
 
 const EMPTY: HostInfo = { mode: "fixture", providers: [] };
 
@@ -31,6 +33,10 @@ function mediaFor(file: File): MediaKind | null {
   return null;
 }
 
+function fileKey(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
 function hashPrefix(id: string) {
   return id.slice(0, 8);
 }
@@ -40,16 +46,25 @@ async function readError(response: Response) {
   return body?.error ?? response.statusText;
 }
 
+function receiptText(receipt: PublicReceipt) {
+  if (receipt.kind === "failed") return receipt.message ?? "Rejected";
+  if (receipt.kind === "busy")
+    return "Busy. Abort the turn before changing policy or sending during tools.";
+  return receipt.kind;
+}
+
 export function Console() {
   const [host, setHost] = useState<HostInfo>(EMPTY);
   const [view, setView] = useState<SessionView | null>(null);
   const [sessionId, setSessionId] = useState(() => sessionStorage.getItem("labkit-session"));
   const [draft, setDraft] = useState<Draft>({ text: "", thinking: "" });
   const [text, setText] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<AttachmentFile[]>([]);
   const [awaitingReceipt, setAwaitingReceipt] = useState(false);
   const [notice, setNotice] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [permission, setPermission] = useState<PermissionPrompt | null>(null);
+  const [permissionBusy, setPermissionBusy] = useState(false);
   const [providerId, setProviderId] = useState("");
   const [model, setModel] = useState("");
   const [thinking, setThinking] = useState("off");
@@ -77,12 +92,16 @@ export function Console() {
       sessionStorage.removeItem("labkit-session");
       setSessionId(null);
       setView(null);
+      setPermission(null);
     };
     source.onmessage = (message) => {
       const event = JSON.parse(message.data) as ConsoleEvent;
       if (event.kind === "snapshot") {
         setView(event.view);
-        if (event.view.phase === "idle") setDraft({ text: "", thinking: "" });
+        if (event.view.phase === "idle") {
+          setDraft({ text: "", thinking: "" });
+          setPermission(null);
+        }
       } else if (event.kind === "delta") {
         setDraft((current) => ({
           text: current.text + (event.text ?? ""),
@@ -91,6 +110,10 @@ export function Console() {
       } else if (event.kind === "receipt") {
         setAwaitingReceipt(false);
         setNotice(event.receipt.kind === "accepted" ? "" : receiptText(event.receipt));
+      } else if (event.kind === "permission") {
+        setPermission(event.request);
+      } else if (event.kind === "permission_clear") {
+        setPermission((current) => (current?.requestId === event.requestId ? null : current));
       }
     };
     return () => source.close();
@@ -126,6 +149,26 @@ export function Console() {
     return [...settled, ...live];
   }, [view]);
 
+  useEffect(() => {
+    scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
+  }, [draft.text, draft.thinking, messages.length, view?.phase, permission?.requestId]);
+
+  function addFiles(list: FileList | null) {
+    if (!list?.length) return;
+    setFiles((current) => {
+      const next = [...current];
+      const seen = new Set(current.map((entry) => entry.key));
+      for (const file of list) {
+        const key = fileKey(file);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        next.push({ key, file });
+      }
+      return next;
+    });
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
   async function startSession(event: FormEvent) {
     event.preventDefault();
     setNotice("");
@@ -147,6 +190,7 @@ export function Console() {
     sessionStorage.setItem("labkit-session", created.sessionId);
     setSessionId(created.sessionId);
     setView(created.view);
+    setPermission(null);
   }
 
   async function send(event: FormEvent) {
@@ -156,14 +200,14 @@ export function Console() {
     setAwaitingReceipt(true);
     try {
       const attachments = [];
-      for (const file of files) {
-        const media = mediaFor(file);
-        if (!media) throw new Error(`${file.name} is not markdown, text, png, jpeg, or pdf`);
-        if (file.size > 8 * 1024 * 1024) throw new Error(`${file.name} exceeds 8 MiB`);
+      for (const entry of files) {
+        const media = mediaFor(entry.file);
+        if (!media) throw new Error(`${entry.file.name} is not markdown, text, png, jpeg, or pdf`);
+        if (entry.file.size > 8 * 1024 * 1024) throw new Error(`${entry.file.name} exceeds 8 MiB`);
         const uploaded = await fetch(`/api/session/${view.sessionId}/blob`, {
           method: "POST",
-          headers: { "Content-Type": media, "X-Blob-Name": file.name },
-          body: file,
+          headers: { "Content-Type": media, "X-Blob-Name": entry.file.name },
+          body: entry.file,
         });
         if (!uploaded.ok) throw new Error(await readError(uploaded));
         attachments.push(await uploaded.json());
@@ -218,6 +262,24 @@ export function Console() {
     const body = (await response.json()) as { receipt?: PublicReceipt; error?: string };
     if (!response.ok) setNotice(body.error ?? "Policy was rejected");
     else if (body.receipt && body.receipt.kind !== "accepted") setNotice(receiptText(body.receipt));
+  }
+
+  async function answerPermission(optionId: "allow-once" | "reject-once") {
+    if (!view || !permission || permissionBusy) return;
+    setPermissionBusy(true);
+    setNotice("");
+    try {
+      const response = await fetch(`/api/session/${view.sessionId}/permission`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: permission.requestId, optionId }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPermissionBusy(false);
+    }
   }
 
   async function openPreview(chip: BlobChip) {
@@ -313,6 +375,9 @@ export function Console() {
               {view.phase === "awaiting_model" && !draft.text && !draft.thinking ? (
                 <p className="text-sm text-muted-foreground">awaiting model…</p>
               ) : null}
+              {view.phase === "awaiting_permission" && !permission ? (
+                <p className="text-sm text-muted-foreground">awaiting permission…</p>
+              ) : null}
               {draft.text || draft.thinking ? (
                 <article className="rounded-md border border-teal/30 bg-teal/5 px-3 py-2">
                   <p className="mb-1 text-[10px] font-semibold tracking-[0.16em] text-teal uppercase">
@@ -328,12 +393,28 @@ export function Console() {
             <form onSubmit={send} className="grid gap-3 border-t border-border p-4">
               {files.length ? (
                 <ul className="flex flex-wrap gap-2">
-                  {files.map((file) => (
+                  {files.map((entry) => (
                     <li
-                      key={file.name}
-                      className="rounded-full border border-border px-2 py-1 text-xs"
+                      key={entry.key}
+                      className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-xs"
                     >
-                      {file.name}
+                      <span>
+                        {entry.file.name}
+                        <span className="text-muted-foreground">
+                          {" "}
+                          · {(entry.file.size / 1024).toFixed(1)} KB
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        className="rounded-full p-0.5 text-muted-foreground hover:text-ink"
+                        aria-label={`Remove ${entry.file.name}`}
+                        onClick={() =>
+                          setFiles((current) => current.filter((item) => item.key !== entry.key))
+                        }
+                      >
+                        <X className="size-3.5" />
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -352,7 +433,7 @@ export function Console() {
                     className="sr-only"
                     accept=".md,.markdown,.txt,.png,.jpg,.jpeg,.pdf,text/plain,text/markdown,image/png,image/jpeg,application/pdf"
                     multiple
-                    onChange={(event) => setFiles([...(event.target.files ?? [])])}
+                    onChange={(event) => addFiles(event.target.files)}
                   />
                   <Button type="button" variant="ghost" onClick={() => fileRef.current?.click()}>
                     <Paperclip />
@@ -384,7 +465,8 @@ export function Console() {
               <h2 className="text-[11px] font-semibold tracking-[0.18em] uppercase">Policy</h2>
               <p className="font-mono text-xs text-muted-foreground">
                 {view.policy.provider ?? "fixture"} · {view.policy.model ?? "fixture"} ·{" "}
-                {view.policy.thinking ?? "off"} · stream {view.policy.stream ? "on" : "off"}
+                {view.policy.thinking ?? "off"} · stream {view.policy.stream ? "on" : "off"} ·
+                permissions {view.policy.permissions ?? "off"}
               </p>
               <PolicyFields
                 host={host}
@@ -403,12 +485,43 @@ export function Console() {
             </form>
             <section className="rounded-lg border border-border bg-white p-4">
               <h2 className="text-[11px] font-semibold tracking-[0.18em] uppercase">Permission</h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Permission gate not in this runtime yet.
-              </p>
-              <p className="mt-2 font-mono text-xs text-cool">
-                {"{ tool, kind?, locations?, options }"}
-              </p>
+              {permission ? (
+                <div className="mt-3 grid gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-ink">{permission.tool.title}</p>
+                    <p className="font-mono text-xs text-muted-foreground">
+                      {permission.tool.name} · {permission.tool.kind}
+                    </p>
+                  </div>
+                  <pre className="max-h-40 overflow-auto rounded-md border border-border bg-paper p-2 font-mono text-xs whitespace-pre-wrap">
+                    {JSON.stringify(permission.tool.rawInput, null, 2)}
+                  </pre>
+                  {permission.tool.locations?.length ? (
+                    <pre className="font-mono text-xs text-muted-foreground whitespace-pre-wrap">
+                      {JSON.stringify(permission.tool.locations, null, 2)}
+                    </pre>
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    {permission.options.map((option) => (
+                      <Button
+                        key={option.optionId}
+                        type="button"
+                        variant={option.optionId === "allow-once" ? "default" : "outline"}
+                        disabled={permissionBusy}
+                        onClick={() => answerPermission(option.optionId)}
+                      >
+                        {option.name}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {view.phase === "awaiting_permission"
+                    ? "Waiting for a tool permission prompt…"
+                    : "No pending tool permission."}
+                </p>
+              )}
             </section>
             {preview ? (
               <section className="rounded-lg border border-border bg-white p-4">
@@ -453,13 +566,6 @@ export function Console() {
   );
 }
 
-function receiptText(receipt: PublicReceipt) {
-  if (receipt.kind === "failed") return receipt.message ?? "Rejected";
-  if (receipt.kind === "busy")
-    return "Busy. Abort the turn before changing policy or sending during tools.";
-  return receipt.kind;
-}
-
 function PolicyFields({
   host,
   providerId,
@@ -489,7 +595,11 @@ function PolicyFields({
         <select
           className="h-9 rounded-md border border-border bg-paper px-2"
           value={providerId}
-          onChange={(event) => onProvider(event.target.value)}
+          onChange={(event) => {
+            onProvider(event.target.value);
+            const next = host.providers.find((item) => item.id === event.target.value);
+            if (next) onModel(next.defaultModel);
+          }}
           disabled={host.mode === "fixture"}
         >
           {host.providers.length === 0 ? <option value="">fixture</option> : null}

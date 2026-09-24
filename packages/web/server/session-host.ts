@@ -8,6 +8,7 @@ import {
   SessionIdSchema,
   type AgentMessage,
 } from "../../core/agent/types.ts";
+import type { PermissionPort, PermissionRequest } from "../../core/host/ports.ts";
 import {
   anthropicMessages,
   anthropicMessagesV2,
@@ -38,12 +39,14 @@ import type {
   CreateSessionBody,
   HostInfo,
   MessageView,
+  PermissionPrompt,
   ProviderOption,
   PublicReceipt,
   SessionView,
 } from "../protocol.ts";
 
 const SYSTEM = "You are a lab operator assistant. Be concise. Use echo and now when they help.";
+const FIXTURE_DELAY_MS = Number(process.env.LABKIT_FIXTURE_DELAY_MS ?? 1500);
 const persistence = createMemoryPersistence();
 const ADMITTED: Record<string, true> = {
   user: true,
@@ -61,10 +64,16 @@ type BoundProfile = {
   baseUrl: string;
   headers: Record<string, string>;
 };
+type PendingPermission = {
+  request: PermissionRequest;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
+};
 type Hosted = {
   runtime: SessionRuntime;
   model: string;
   subscribers: Set<Subscriber>;
+  pendingPermissions: Map<string, PendingPermission>;
 };
 
 const sessions = new Map<string, Hosted>();
@@ -198,6 +207,7 @@ export function project(snapshot: SessionState, model: string): SessionView {
       model: policy?.model ?? model,
       thinking: policy?.thinking,
       stream: policy?.stream,
+      permissions: policy?.permissions,
     },
     log: conversation.log.map((turn) => ({
       agent: turn.agent,
@@ -252,6 +262,148 @@ function demoTools() {
   ]);
 }
 
+function permissionPrompt(request: PermissionRequest): PermissionPrompt {
+  return {
+    requestId: request.requestId,
+    turnId: request.turnId,
+    tool: {
+      toolCallId: request.toolCall.toolCallId,
+      title: request.toolCall.title,
+      name: request.toolCall.name,
+      kind: request.toolCall.kind,
+      rawInput: request.toolCall.rawInput,
+      locations: request.toolCall.locations?.map((location) => ({ ...location })),
+    },
+    options: request.options.map((option) => ({
+      optionId: option.optionId,
+      name: option.name,
+      kind: option.kind,
+    })),
+  };
+}
+
+function waitForAbort(signal: AbortSignal | undefined) {
+  const { promise, reject } = Promise.withResolvers<never>();
+  const fail = () => reject(signal?.reason ?? new Error("aborted"));
+  if (signal?.aborted) fail();
+  else signal?.addEventListener("abort", fail, { once: true });
+  return promise;
+}
+
+async function fixtureThink(signal: AbortSignal | undefined) {
+  if (process.env.LABKIT_FIXTURE_HOLD === "1") {
+    await waitForAbort(signal);
+    return;
+  }
+  const delayMs = Number.isFinite(FIXTURE_DELAY_MS) ? Math.max(0, FIXTURE_DELAY_MS) : 1500;
+  if (delayMs === 0) return;
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const timer = setTimeout(resolve, delayMs);
+  const onAbort = () => {
+    clearTimeout(timer);
+    reject(signal?.reason ?? new Error("aborted"));
+  };
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    await promise;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+function lastUserText(body: unknown) {
+  if (!body || typeof body !== "object") return "";
+  const input = (body as { input?: unknown }).input;
+  if (!Array.isArray(input)) return "";
+  for (let index = input.length - 1; index >= 0; index -= 1) {
+    const item = input[index];
+    if (!item || typeof item !== "object") continue;
+    const row = item as { role?: unknown; content?: unknown };
+    if (row.role !== "user") continue;
+    return typeof row.content === "string" ? row.content : "";
+  }
+  return "";
+}
+
+function fixtureFetch(): typeof fetch {
+  return (async (_url, init) => {
+    await fixtureThink(init?.signal ?? undefined);
+    let body: unknown = {};
+    try {
+      body = JSON.parse(String(init?.body ?? "{}"));
+    } catch {
+      body = {};
+    }
+    const input =
+      body && typeof body === "object" ? (body as { input?: unknown }).input : undefined;
+    const hasToolResult =
+      Array.isArray(input) &&
+      input.some(
+        (item) =>
+          item &&
+          typeof item === "object" &&
+          (item as { type?: unknown }).type === "function_call_output",
+      );
+    const text = lastUserText(body);
+    if (!hasToolResult && (/\becho\b/i.test(text) || /use tools?/i.test(text))) {
+      const match = text.match(/echo\s+(.+)$/i);
+      const payload = match?.[1]?.trim() || "hi";
+      return Response.json({
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Calling echo." }],
+          },
+          {
+            type: "function_call",
+            call_id: "echo-1",
+            name: "echo",
+            arguments: JSON.stringify({ text: payload }),
+          },
+        ],
+      });
+    }
+    return Response.json({
+      status: "completed",
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "output_text",
+              text: hasToolResult ? "Tool finished." : "fixture",
+            },
+          ],
+        },
+      ],
+    });
+  }) as typeof fetch;
+}
+
+function requestPermissionFor(hosted: Hosted): PermissionPort {
+  return (request, signal) => {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    const pending: PendingPermission = { request, resolve, reject };
+    hosted.pendingPermissions.set(request.requestId, pending);
+    publish(hosted, { kind: "permission", request: permissionPrompt(request) });
+    const onAbort = () => {
+      if (!hosted.pendingPermissions.delete(request.requestId)) return;
+      publish(hosted, { kind: "permission_clear", requestId: request.requestId });
+      reject(signal.reason ?? new Error("aborted"));
+    };
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    return promise.finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  };
+}
+
 export async function openSession(input: CreateSessionBody = {}) {
   const bound = boundProfiles();
   const selected = bound.find((profile) => profile.profile.id === input.providerId) ?? bound[0];
@@ -263,8 +415,15 @@ export async function openSession(input: CreateSessionBody = {}) {
     subscribers,
     model,
     runtime: undefined as unknown as SessionRuntime,
+    pendingPermissions: new Map(),
   };
   const observe = (snapshot: SessionState) => {
+    if (snapshot.durable.conversation.turn.status === "idle") {
+      for (const requestId of hosted.pendingPermissions.keys()) {
+        publish(hosted, { kind: "permission_clear", requestId });
+      }
+      hosted.pendingPermissions.clear();
+    }
     publish(hosted, { kind: "snapshot", view: project(snapshot, hosted.model) });
   };
   const streamUpdate = (notification: HostStreamNotification) => {
@@ -291,7 +450,14 @@ export async function openSession(input: CreateSessionBody = {}) {
     agents: new Map([["operator", { model, systemPrompt: SYSTEM, tools: ["echo", "now"] }]]),
     steps: 6,
   };
-  const bindings = { tools: demoTools(), observe, streamUpdate, toolUpdate };
+  const bindings = {
+    tools: demoTools(),
+    observe,
+    streamUpdate,
+    toolUpdate,
+    requestPermission: requestPermissionFor(hosted),
+  };
+  const permissions = "ask" as const;
   hosted.runtime = selected
     ? await createSession({
         persistence,
@@ -302,6 +468,7 @@ export async function openSession(input: CreateSessionBody = {}) {
             stream,
             thinking: thinking as "off",
             maxOutputTokens: 2048,
+            permissions,
           },
         },
         bindings: {
@@ -326,6 +493,7 @@ export async function openSession(input: CreateSessionBody = {}) {
             stream: false,
             thinking: "off",
             maxOutputTokens: 2048,
+            permissions,
           },
         },
         bindings: {
@@ -337,25 +505,7 @@ export async function openSession(input: CreateSessionBody = {}) {
                 profile: openaiResponses,
                 transport: {
                   baseUrl: "https://fixture.invalid/v1",
-                  fetch: (async (_url, init) => {
-                    if (process.env.LABKIT_FIXTURE_HOLD === "1") {
-                      const { promise, reject } = Promise.withResolvers<Response>();
-                      const fail = () => reject(init?.signal?.reason ?? new Error("aborted"));
-                      if (init?.signal?.aborted) fail();
-                      else init?.signal?.addEventListener("abort", fail, { once: true });
-                      return promise;
-                    }
-                    return Response.json({
-                      status: "completed",
-                      output: [
-                        {
-                          type: "message",
-                          role: "assistant",
-                          content: [{ type: "output_text", text: "fixture" }],
-                        },
-                      ],
-                    });
-                  }) as typeof fetch,
+                  fetch: fixtureFetch(),
                 },
               },
             ],
@@ -404,6 +554,26 @@ export async function admit(sessionId: string, event: unknown) {
   }
 }
 
+export async function answerPermission(
+  sessionId: string,
+  body: { requestId?: unknown; optionId?: unknown },
+) {
+  const hosted = sessions.get(sessionId);
+  if (!hosted) return { status: 404 as const, body: { error: "Unknown session" } };
+  if (typeof body.requestId !== "string") {
+    return { status: 400 as const, body: { error: "requestId is required" } };
+  }
+  const pending = hosted.pendingPermissions.get(body.requestId);
+  if (!pending) return { status: 404 as const, body: { error: "Unknown permission request" } };
+  if (body.optionId !== "allow-once" && body.optionId !== "reject-once") {
+    return { status: 400 as const, body: { error: "optionId must be allow-once or reject-once" } };
+  }
+  hosted.pendingPermissions.delete(body.requestId);
+  publish(hosted, { kind: "permission_clear", requestId: body.requestId });
+  pending.resolve({ outcome: { outcome: "selected", optionId: body.optionId } });
+  return { status: 200 as const, body: { ok: true } };
+}
+
 export async function storeBlob(
   sessionId: string,
   bytes: Uint8Array,
@@ -444,6 +614,9 @@ export function eventResponse(sessionId: string, signal: AbortSignal) {
       };
       hosted.subscribers.add(subscriber);
       subscriber({ kind: "snapshot", view: project(hosted.runtime.snapshot, hosted.model) });
+      for (const pending of hosted.pendingPermissions.values()) {
+        subscriber({ kind: "permission", request: permissionPrompt(pending.request) });
+      }
       const stop = () => {
         hosted.subscribers.delete(subscriber);
         try {

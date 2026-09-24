@@ -4,6 +4,7 @@ import index from "./index.html";
 import { MEDIA_KINDS, type BlobChip, type CreateSessionBody } from "./protocol.ts";
 import {
   admit,
+  answerPermission,
   eventResponse,
   hostInfo,
   openSession,
@@ -47,6 +48,14 @@ const server = serve({
     "/api/session/:id/event": {
       async POST(req) {
         const result = await admit(req.params.id, await readJson(req));
+        return json(result.body, result.status);
+      },
+    },
+    "/api/session/:id/permission": {
+      async POST(req) {
+        const body = (await readJson(req)) ?? {};
+        if (!body || typeof body !== "object") return json({ error: "Expected JSON" }, 400);
+        const result = await answerPermission(req.params.id, body as Record<string, unknown>);
         return json(result.body, result.status);
       },
     },
