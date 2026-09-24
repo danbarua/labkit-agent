@@ -14,4 +14,4 @@ handles. A source intending to wait for an answer must remain open until it rece
 settlement. Persistence lifetime remains caller-owned. A UI may switch its binding to a published
 child; it must not construct a second tool loop.
 
-The web package is a brand surface. Integrating the session UI is a separate task.
+The web package hosts a session console. A fuller session UI is a separate task.

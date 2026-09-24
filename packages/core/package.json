@@ -1,0 +1,49 @@
+{
+  "name": "@labkit-agent/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bun runtime for durable, inspectable agent sessions",
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./session": "./session/index.ts",
+    "./agent": "./agent/agent-runtime.ts",
+    "./types": "./agent/types.ts",
+    "./content": "./agent/content.ts",
+    "./host": "./host/index.ts",
+    "./providers": "./providers/index.ts",
+    "./policy": "./policy/index.ts",
+    "./environment": "./environment/index.ts",
+    "./logging": "./logging/index.ts",
+    "./fsm": "./fsm/index.ts",
+    "./testing": "./session/testing/memory-persistence.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.ts",
+    "agent",
+    "session",
+    "host",
+    "providers",
+    "policy",
+    "environment",
+    "logging",
+    "fsm",
+    "!**/*.test.ts",
+    "!**/test-support.ts",
+    "!session/fixtures",
+    "!session/fixture-runner.ts",
+    "!host/testing",
+    "!providers/testing",
+    "!session/testing/persistence-contract.ts"
+  ],
+  "dependencies": {
+    "@logtape/logtape": "^2.3.7",
+    "zod": "^4.6.5"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}

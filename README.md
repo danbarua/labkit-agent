@@ -43,7 +43,7 @@ policy event with a specific version.
 | `packages/core/providers`   | Versioned provider profiles and fetch transport             |
 | `packages/core/environment` | Event sources and renderer bindings                         |
 | `packages/core/logging`     | Environment-owned diagnostics                               |
-| `packages/web`              | Brand design system and local web surface                   |
+| `packages/web`              | Local session console and brand design system               |
 
 Each core module documents its local contracts in its own README where present.
 Cross-module architecture and flow diagrams live in [`docs/`](./docs/).
@@ -57,10 +57,10 @@ bunx tsc --noEmit
 bun run format:check
 ```
 
-Use `bun run dev` for the local web surface and `bun run build` for its production
-bundle.
+Use `bun run dev` for the local session console and `bun run build` for its production
+bundle. Open `/brand` for the design language board.
 
 The project is still experimental. Persistence is an injected contract rather than a
 bundled durable backend, and protocol integration described in the design notes is not
-all implemented. The web package currently presents the brand design system, not a
+all implemented. The web package hosts one in-memory session console; it is not a
 complete session interface.

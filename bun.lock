@@ -36,6 +36,14 @@
         "typescript": "^7",
       },
     },
+    "packages/core": {
+      "name": "@labkit-agent/core",
+      "version": "0.1.0",
+      "dependencies": {
+        "@logtape/logtape": "^2.3.7",
+        "zod": "^4.6.5",
+      },
+    },
   },
   "packages": {
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
@@ -97,6 +105,8 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.6.0", "", {}, "sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@labkit-agent/core": ["@labkit-agent/core@workspace:packages/core"],
 
     "@logtape/logtape": ["@logtape/logtape@2.3.7", "", {}, "sha512-y0X4Liaj9voRRn0aAffCw2HCRpZEibOdmHiOgwsAT0hgHS8MaDKHl9cQGZ8r8uZR+b+yN9qznNYru6z9oOEMVw=="],
 
