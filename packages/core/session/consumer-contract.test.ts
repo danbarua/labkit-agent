@@ -700,3 +700,192 @@ test("batch cancellation carries the initiating tool failure to siblings and dia
     }
   });
 });
+
+test("completion usage is receipt-gated public data and survives restore without HTTP", async () => {
+  const capture = await createProviderCapture(".session-artifacts/completion-usage");
+  await withFixtureDiagnostics(capture.directory, { runId: capture.runId }, async () => {
+    let calls = 0;
+    const reached = deferred<void>();
+    const release = deferred<void>();
+    const opts = options((async (_url: RequestInfo | URL) => {
+      calls++;
+      return Response.json(
+        {
+          ...answer,
+          usage: {
+            prompt_tokens: 120,
+            completion_tokens: 30,
+            total_tokens: 150,
+            prompt_tokens_details: { cached_tokens: 100 },
+            note: "echo usage-credential-secret",
+          },
+        },
+        { headers: { "x-request-id": "usage-response-1" } },
+      );
+    }) as typeof fetch);
+    const persistence = opts.persistence;
+    const binding = opts.bindings.providers!.get("openai")!;
+    const configured: SessionOptions = {
+      ...opts,
+      persistence: {
+        ...persistence,
+        async append(request, signal) {
+          if (
+            request.records
+              .map((record) => JSON.parse(record))
+              .some(
+                ({ body }) =>
+                  body.kind === "event" &&
+                  body.event.type === "child" &&
+                  body.event.event.type === "model_settled",
+              )
+          ) {
+            reached.resolve();
+            await release.promise;
+          }
+          return persistence.append(request, signal);
+        },
+      },
+      bindings: {
+        ...opts.bindings,
+        providers: new Map([
+          [
+            "openai",
+            {
+              ...binding,
+              transport: {
+                ...binding.transport,
+                capture: capture.capture,
+                headers: { Authorization: "Bearer usage-credential-secret" },
+              },
+            },
+          ],
+        ]),
+      },
+    };
+    const session = await createSession(configured);
+    const sessionId = session.snapshot.durable.conversation.sessionId;
+    try {
+      const handle = session.input("Extract the field");
+      await reached.promise;
+      expect(session.lastCompletionUsage).toBeUndefined();
+      release.resolve();
+      expect(await handle.settled).toMatchObject({ record: { outcome: { kind: "completed" } } });
+      expect(session.lastCompletionUsage).toMatchObject({
+        turnId: `${sessionId}/turn/1`,
+        usage: {
+          inputTokens: 120,
+          outputTokens: 30,
+          totalTokens: 150,
+          native: { prompt_tokens_details: { cached_tokens: 100 } },
+          source: {
+            provider: "openai",
+            model: "fast",
+            wireModel: "wire-fast",
+            profile: "openai-chat@1",
+            providerRequestId: "usage-response-1",
+          },
+        },
+      });
+      const usage = session.lastCompletionUsage!;
+      expect(Object.isFrozen(usage.usage.native)).toBe(true);
+      expect(JSON.stringify(usage)).not.toContain("usage-credential-secret");
+      expect(usage.usage.source?.httpRequestId).toBeString();
+      await Bun.write(
+        `${capture.directory}/journal.json`,
+        JSON.stringify(session.snapshot.durable.records, null, 2),
+      );
+      await session.close();
+      const restored = await restoreSession(configured, sessionId);
+      try {
+        expect(restored.lastCompletionUsage).toEqual(usage);
+        expect(calls).toBe(1);
+      } finally {
+        await restored.close();
+      }
+    } finally {
+      release.resolve();
+      await session.close();
+    }
+  });
+  expect(await Bun.file(`${capture.directory}/diagnostics.jsonl`).text()).not.toContain(
+    "usage-credential-secret",
+  );
+  const lines = (await Bun.file(`${capture.directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const committed = lines.filter((line) => line.event === "completion.usage.committed");
+  expect(committed).toHaveLength(1);
+  expect(committed[0]).toMatchObject({
+    level: "info",
+    usage: { inputTokens: 120 },
+    sessionId: expect.any(String),
+    turnId: expect.any(String),
+    childId: expect.any(String),
+    appendId: expect.any(String),
+  });
+  expect(lines.filter((line) => ["warning", "error", "fatal"].includes(line.level))).toEqual([]);
+});
+
+test("invalid accounting is reported and retained without invalidating a usable completion", async () => {
+  const capture = await createProviderCapture(".session-artifacts/completion-usage-failure");
+  await withFixtureDiagnostics(capture.directory, { runId: capture.runId }, async () => {
+    const opts = options((async (_url: RequestInfo | URL) =>
+      Response.json(
+        {
+          ...answer,
+          usage: { prompt_tokens: -1, completion_tokens: 30, total_tokens: 29 },
+        },
+        { headers: { "x-request-id": "invalid-usage-response" } },
+      )) as typeof fetch);
+    const binding = opts.bindings.providers!.get("openai")!;
+    const session = await createSession({
+      ...opts,
+      bindings: {
+        ...opts.bindings,
+        providers: new Map([
+          [
+            "openai",
+            {
+              ...binding,
+              transport: {
+                ...binding.transport,
+                capture: capture.capture,
+              },
+            },
+          ],
+        ]),
+      },
+    });
+    try {
+      const result = await session.input("Extract").settled;
+      expect(result).toMatchObject({ record: { outcome: { kind: "completed" } } });
+      const usage = session.lastCompletionUsage?.usage;
+      expect(usage?.status).toBe("invalid");
+      if (usage?.status !== "invalid") throw new Error("Missing invalid accounting evidence");
+      expect(usage.error).toContain("usage.prompt_tokens");
+      expect(usage.native).toEqual({ prompt_tokens: -1, completion_tokens: 30, total_tokens: 29 });
+      expect(session.lastCompletionUsage?.usage).not.toHaveProperty("inputTokens");
+      await Bun.write(
+        `${capture.directory}/public-usage.json`,
+        JSON.stringify(session.lastCompletionUsage),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+  const lines = (await Bun.file(`${capture.directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(lines.filter((line) => line.event === "completion.usage.committed")).toHaveLength(1);
+  expect(lines.find((line) => line.event === "completion.usage.committed")).toMatchObject({
+    usage: { status: "invalid", error: expect.stringContaining("usage.prompt_tokens") },
+  });
+  expect(lines.find((line) => line.event === "provider.usage.invalid")).toMatchObject({
+    level: "warning",
+    providerRequestId: "invalid-usage-response",
+    error: expect.stringContaining("usage.prompt_tokens"),
+  });
+});

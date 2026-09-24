@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ToolCallSchema } from "../agent/types.ts";
 import { advertisements, completion, jsonArguments, messageText, responseBody } from "./shared.ts";
 import { parseRequest, validateProviderSettings, type CompletionProfile } from "./types.ts";
+import { decodeUsage } from "./usage.ts";
 
 const response = z.object({
   choices: z
@@ -77,20 +78,24 @@ export const openaiChat: CompletionProfile = {
     };
   },
   decode(res) {
+    const usage = decodeUsage(res.body, "chat");
     const message = response.parse(responseBody(res)).choices[0]!.message;
     if (message.refusal) throw new Error("Provider refused completion");
     if (message.handoff) throw new Error("Use the reserved handoff tool");
     if (message.content == null && !message.tool_calls?.length)
       throw new Error("No assistant message");
-    return completion(
-      message.content ?? "",
-      (message.tool_calls ?? []).map((call) =>
-        ToolCallSchema.parse({
-          id: call.id,
-          name: call.function.name,
-          args: jsonArguments(call.function.arguments),
-        }),
+    return {
+      ...completion(
+        message.content ?? "",
+        (message.tool_calls ?? []).map((call) =>
+          ToolCallSchema.parse({
+            id: call.id,
+            name: call.function.name,
+            args: jsonArguments(call.function.arguments),
+          }),
+        ),
       ),
-    );
+      ...(usage ? { usage } : {}),
+    };
   },
 };

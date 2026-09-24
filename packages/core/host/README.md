@@ -42,7 +42,7 @@ calls. Context is not an approval token, and a tool called directly outside the 
 ## Implement a completion binding
 
 `CompletionPort(request, signal, blobs?, onDelta?, correlation?)` receives a validated prepared
-request. Return `{ completion, continuationPayload? }`; the host validates the untrusted response
+request. Return `{ completion, continuationPayload?, usage? }`; the host validates the untrusted response
 before accepting it. The public request/response types and the
 [executable exchange](../session/examples/completion-binding.ts) show tool arguments and messages.
 Use [provider bindings](../providers/README.md) for supported HTTP dialects. Before invoking the
@@ -54,6 +54,13 @@ Use the supplied blob resolver for attachments and continuations; it is scoped t
 Do not retain it in domain state. The session arranges blob storage and loading while the host owns
 cancellation. A continuation write failure prevents a successful completion outcome, so tools
 cannot run from a response whose required context could not be saved.
+
+Optional `usage` is serializable response accounting, exported as `CompletionUsage` from the
+session entry point. Keep missing counters absent and preserve native counters. The host carries
+it with the admitted completion; it cannot release accounting ahead of that completion's receipt.
+`completion.usage.received` identifies validation at the operation boundary. The session separately
+logs `completion.usage.committed` after persistence. Neither means a cumulative bill or a count of
+current context tokens.
 
 Optional deltas are for display. A stream still needs one complete validated response: partial text
 cannot authorize tool execution or count as a successful answer. Pass correlation into transport

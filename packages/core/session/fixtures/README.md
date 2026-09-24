@@ -73,3 +73,9 @@ When adding a scenario, explain the guarantee, show the public calls, assert the
 outcome and side effects, and read its generated report. Cover failure as well as success when
 it changes the contract. If demonstrating a feature requires reaching around a public boundary,
 raise that contract limitation before introducing a workaround.
+
+Completion usage now appears in the four streaming baselines as additional `model_settled.usage`
+and `lastCompletionUsage` fields. Counts come from the existing scripted response frames; tool
+ordering, outcomes and dispatch counts are unchanged. The fixture transport assigns deterministic
+`fixture-http-N` request IDs so exact journal comparisons remain meaningful. Production transports
+default to unique UUIDs; retained evidence is never rewritten to hide random IDs.

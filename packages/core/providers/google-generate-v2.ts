@@ -17,6 +17,7 @@ import {
   validateProviderSettings,
   type CompletionProfile,
 } from "./types.ts";
+import { decodeUsage } from "./usage.ts";
 
 const part = z.union([
   z.strictObject({
@@ -117,6 +118,7 @@ export const googleGenerateV2: CompletionProfile = {
     };
   },
   decode(res, request) {
+    const usage = decodeUsage(res.body, "google");
     const body = z
       .object({
         candidates: z
@@ -152,6 +154,7 @@ export const googleGenerateV2: CompletionProfile = {
     );
     return {
       ...decoded,
+      ...(usage ? { usage } : {}),
       ...(parts.some((value) => value.thoughtSignature || ("thought" in value && value.thought))
         ? { continuationPayload: { parts } }
         : {}),

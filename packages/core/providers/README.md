@@ -125,6 +125,28 @@ messages with parsed arguments for profiles. See the executable
 [completion binding example](../session/examples/completion-binding.ts) and
 [consumer acceptance tests](../session/consumer-contract.test.ts).
 
+`CompletionPortResponse.usage` preserves response accounting through admission and the matching
+journal receipt. Built-in HTTP profiles retain native usage fields and normalize known input,
+output and total counters. Anthropic input includes uncached, cache-read and cache-write tokens;
+OpenAI and Google input already includes cached tokens. Google output includes candidate and
+thinking tokens. Missing counters stay absent; they do not become zero. HTTP provenance identifies
+the selected model, wire model, profile and request IDs. Configured credentials are redacted before
+this evidence enters the response or journal.
+
+Inspect `session.lastCompletionUsage` for the most recent admitted response carrying accounting.
+Its `usage.status` is `reported` or `invalid`. Invalid provider accounting preserves the original
+fields and an explanatory error, logs `provider.usage.invalid`, and does not invalidate an otherwise
+usable completion. A custom port must supply this validated union; malformed port envelopes still
+fail admission. Stream deltas never update this property. Failed or cancelled completions retain
+transport evidence but cannot replace the last committed accounting record.
+
+These are per-response counts, not current context occupancy or cumulative session cost. Do not
+sum them to build a context meter: repeated prompt tokens are counted again on each request.
+Projecting history, changing models, or adding tool results can change the next request independently.
+The runtime does not infer model capacity, pricing, or a tokenizer from an adapter name.
+Counter definitions follow [Anthropic cache accounting](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+and [Google usage metadata](https://ai.google.dev/api/generate-content#UsageMetadata).
+
 Some providers require opaque signed or encrypted context from a previous response. Preserve it
 through `continuationPayload`; do not turn it into visible reasoning or manufacture a replacement.
 The host assigns provider and completion ownership, and the session saves it with the outcome
@@ -150,7 +172,8 @@ parse stage and errors. Request evidence precedes fetch; malformed JSON and part
 available on failure. Transport excludes credential headers and redacts configured credential values.
 The environment-owned [disk capture sink](../environment/provider-capture.ts) writes a unique run
 manifest and per-call report linking retained bodies. Supply tool context correlation to nested
-requests. No reconstructed traffic is presented as actual HTTP.
+requests. `TransportBinding.requestId` can supply environment-owned unique request IDs (for
+example deterministic fixture IDs); the default generates a UUID for each HTTP operation. No reconstructed traffic is presented as actual HTTP.
 
 Diagnostic event families include `provider.completion.*`, `provider.http.*`, `provider.stream.*`,
 `child.failed`, and `child.settled`. They retain session/turn/child IDs, timing, actual provider errors and cancellation.

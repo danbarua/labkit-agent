@@ -15,6 +15,7 @@ import {
   validateProviderSettings,
   type CompletionProfile,
 } from "./types.ts";
+import { decodeUsage } from "./usage.ts";
 
 const reasoning = z
   .object({
@@ -105,6 +106,7 @@ export const openaiResponsesV2: CompletionProfile = {
     };
   },
   decode(res) {
+    const usage = decodeUsage(res.body, "responses");
     const body = z
       .object({ status: z.literal("completed"), output: z.array(output).min(1) })
       .parse(responseBody(res));
@@ -125,6 +127,10 @@ export const openaiResponsesV2: CompletionProfile = {
       ),
     );
     const items = body.output.filter((item) => item.type === "reasoning");
-    return { ...decoded, ...(items.length ? { continuationPayload: { items } } : {}) };
+    return {
+      ...decoded,
+      ...(usage ? { usage } : {}),
+      ...(items.length ? { continuationPayload: { items } } : {}),
+    };
   },
 };

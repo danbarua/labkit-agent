@@ -18,6 +18,7 @@ import {
   validateProviderSettings,
   type CompletionProfile,
 } from "./types.ts";
+import { decodeUsage } from "./usage.ts";
 
 const thinkingBlock = z.discriminatedUnion("type", [
   z.strictObject({
@@ -137,6 +138,7 @@ export function anthropicMessagesProfile(id: string, nativeAdaptive = false): Co
       };
     },
     decode(res) {
+      const usage = decodeUsage(res.body, "anthropic");
       const raw = z.record(z.string(), z.unknown()).parse(responseBody(res));
       anthropicStopReason(raw.stop_reason, raw.usage);
       const body = z
@@ -159,6 +161,7 @@ export function anthropicMessagesProfile(id: string, nativeAdaptive = false): Co
       );
       return {
         ...decoded,
+        ...(usage ? { usage } : {}),
         ...(blocks.length ? { continuationPayload: payloadSchema.parse({ blocks }) } : {}),
       };
     },

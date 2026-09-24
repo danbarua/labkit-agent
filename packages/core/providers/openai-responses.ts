@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ToolCallSchema } from "../agent/types.ts";
 import { advertisements, completion, jsonArguments, messageText, responseBody } from "./shared.ts";
 import { parseRequest, validateProviderSettings, type CompletionProfile } from "./types.ts";
+import { decodeUsage } from "./usage.ts";
 
 const output = z.discriminatedUnion("type", [
   z.object({
@@ -70,24 +71,28 @@ export const openaiResponses: CompletionProfile = {
     };
   },
   decode(res) {
+    const usage = decodeUsage(res.body, "responses");
     const body = z
       .object({ status: z.literal("completed"), output: z.array(output).min(1) })
       .parse(responseBody(res));
-    return completion(
-      body.output
-        .flatMap((item) => (item.type === "message" ? item.content.map((part) => part.text) : []))
-        .join(""),
-      body.output.flatMap((item) =>
-        item.type === "function_call"
-          ? [
-              ToolCallSchema.parse({
-                id: item.call_id,
-                name: item.name,
-                args: jsonArguments(item.arguments),
-              }),
-            ]
-          : [],
+    return {
+      ...completion(
+        body.output
+          .flatMap((item) => (item.type === "message" ? item.content.map((part) => part.text) : []))
+          .join(""),
+        body.output.flatMap((item) =>
+          item.type === "function_call"
+            ? [
+                ToolCallSchema.parse({
+                  id: item.call_id,
+                  name: item.name,
+                  args: jsonArguments(item.arguments),
+                }),
+              ]
+            : [],
+        ),
       ),
-    );
+      ...(usage ? { usage } : {}),
+    };
   },
 };

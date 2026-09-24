@@ -11,6 +11,7 @@ import {
   systemAndMessages,
 } from "./shared.ts";
 import { parseRequest, validateProviderSettings, type CompletionProfile } from "./types.ts";
+import { decodeUsage } from "./usage.ts";
 
 const part = z.union([
   z.strictObject({
@@ -96,6 +97,7 @@ export const googleGenerate: CompletionProfile = {
     };
   },
   decode(res) {
+    const usage = decodeUsage(res.body, "google");
     const body = z
       .object({
         candidates: z
@@ -109,20 +111,23 @@ export const googleGenerate: CompletionProfile = {
       })
       .parse(responseBody(res));
     const parts = body.candidates[0]!.content.parts;
-    return completion(
-      parts.flatMap((value) => ("text" in value ? [value.text] : [])).join(""),
-      parts.flatMap((value, index) =>
-        "functionCall" in value
-          ? [
-              ToolCallSchema.parse({
-                // Stable within this response. Domain correlation scopes IDs to each batch.
-                id: value.functionCall.id ?? `google-call-${index}`,
-                name: value.functionCall.name,
-                args: value.functionCall.args ?? {},
-              }),
-            ]
-          : [],
+    return {
+      ...completion(
+        parts.flatMap((value) => ("text" in value ? [value.text] : [])).join(""),
+        parts.flatMap((value, index) =>
+          "functionCall" in value
+            ? [
+                ToolCallSchema.parse({
+                  // Stable within this response. Domain correlation scopes IDs to each batch.
+                  id: value.functionCall.id ?? `google-call-${index}`,
+                  name: value.functionCall.name,
+                  args: value.functionCall.args ?? {},
+                }),
+              ]
+            : [],
+        ),
       ),
-    );
+      ...(usage ? { usage } : {}),
+    };
   },
 };

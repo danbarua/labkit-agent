@@ -19,3 +19,5 @@ export type { Completion, Failure } from "../agent/types.ts";
 export { PreparedModelSchema as CompletionPortRequestSchema } from "../agent/agent.ts";
 
 export type { ResolvedModel } from "../providers/transport.ts";
+
+export { CompletionUsageSchema, type CompletionUsage } from "../providers/usage.ts";

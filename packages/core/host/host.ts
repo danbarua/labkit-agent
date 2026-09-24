@@ -38,6 +38,7 @@ import {
   type Continuation,
   type StreamDelta,
 } from "../providers/types.ts";
+import { CompletionUsageSchema } from "../providers/usage.ts";
 import { notify } from "./notifications.ts";
 import {
   copyRegistries,
@@ -466,6 +467,7 @@ export function createHost(
                     .strictObject({
                       completion: z.unknown(),
                       continuationPayload: z.unknown().optional(),
+                      usage: CompletionUsageSchema.optional(),
                     })
                     .parse(raw)
                 : { completion: raw };
@@ -484,17 +486,30 @@ export function createHost(
                       signal,
                     );
               signal.throwIfAborted();
-              return { completion, continuation };
+              if (output.usage)
+                diagnostic("provider", "info", "completion.usage.received", {
+                  sessionId: bindings.sessionId,
+                  turnId,
+                  childId: command.child.id,
+                  model: request.model,
+                  usage: output.usage,
+                  message: "Completion response usage validated; awaiting runtime settlement",
+                });
+              return { completion, continuation, usage: output.usage };
             },
             parseOutput: z.strictObject({
               completion: admitted,
               continuation: ContinuationSchema.optional(),
+              usage: CompletionUsageSchema.optional(),
             }).parseAsync,
           },
           (result) =>
             post(turnId, {
               type: "model_settled",
               child: command.child,
+              ...(result.kind === "succeeded" && result.value.usage
+                ? { usage: result.value.usage }
+                : {}),
               result:
                 result.kind === "succeeded"
                   ? { kind: "succeeded", value: result.value.completion }

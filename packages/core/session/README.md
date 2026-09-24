@@ -114,6 +114,21 @@ are captured when an operation starts. Timeout does not become a tolerant tool-e
 never causes an automatic retry. Cancellation rejects late results locally; it cannot undo a write
 or force an uncooperative tool to stop. Tool implementations should honor their AbortSignal.
 
+## Inspect response accounting
+
+`session.lastCompletionUsage` exposes `{ turnId, operationId, usage }` for the latest committed
+completion that supplied accounting. Read `usage.status` before using counters: `reported` contains
+validated known counters and native fields; `invalid` contains the original accounting and its
+validation error. Both keep HTTP provenance when supplied by provider bindings. This is immutable
+public state; consumers do not need to search journal records. Pending receipts, partial streams,
+failed operations and cancellation cannot publish a new value. Restore reconstructs it without
+calling the provider. A newly created fork or compaction has no completion of its own to report.
+
+The value describes an observed response, not the current projected prompt or cumulative cost.
+It remains historical when configuration or input changes. Missing accounting leaves the last
+observed record available with its original operation ID. `completion.usage.received` and
+`completion.usage.committed` distinguish observed from persisted evidence in launcher logs.
+
 ## Reopen without repeating effects
 
 Save the session ID and call `restoreSession(options, sessionId)`. Supply the original compatible

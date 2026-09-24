@@ -14,3 +14,5 @@ export {
   googleGenerateV3,
   openaiResponsesV3,
 } from "./streaming-profiles.ts";
+
+export { CompletionUsageSchema, type CompletionUsage } from "./usage.ts";

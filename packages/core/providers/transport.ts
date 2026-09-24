@@ -19,6 +19,7 @@ import {
   type StreamDeltaSink,
   type validateThinking,
 } from "./types.ts";
+import { CompletionUsageSchema } from "./usage.ts";
 
 export type ProviderDiagnosticContext = Readonly<{
   sessionId?: string;
@@ -66,6 +67,8 @@ export type TransportBinding = Readonly<{
   headers?: Readonly<Record<string, string>>;
   fetch?: typeof fetch;
   capture?: ProviderCapture;
+  /** Supply unique IDs for retained HTTP evidence; defaults to crypto.randomUUID. */
+  requestId?: () => string;
 }>;
 
 export function httpTransport(binding: TransportBinding, legacyChatErrors = false) {
@@ -79,6 +82,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
   const headers = { ...binding.headers };
   const fetcher = binding.fetch ?? fetch;
   const captureSink = binding.capture;
+  const requestId = binding.requestId ?? (() => crypto.randomUUID());
   // Remove actual configured credentials even when a provider echoes them in prose.
   const secrets = Object.entries(headers)
     .filter(([name]) => /authorization|api[-_]?key|token|secret|cookie/i.test(name))
@@ -95,7 +99,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
     const started = performance.now();
     const trace = {
       ...context,
-      httpRequestId: context.httpRequestId ?? crypto.randomUUID(),
+      httpRequestId: context.httpRequestId ?? requestId(),
       endpoint:
         base + request.path + (request.query ? `?${new URLSearchParams(request.query)}` : ""),
       method: request.method,
@@ -328,6 +332,7 @@ export function bindProviders(bindings: ProviderBindings) {
             capabilities: freeze(structuredClone(binding.profile.capabilities)),
           }),
           http: httpTransport(binding.transport),
+          requestId: binding.transport.requestId ?? (() => crypto.randomUUID()),
           capture,
           secrets,
           models: binding.models
@@ -417,7 +422,9 @@ export function bindProviders(bindings: ProviderBindings) {
       const started = performance.now();
       const trace = {
         ...context,
-        httpRequestId: context.httpRequestId ?? crypto.randomUUID(),
+        httpRequestId:
+          context.httpRequestId ??
+          (bound.get(request.provider ?? "")?.requestId ?? (() => crypto.randomUUID()))(),
         provider: request.provider,
         model: request.model,
         stream: request.stream ?? false,
@@ -482,12 +489,43 @@ export function bindProviders(bindings: ProviderBindings) {
         phase = "decode";
         const decoded = profile.decode(response, wireInput);
         const result = CompletionSchema.parse(decoded.completion);
+        const decodedUsage = decoded.usage;
+        const providerRequestId =
+          response.headers.get("request-id") ?? response.headers.get("x-request-id");
+        const usage =
+          decodedUsage === undefined
+            ? undefined
+            : CompletionUsageSchema.parse(
+                redactDiagnostics(
+                  {
+                    ...decodedUsage,
+                    source: {
+                      provider: request.provider,
+                      model: request.model,
+                      wireModel: selected?.wireModel ?? request.model,
+                      profile: profile.id,
+                      httpRequestId: trace.httpRequestId,
+                      ...(providerRequestId ? { providerRequestId } : {}),
+                    },
+                  },
+                  binding.secrets,
+                ),
+              );
+        if (usage?.status === "invalid")
+          diagnostic("provider", "warning", "provider.usage.invalid", {
+            ...trace,
+            ...terminalEvidence,
+            error: usage.error,
+            message:
+              "Provider returned invalid token accounting; completion remains usable, accounting is retained without normalized counts",
+          });
         if (result.kind === "handoff" && !input.successors.includes(result.agent))
           throw new Error("Unpermitted handoff target");
         if (result.kind === "tools" && result.calls.some((call) => call.name === HANDOFF_TOOL))
           throw new Error("Reserved handoff tool cannot be executed");
         const completion = freeze({
           completion: result,
+          ...(usage ? { usage } : {}),
           ...(decoded.continuationPayload === undefined
             ? {}
             : { continuationPayload: z.json().parse(decoded.continuationPayload) }),

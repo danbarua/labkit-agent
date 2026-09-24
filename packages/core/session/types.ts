@@ -19,6 +19,7 @@ import {
 } from "../agent/types.ts";
 import { PolicyPatchSchema, PolicySchema, PolicyVersionSchema } from "../policy/policy.ts";
 import { ContinuationSchema, ProviderSettingsSchema } from "../providers/types.ts";
+import { CompletionUsageSchema } from "../providers/usage.ts";
 import { AppendIdSchema, RevisionSchema } from "./persistence.ts";
 
 export const SystemInputsSchema = z.array(z.string()).readonly();
@@ -150,6 +151,7 @@ export const WireEventSchema = z.discriminatedUnion("type", [
       z.strictObject({
         type: z.literal("model_settled"),
         continuation: ContinuationSchema.optional(),
+        usage: CompletionUsageSchema.optional(),
         permissionRequired: z.literal(true).optional(),
         child: child("completion"),
         result: result(CompletionSchema.brand<"AdmittedCompletion">()),
