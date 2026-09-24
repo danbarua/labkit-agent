@@ -136,6 +136,30 @@ Live terminal handles, stream callbacks, and MCP connections are recreated as ne
 from the journal. An interrupted write may have taken effect; repeating it needs a new explicit
 invocation. See [session recovery](../core/session/README.md#reopen-without-repeating-effects).
 
+## Render tool results without changing execution
+
+`AcpSessionOptions.toolContent` maps tool names to pure display renderers. A renderer receives
+`{ toolName, output }`, where `output` is the exact successful tool-result string that core saves
+and sends to the model. Return ACP content blocks or file diffs. The adapter validates the complete
+result against the installed ACP schema and keeps `rawOutput` available alongside the display.
+Images, audio, embedded resources, resource links, annotations and `_meta` remain structured.
+
+Bind a renderer only when you own that tool's output contract. Arbitrary JSON is not automatically
+interpreted as MCP content or a diff. Discovered MCP tools receive a renderer automatically, so their
+admitted text/resource blocks display directly rather than as serialized envelopes. MCP binary-result
+admission remains a separate missing model-content boundary; this display binding does not enable it.
+
+Renderers must use only the supplied result: no filesystem reads, network calls, tool execution or
+live terminal handles. Reload runs the current renderer over saved successful results and labels
+the update `_meta["labkit.dev/reconstructed"] = true`. It never reruns the tool. Preserve renderer
+semantics when reopening saved sessions if identical historical presentation matters. Terminal
+links remain owned by the client-terminal binding and are never reconstructed from saved IDs.
+
+A malformed or throwing renderer leaves the execution result unchanged. The tool card explicitly
+reports the display failure and retains raw output; `acp.tool_content.failed` logs the cause, tool
+name and correlated session/tool-call IDs. `acp.tool_content.rendered` records successful block types
+and whether the source was live or saved, without logging content bodies.
+
 ## Decide which environment owns an effect
 
 | Integration               | Ownership and consequence                                                                                                                                                                     |

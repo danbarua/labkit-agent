@@ -89,7 +89,8 @@ An existing committed grant survives cancellation of a later turn; cancellation 
 than changing the user's authorization. Select Ask in ACP Tool approvals to revoke remembered grants.
 
 `toolUpdate` and `streamUpdate` are best-effort display subscribers. Their exceptions or pending
-promises cannot block execution. Use their operation IDs to update existing cards/chunks. Restore
+promises cannot block execution. Use their operation IDs to update existing cards/chunks. Tool updates include the known tool name
+so adapters can select display bindings without recovering it from a journal or another callback. Restore
 emits no historical host notifications; render saved history from session state instead.
 
 | Signal              | Suitable use                               | Authority it does not provide                   |

@@ -83,6 +83,23 @@ Late responses cannot settle cancelled tool operations. Writes already dispatche
 effect despite cancellation or an ambiguous response. Read results and write input retain the
 256 KiB cap, and normal tool arguments/results are journaled through core.
 
+## Tool content bindings
+
+`AcpSessionOptions.toolContent?: ReadonlyMap<string, AcpToolContent>` binds a synchronous pure renderer
+to each named tool. `AcpToolContentContext` contains `toolName` and the successful serialized `output`.
+Both types are exported from the package entry point. The map is copied when the session opens;
+unknown tool names and non-function bindings reject opening. Renderers are not called for failed or
+cancelled tools. Results must be JSON arrays of ACP `content` or `diff` blocks. Diff paths must be
+absolute; `oldText: null` denotes a new file. Optional annotations and `_meta` pass through.
+Terminal blocks are rejected here because their handles require a live client-terminal lifetime.
+
+For a tool whose saved result explicitly contains a `changes` array, an application can validate its
+own result schema and return those changes as diffs. The renderer must not read current disk content
+to manufacture `oldText`: that would misrepresent the actual operation and change history on reload.
+The adapter retains raw output and sends an explicit display error if rendering or validation fails.
+Reload reconstructs display from saved results, marks the notification as reconstructed, and performs
+no tool, completion or permission invocation. Unbound tools retain plain-text display.
+
 ## Session usage
 
 `AcpSessionOptions.usage` implements the [session usage notification](https://agentclientprotocol.com/rfds/session-usage).

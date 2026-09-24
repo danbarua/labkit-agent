@@ -74,6 +74,7 @@ export type HostToolNotification = Readonly<
       }
     | {
         sessionUpdate: "tool_call_update";
+        name?: string;
         status?: "pending" | "in_progress" | "completed" | "failed";
         locations?: readonly ToolLocation[];
         rawOutput?: unknown;
@@ -603,6 +604,7 @@ export function createHost(
                     batchId: command.batch.id,
                     callId: call.id,
                     toolCallId: ref("tool", `${command.batch.id}/${call.id}`).id,
+                    name: call.name,
                   };
                   const display = {
                     ...identity,
@@ -820,6 +822,7 @@ export function createHost(
                 batchId: command.child.id,
                 callId: batchCommand.call.id,
                 toolCallId: batchCommand.child.id,
+                name: batchCommand.call.name,
               };
               diagnostic("host", "debug", "tool.admitted", {
                 ...identity,

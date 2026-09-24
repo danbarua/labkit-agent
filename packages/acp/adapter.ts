@@ -51,6 +51,7 @@ import {
 } from "./session-config.ts";
 import { parseSessionInfo } from "./session-info.ts";
 import { usageReporter, type AcpUsageBinding } from "./session-usage.ts";
+import { mcpToolContent, renderToolContent, type AcpToolContent } from "./tool-content.ts";
 
 export type SessionOptionsContext = Readonly<{
   cwd: string;
@@ -70,6 +71,7 @@ export type AcpSessionOptions = SessionOptions & {
   config?: readonly AcpConfigBinding[];
   commands?: readonly AcpCommand[];
   usage?: AcpUsageBinding;
+  toolContent?: ReadonlyMap<string, AcpToolContent>;
   /** Persist host metadata after runtime initialization, before visible lifecycle publication. */
   onReady?: (sessionId: string, signal: AbortSignal) => void | Promise<void>;
 };
@@ -135,7 +137,11 @@ function locatedTitle(title: string, locations?: readonly { path: string; line?:
     : title;
 }
 
-function toolUpdate(event: HostToolNotification, terminals: readonly string[] = []): SessionUpdate {
+function toolUpdate(
+  event: HostToolNotification,
+  terminals: readonly string[] = [],
+  renderers: ReadonlyMap<string, AcpToolContent> = new Map(),
+): SessionUpdate {
   if (event.sessionUpdate === "tool_call")
     return {
       sessionUpdate: "tool_call",
@@ -156,16 +162,19 @@ function toolUpdate(event: HostToolNotification, terminals: readonly string[] = 
           rawOutput: event.rawOutput,
           content: [
             ...terminals.map((terminalId) => ({ type: "terminal" as const, terminalId })),
-            {
-              type: "content",
-              content: {
-                type: "text",
-                text:
-                  typeof event.rawOutput === "string"
-                    ? event.rawOutput
-                    : JSON.stringify(event.rawOutput),
+            ...renderToolContent(
+              event.status === "completed" && event.name ? renderers.get(event.name) : undefined,
+              event.rawOutput,
+              {
+                sessionId: event.sessionId,
+                toolCallId: event.toolCallId,
+                toolName: event.name,
+                turnId: event.turnId,
+                batchId: event.batchId,
+                callId: event.callId,
+                reconstructed: false,
               },
-            },
+            ),
           ],
         }
       : {}),
@@ -383,8 +392,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     messages: readonly AgentMessage[],
     prefix: string,
     evidence: Map<string, "completed" | "failed">,
+    renderers: ReadonlyMap<string, AcpToolContent>,
   ) => {
-    const calls = new Map<string, { toolCallId: string; status?: "completed" | "failed" }>();
+    const calls = new Map<
+      string,
+      { toolCallId: string; toolName: string; status?: "completed" | "failed" }
+    >();
     messages.forEach((message, index) => {
       const messageId =
         message.role === "assistant" && message.owner
@@ -414,7 +427,11 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       if (message.role === "assistant")
         for (const call of message.calls ?? []) {
           const toolCallId = `${messageId}/tool/${call.id}`;
-          calls.set(call.id, { toolCallId, status: evidence.get(`${messageId}/${call.id}`) });
+          calls.set(call.id, {
+            toolCallId,
+            toolName: call.name,
+            status: evidence.get(`${messageId}/${call.id}`),
+          });
           send(client, id, {
             sessionUpdate: "tool_call",
             toolCallId,
@@ -427,13 +444,18 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       if (message.role === "tool") {
         const call = calls.get(message.callId);
         if (call) {
-          const { toolCallId, status } = call;
+          const { toolCallId, toolName, status } = call;
           send(client, id, {
             sessionUpdate: "tool_call_update",
             toolCallId,
             ...(status ? { status } : {}),
             rawOutput: message.text,
-            content: [{ type: "content", content: { type: "text", text: message.text } }],
+            _meta: { "labkit.dev/reconstructed": true },
+            content: renderToolContent(
+              status === "completed" ? renderers.get(toolName) : undefined,
+              message.text,
+              { sessionId: id, toolCallId, toolName, reconstructed: true },
+            ),
           });
           calls.delete(message.callId);
         }
@@ -630,6 +652,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           throw new Error("MCP tool collides with a bound tool");
         tools.set(name, tool);
       }
+      const renderers = new Map(original.toolContent);
+      for (const name of mcpTools.keys())
+        if (!renderers.has(name)) renderers.set(name, mcpToolContent);
+      for (const [name, render] of renderers)
+        if (!tools.has(name) || typeof render !== "function")
+          throw new Error(`Tool content renderer requires a bound tool and a function: ${name}`);
       const subscribers = { ...original.bindings };
       requireAccess();
       signal.throwIfAborted();
@@ -700,7 +728,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
             }
             if (entry.acceptingUpdates && event.sessionId)
               send(client, event.sessionId, {
-                ...toolUpdate(event, entry.terminals.get(event.toolCallId)),
+                ...toolUpdate(event, entry.terminals.get(event.toolCallId), renderers),
                 ...(card ? { title: card.title, status: card.status } : {}),
               });
             if (event.status === "completed" || event.status === "failed") {
@@ -844,9 +872,16 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         const durable = runtime.snapshot.durable;
         const state = durable.conversation;
         const evidence = toolEvidence(durable);
-        replayMessages(client, id, state.context, `${id}/context`, evidence);
+        replayMessages(client, id, state.context, `${id}/context`, evidence, renderers);
         state.log.forEach((record, index) => {
-          replayMessages(client, id, record.messages, `${id}/history/${index}`, evidence);
+          replayMessages(
+            client,
+            id,
+            record.messages,
+            `${id}/history/${index}`,
+            evidence,
+            renderers,
+          );
         });
       }
       boundSessionId = sessionId;

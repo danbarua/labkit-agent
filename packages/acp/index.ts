@@ -35,3 +35,5 @@ export {
   type AcpUsageContext,
   type AcpUsageBinding,
 } from "./session-usage.ts";
+
+export type { AcpToolContent, AcpToolContentContext } from "./tool-content.ts";

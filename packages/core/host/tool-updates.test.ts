@@ -116,7 +116,7 @@ test("tool locations use parsed input and arrive before run; display completion 
     sessionUpdate: "tool_call_update",
     locations: [{ path: "/tmp/DESIGN.md", line: 4 }],
   });
-  expect(updates[2]).not.toHaveProperty("name");
+  expect(updates[2]).toHaveProperty("name", "work");
   expect(updates.at(-1)).toMatchObject({ status: "completed", rawOutput: '{"reviewed":true}' });
   expect(new Set(updates.map((update) => update.toolCallId)).size).toBe(1);
   expect(turns).toEqual([]);
