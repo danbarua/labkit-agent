@@ -4145,3 +4145,149 @@ test("cancelling authentication while its UI is unanswered cancels the matching 
     await h.close();
   }
 });
+
+function booleanConfiguration() {
+  const base = configurable();
+  const options: AcpOptions = {
+    ...base.options,
+    sessionOptions: async (context) => {
+      const original = await base.options.sessionOptions(context);
+      return {
+        ...original,
+        config: [
+          ...original.config!,
+          {
+            id: "tools_enabled",
+            name: "Enable tools",
+            type: "boolean",
+            category: "mode",
+            current: (policy) => (policy.tools.a?.length ?? 0) > 0,
+            patches: { true: { tools: { a: ["echo"] } }, false: { tools: { a: [] } } },
+          },
+        ],
+      };
+    },
+  };
+  return { ...base, options };
+}
+
+test("boolean configuration is capability-gated and rejects wrong wire value types", async () => {
+  for (const capability of [undefined, null, {}]) {
+    const h = harness(booleanConfiguration().options);
+    try {
+      await h.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: { session: { configOptions: { boolean: capability } } },
+      });
+      const created = (await h.request("session/new", { cwd: "/tmp", mcpServers: [] })).result;
+      const visible = capability != null;
+      expect(created.configOptions.some((option: any) => option.type === "boolean")).toBe(visible);
+      expect(created.modes.currentModeId).toBe("tools");
+      for (const params of [
+        { type: "boolean", value: "false" },
+        { value: false },
+        { type: "select", value: "false" },
+      ])
+        expect(
+          (
+            await h.request("session/set_config_option", {
+              sessionId: created.sessionId,
+              configId: "tools_enabled",
+              ...params,
+            })
+          ).error?.code,
+        ).toBe(-32602);
+      const result = await h.request("session/set_config_option", {
+        sessionId: created.sessionId,
+        configId: "tools_enabled",
+        type: "boolean",
+        value: false,
+      });
+      if (visible) {
+        expect(result.error).toBeUndefined();
+        expect(result.result.configOptions.at(-1)).toEqual({
+          id: "tools_enabled",
+          name: "Enable tools",
+          category: "mode",
+          type: "boolean",
+          currentValue: false,
+        });
+        expect(
+          result.result.configOptions.find((option: any) => option.id === "mode").currentValue,
+        ).toBe("chat");
+      } else expect(result.error?.code).toBe(-32602);
+    } finally {
+      await h.close();
+    }
+  }
+});
+
+test("boolean configuration waits for its policy receipt and restores without exposing it to older clients", async () => {
+  const base = booleanConfiguration();
+  const gate = deferred<void>();
+  let entered = false;
+  const persistence = {
+    ...base.persistence,
+    append: async (request: Parameters<typeof base.persistence.append>[0], signal: AbortSignal) => {
+      if (request.records.some((raw) => JSON.parse(raw).body.kind === "policy")) {
+        entered = true;
+        await gate.promise;
+      }
+      return base.persistence.append(request, signal);
+    },
+  };
+  const options: AcpOptions = {
+    ...base.options,
+    sessionOptions: async (context) => ({
+      ...(await base.options.sessionOptions(context)),
+      persistence,
+    }),
+  };
+  let h = harness(options);
+  const initialize = () =>
+    h.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { session: { configOptions: { boolean: {} } } },
+    });
+  try {
+    await initialize();
+    const id = await h.newSession();
+    const set = await h.start("session/set_config_option", {
+      sessionId: id,
+      configId: "tools_enabled",
+      type: "boolean",
+      value: false,
+    });
+    await until(() => entered);
+    expect(h.messages.some((m) => m.id === set && !m.method)).toBe(false);
+    expect(h.updates().some((m) => m.update.sessionUpdate === "config_option_update")).toBe(false);
+    gate.resolve();
+    const result = await h.response(set);
+    expect(result.result.configOptions.at(-1).currentValue).toBe(false);
+    const update = h
+      .updates()
+      .find((m) => m.update.sessionUpdate === "config_option_update")!.update;
+    expect(update).toMatchObject({ configOptions: result.result.configOptions });
+    await h.close();
+    h = harness(options);
+    await h.initialize();
+    const legacy = await h.request("session/load", { sessionId: id, cwd: "/tmp", mcpServers: [] });
+    expect(legacy.result.configOptions.some((option: any) => option.type === "boolean")).toBe(
+      false,
+    );
+    expect(legacy.result.modes.currentModeId).toBe("chat");
+    await h.close();
+    h = harness(options);
+    await initialize();
+    const restored = await h.request("session/resume", {
+      sessionId: id,
+      cwd: "/tmp",
+      mcpServers: [],
+    });
+    expect(restored.result.configOptions.at(-1).currentValue).toBe(false);
+    expect(base.requests).toHaveLength(0);
+  } finally {
+    gate.resolve();
+    await h.close();
+  }
+});

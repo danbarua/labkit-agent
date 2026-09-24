@@ -336,7 +336,8 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
   cancellation after persistence dispatch does not imply rollback. Failed patches publish no change.
 - `session/set_mode`: compatibility alias for the single mode-category selector. Mode and config
   notifications reflect the same committed policy. New/load/resume responses include current
-  config options and legacy modes when bindings are provided. No boolean selector is advertised.
+  config options and legacy modes when bindings are provided. Boolean controls require the client's
+  `session.configOptions.boolean` capability.
 - `session/request_permission`: once-only options, correlated through SDK requests. The core
   operation's AbortSignal cancels the wait even if a client never replies; late allows cannot run tools.
 
@@ -464,14 +465,22 @@ restore a runtime or access blobs. Private fork-parent restoration emits no meta
 ## Configuration bindings
 
 `sessionOptions` may return `AcpSessionOptions`, which extends core options with a `config` array.
-Each `AcpConfigBinding` declares `id`, `name`, optional `category`/`description`, select `options`
-(`value`, `name`, optional `description`, and a `PolicyPatch`), and a pure `current(policy)` selector.
-The selector must derive its value from journaled policy and match a declared option; it must not
-keep a separate mutable selection. Each patch must produce its corresponding selected value.
+Each `AcpConfigBinding` declares `id`, `name`, optional `category`/`description`, and a pure
+`current(policy)` selector. Select bindings have `options` (`value`, `name`, optional `description`,
+and a `PolicyPatch`). Boolean bindings declare `type: "boolean"`, return a boolean from `current`,
+and provide `patches: { true: PolicyPatch, false: PolicyPatch }`.
+The selector must derive its value from journaled policy; select values must match a declared option.
+Do not keep a separate mutable selection. Each patch must produce its corresponding selected value.
 Bindings are copied at session opening, while callbacks remain executable host resources. They are
 never written to the journal. Core validates tool/provider capability restrictions on each patch.
-Use one `category: "mode"` binding to also expose the legacy mode API. Applications without config
+Use one select binding with `category: "mode"` to also expose the legacy mode API. Applications without config
 bindings retain their existing new/load/resume response shapes.
+
+Boolean controls are exposed only when the client advertises
+`clientCapabilities.session.configOptions.boolean: {}`. Their update requests require
+`type: "boolean"` and a boolean `value`. Older clients do not receive those controls; hiding a control
+does not reset its journaled value. Boolean controls have no legacy mode alias. The workspace example
+offers a Stream responses toggle to capable clients; its initial value remains enabled.
 
 The adapter sends `config_option_update` after committed state changes and `current_mode_update`
 when the selected mode changes. A response means the journal accepted the policy update, not merely

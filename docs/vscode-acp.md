@@ -50,7 +50,8 @@ All three file tools require approval. They provide absolute file locations befo
 File tools check workspace paths. Advertised client filesystem methods enable editor-aware reads
 and writes. Command execution is disabled by default.
 Client-supplied stdio, HTTP, and SSE MCP servers are connected. Remote servers use supplied
-authentication headers; OAuth and ACP-proxied MCP remain unsupported. MCP tool
+authentication headers; OAuth remains unsupported. ACP-proxied MCP servers use the client's
+`mcp/connect` and `mcp/message` methods. MCP tool
 calls use the same once-only permission picker and journaled results. External servers execute
 with their own process access; the workspace file sandbox does not constrain them. Read-only
 mode excludes MCP tools. Remembered approvals are not implemented. **ACP: Set Agent Mode** switches between read-only
@@ -59,6 +60,8 @@ model and thinking choices. Set `LABKIT_ACP_MODELS` to a comma-separated list of
 IDs for the same provider before launch. Configuration changes during a turn wait for settlement,
 and replies are sent only after the policy journal commit. The installed client's older model UI
 may not expose the newer `session/set_config_option` method; mode selection has the legacy alias.
+Clients that advertise boolean configuration support also receive a Stream responses toggle.
+Its value is journaled and restored even when reopening with a client that cannot display the toggle.
 
 The example now persists journals and blobs in `.labkit/sessions/store.sqlite` inside the opened
 workspace and advertises session loading. Restart the agent to pick up this configuration change;
