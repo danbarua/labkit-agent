@@ -84,7 +84,8 @@ input must become a separate turn. Abort does not discard already accepted queue
 ## Permission requests
 
 Set `permissions: "ask"` and supply `bindings.requestPermission`. Every call in a batch must receive
-once-only approval before any call runs. A refusal therefore blocks the entire batch, including
+approval before any call runs. `allow-session` remembers approval for the named tool and all its
+arguments until this live session closes or policy changes; `allow-once` covers only this call. A refusal therefore blocks the entire batch, including
 calls approved earlier. The failure identifies the refused call; no tool result is invented for it.
 A cancelled dialog aborts the turn. Without the binding, this policy is rejected before execution.
 

@@ -672,15 +672,8 @@ export async function answerPermission(
   }
   const pending = hosted.pendingPermissions.get(body.requestId);
   if (!pending) return { status: 404 as const, body: { error: "Unknown permission request" } };
-  if (
-    body.optionId !== "allow-once" &&
-    body.optionId !== "allow-session" &&
-    body.optionId !== "reject-once"
-  ) {
-    return {
-      status: 400 as const,
-      body: { error: "optionId must be allow-once, allow-session, or reject-once" },
-    };
+  if (body.optionId !== "allow-once" && body.optionId !== "reject-once") {
+    return { status: 400 as const, body: { error: "optionId must be allow-once or reject-once" } };
   }
   hosted.pendingPermissions.delete(body.requestId);
   publish(hosted, { kind: "permission_clear", requestId: body.requestId });

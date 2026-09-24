@@ -1018,7 +1018,10 @@ export function journalMarkdown(
       `Turn ID: \`${body.event.turnId}\``,
       "",
       ...(result.kind === "succeeded"
-        ? result.value.map((decision) => `- Call ${decision.callId}: **${decision.decision}**`)
+        ? result.value.map(
+            (decision) =>
+              `- Call ${decision.callId}: **${decision.decision}**${decision.approval ? ` — ${decision.approval.scope}, ${decision.approval.source}, grant ${decision.approval.grantId}` : ""}`,
+          )
         : [
             `Permission operation: ${result.kind}${result.kind === "failed" ? ` — ${result.error.message}` : ""}.`,
           ]),

@@ -176,7 +176,7 @@ test("abort signals permission port, rejects ordinary barge-in, and ignores late
   const result = await turn.settled;
   expect(result.kind === "terminal" && result.record.outcome.kind).toBe("aborted");
   expect(signal?.aborted).toBe(true);
-  pending.resolve(allow);
+  pending.resolve({ outcome: { outcome: "selected", optionId: "allow-session" } });
   await Bun.sleep(5);
   expect(requests).toHaveLength(1);
   expect(ran).toEqual([]);
@@ -373,4 +373,130 @@ test("permission mode changes only at idle policy boundaries; off keeps existing
   expect(ran).toHaveLength(6);
   const restored = await restoreSession(options, session.snapshot.durable.conversation.sessionId);
   await Promise.all([session.close(), restored.close()]);
+});
+
+test("session tool approval is committed before reuse, revoked by policy, and absent on restore", async () => {
+  const { withFixtureDiagnostics } = await import("../logging/fixture-capture.ts");
+  const directory = `.session-artifacts/permission-grants/${crypto.randomUUID()}`;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    const setupResult = setup(() => ({
+      outcome: { outcome: "selected", optionId: "allow-session" },
+    }));
+    const { options, requests, ran, parses } = setupResult;
+    const base = options.persistence;
+    const receipt = deferred<void>();
+    let awaitingReceipt = false;
+    const session = await createSession({
+      ...options,
+      persistence: {
+        ...base,
+        async append(request, signal) {
+          if (
+            !awaitingReceipt &&
+            request.records.some(
+              (raw) => JSON.parse(raw).body.event?.event?.type === "permission_settled",
+            )
+          ) {
+            awaitingReceipt = true;
+            await receipt.promise;
+          }
+          return base.append(request, signal);
+        },
+      },
+    });
+    try {
+      const first = session.input("Read both files");
+      await until(() => awaitingReceipt);
+      expect(requests).toHaveLength(1);
+      expect(ran).toHaveLength(0);
+      receipt.resolve();
+      await first.settled;
+      await session.input("Read them again").settled;
+      expect(requests).toHaveLength(1);
+      expect(ran).toHaveLength(4);
+      expect(parses()).toBe(4);
+      expect(journalJSONL(session.snapshot.durable)).toContain('"source":"remembered"');
+      expect(await session.updatePolicy({ permissions: "ask" })).toMatchObject({
+        kind: "accepted",
+      });
+      await session.input("Ask again after revocation").settled;
+      expect(requests).toHaveLength(2);
+      const restored = await restoreSession(
+        options,
+        session.snapshot.durable.conversation.sessionId,
+      );
+      try {
+        expect(requests).toHaveLength(2);
+        await restored.input("Ask again after reopening").settled;
+        expect(requests).toHaveLength(3);
+      } finally {
+        await restored.close();
+      }
+    } finally {
+      receipt.resolve();
+      await session.close();
+    }
+  });
+  const logs = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(
+    logs.some(
+      (entry) =>
+        entry.event === "permission.granted" &&
+        entry.toolName === "echo" &&
+        entry.scope === "live-session-tool",
+    ),
+  ).toBe(true);
+  expect(
+    logs.some(
+      (entry) =>
+        entry.event === "permission.reused" && entry.grantId && entry.turnId && entry.toolCallId,
+    ),
+  ).toBe(true);
+  expect(logs.some((entry) => entry.event === "permission.grants_cleared")).toBe(true);
+  expect(logs.filter((entry) => ["warning", "error"].includes(entry.level))).toEqual([]);
+});
+
+test("refused batch discards uncommitted remembered approvals and tool scopes do not cross", async () => {
+  let round = 0;
+  const fixture = setup((request) =>
+    request.toolCall.name === "other"
+      ? reject
+      : { outcome: { outcome: "selected", optionId: "allow-session" } },
+  );
+  const echo = fixture.options.bindings.tools!.get("echo")!;
+  const session = await createSession({
+    ...fixture.options,
+    configuration: {
+      ...fixture.options.configuration,
+      agents: new Map([["a", { model: "m", tools: ["echo", "other"] }]]),
+    },
+    bindings: {
+      ...fixture.options.bindings,
+      tools: new Map([
+        ["echo", echo],
+        ["other", echo],
+      ]),
+      complete: () => {
+        round++;
+        return { ...calls, calls: [calls.calls[0], { ...calls.calls[1], name: "other" }] };
+      },
+    },
+  });
+  try {
+    await session.input("First refused batch").settled;
+    await session.input("New explicit invocation").settled;
+    expect(round).toBe(2);
+    expect(fixture.requests.map((request) => request.toolCall.name)).toEqual([
+      "echo",
+      "other",
+      "echo",
+      "other",
+    ]);
+    expect(fixture.ran).toEqual([]);
+  } finally {
+    await session.close();
+  }
 });

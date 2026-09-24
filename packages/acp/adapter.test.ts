@@ -233,7 +233,11 @@ test("permission response correlation and both durable gates precede tool execut
     status: "pending",
   });
   expect(permission.params).not.toHaveProperty("turnId");
-  expect(permission.params.options.map((o: any) => o.kind)).toEqual(["allow_once", "reject_once"]);
+  expect(permission.params.options.map((o: any) => o.kind)).toEqual([
+    "allow_once",
+    "allow_always",
+    "reject_once",
+  ]);
   expect(ran).toBe(0);
   await h.send({
     jsonrpc: "2.0",

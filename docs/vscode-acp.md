@@ -63,9 +63,12 @@ and writes. Command execution is disabled by default.
 Client-supplied stdio, HTTP, and SSE MCP servers are connected. Remote servers use supplied
 authentication headers; OAuth remains unsupported. ACP-proxied MCP servers use the client's
 `mcp/connect` and `mcp/message` methods. MCP tool
-calls use the same once-only permission picker and journaled results. External servers execute
+calls use the same permission picker and journaled results. External servers execute
 with their own process access; the workspace file sandbox does not constrain them. Read-only
-mode excludes MCP tools. Remembered approvals are not implemented. **ACP: Set Agent Mode** switches between read-only
+mode excludes MCP tools. The picker can remember approval for the named tool, across all arguments,
+until the live session closes or configuration changes. Tool approvals → Ask clears remembered
+grants; the other option explicitly allows all enabled tools without asking. Reopening a session
+requires fresh grants, without replaying old tools. **ACP: Set Agent Mode** switches between read-only
 and edit access; both still require approval. Hosts with configuration-selector support also expose
 model and thinking choices. Set `LABKIT_ACP_MODELS` to a comma-separated list of additional model
 IDs for the same provider before launch. Configuration changes during a turn wait for settlement,

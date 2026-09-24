@@ -106,6 +106,25 @@ export function workspaceAgent(
         tools.set("run_command", terminalTool(terminal, files.root));
       const config: AcpConfigBinding[] = [
         {
+          id: "permissions",
+          name: "Tool approvals",
+          description:
+            "Remembered approvals cover one tool and all its arguments until the session closes or configuration changes. Select Ask to clear approvals.",
+          current: (policy) => policy.permissions ?? "off",
+          options: [
+            {
+              value: "ask",
+              name: "Ask / clear remembered approvals",
+              patch: { permissions: "ask" },
+            },
+            {
+              value: "off",
+              name: "Allow all enabled tools without asking",
+              patch: { permissions: "off" },
+            },
+          ],
+        },
+        {
           id: "stream",
           name: "Stream responses",
           category: "model_config",

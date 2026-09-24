@@ -62,10 +62,17 @@ capture so a bad response can be identified without reconstructing the request f
 ## Permission and display ports
 
 `requestPermission(request, signal)` is authoritative. With `permissions: "ask"`, the host validates
-inputs and asks about calls in order. Return a selected `allow-once` or `reject-once` option, or a
+inputs and resolves approval for calls in order. Return `allow-once`, `allow-session`, `reject-once`, or a
 cancelled outcome. Every call must be allowed before the batch runs. A malformed response or callback
 failure fails closed; cancellation revokes in-memory grants, and late approval cannot start a tool.
-No approval is remembered for the next invocation.
+`allow-session` approves the named tool for all arguments in this host's live session. The host
+installs that grant only when the committed permission outcome releases the batch. Later calls
+still validate inputs and commit permission outcomes, with the original grant ID and `remembered`
+source. Other tools still need approval. Rejection/cancellation discards uncommitted grants.
+Closing the host or a committed policy change clears remembered grants; restore does not resurrect
+them. `permission.granted`, `permission.reused`, and `permission.grants_cleared` explain this at INFO.
+An existing committed grant survives cancellation of a later turn; cancellation stops work rather
+than changing the user's authorization. Select Ask in ACP Tool approvals to revoke remembered grants.
 
 `toolUpdate` and `streamUpdate` are best-effort display subscribers. Their exceptions or pending
 promises cannot block execution. Use their operation IDs to update existing cards/chunks. Restore

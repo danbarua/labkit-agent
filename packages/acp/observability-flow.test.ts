@@ -35,7 +35,7 @@ test("persisted CLI trace joins ACP, permission, tool and provider failure acros
         bindings: { ...options.bindings, providers: new Map([...options.bindings.providers].map(([id, binding]) => [id, { ...binding, transport: { ...binding.transport, fetch: async () => {
           calls++;
           if (calls === 3) return Response.json({error: {type: "invalid_request_error", message: "Unsupported max_tokens; supplied key " + ${JSON.stringify(secret)}}}, {status: 400, headers: {"request-id": "req-provider-failure-123"}});
-          return Response.json({role: "assistant", stop_reason: calls === 1 ? "tool_use" : "end_turn", content: calls === 1 ? [{type: "tool_use", id: "read-1", name: "read_file", input: {path: "README.md"}}] : [{type: "text", text: "Read complete"}], usage: {input_tokens: 32, output_tokens: 16}});
+          return Response.json({role: "assistant", stop_reason: calls === 1 ? "tool_use" : "end_turn", content: calls === 1 ? [{type: "tool_use", id: "read-1", name: "read_file", input: {path: "README.md"}}, {type: "tool_use", id: "read-2", name: "read_file", input: {path: "README.md"}}] : [{type: "text", text: "Read complete"}], usage: {input_tokens: 32, output_tokens: 16}});
         } } }])) }
       };
     } };
@@ -130,9 +130,12 @@ test("persisted CLI trace joins ACP, permission, tool and provider failure acros
     first.send({
       jsonrpc: "2.0",
       id: permission.id,
-      result: { outcome: { outcome: "selected", optionId: "allow-once" } },
+      result: { outcome: { outcome: "selected", optionId: "allow-session" } },
     });
     expect((await first.response(3)).result.stopReason).toBe("end_turn");
+    expect(
+      first.messages.filter((message) => message.method === "session/request_permission"),
+    ).toHaveLength(1);
     first.send({
       jsonrpc: "2.0",
       id: 4,
@@ -189,6 +192,16 @@ test("persisted CLI trace joins ACP, permission, tool and provider failure acros
     expect(JSON.stringify(failure)).toContain("Unsupported max_tokens");
     expect(failure.childId).toBeDefined();
     expect(failure.turnId).toBeDefined();
+    expect(
+      trace.some(
+        (record) => record.event === "permission.granted" && record.toolName === "read_file",
+      ),
+    ).toBe(true);
+    expect(
+      trace.some(
+        (record) => record.event === "permission.reused" && record.scope === "live-session-tool",
+      ),
+    ).toBe(true);
     const approval = trace.find((record) => record.event === "acp.permission.waiting");
     expect(approval.rpcRequestId).toBe("3");
     expect(approval.toolCallId).toBe(permission.params.toolCall.toolCallId);

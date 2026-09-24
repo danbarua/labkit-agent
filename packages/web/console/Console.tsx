@@ -322,7 +322,7 @@ export function Console() {
     else if (body.receipt && body.receipt.kind !== "accepted") setNotice(receiptText(body.receipt));
   }
 
-  async function answerPermission(optionId: "allow-once" | "reject-once") {
+  async function answerPermission(optionId: "allow-once" | "allow-session" | "reject-once") {
     if (!view || !permission || permissionBusy) return;
     setPermissionBusy(true);
     setNotice("");

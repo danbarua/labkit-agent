@@ -62,16 +62,19 @@ test("HTTP failure never retries and retains provider body; invalid JSON fails",
 });
 test("cancellation reaches fetch and rejects a late response", async () => {
   const pending = deferred<Response>();
+  const dispatched = deferred<void>();
   let seen: AbortSignal | null | undefined;
   const http = httpTransport({
     baseUrl: "https://example.invalid",
     fetch: (async (_url, init) => {
       seen = init?.signal;
+      dispatched.resolve();
       return pending.promise;
     }) as typeof fetch,
   });
   const controller = new AbortController();
   const result = http({ path: "/test", method: "POST", headers: {}, body: {} }, controller.signal);
+  await dispatched.promise;
   controller.abort();
   pending.resolve(Response.json({}));
   await expect(result).rejects.toThrow();
@@ -616,4 +619,34 @@ test("terminal stream evidence survives a following ping before premature EOF", 
   } finally {
     emitted.mockRestore();
   }
+});
+
+test("cancellation during request capture cannot dispatch HTTP afterward", async () => {
+  const captured = deferred<void>();
+  const release = deferred<void>();
+  const controller = new AbortController();
+  let calls = 0;
+  const transport = httpTransport({
+    baseUrl: "https://example.invalid",
+    capture: async (event) => {
+      if (event.kind === "http_request") {
+        captured.resolve();
+        await release.promise;
+      }
+    },
+    fetch: (async () => {
+      calls++;
+      return Response.json({});
+    }) as unknown as typeof fetch,
+  });
+  const request = transport(
+    { path: "/complete", method: "POST", headers: {}, body: {} },
+    controller.signal,
+  );
+  const rejected = request.catch((error: unknown) => error);
+  await captured.promise;
+  controller.abort(new Error("Cancelled during capture"));
+  release.resolve();
+  expect(await rejected).toMatchObject({ message: "Cancelled during capture" });
+  expect(calls).toBe(0);
 });

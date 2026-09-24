@@ -397,6 +397,7 @@ function configure(raw: SessionOptions, restoring = false) {
         allowedTools: prompt?.agent.tools,
         toolFailure: policy?.toolFailure,
         permissions: policy?.permissions,
+        policyVersion: policy?.version,
         completionTimeoutMs: policy?.completionTimeoutMs ?? undefined,
         toolTimeoutMs: policy?.toolTimeoutMs ?? undefined,
         provider: policy,

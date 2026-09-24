@@ -12,7 +12,7 @@ agent. See [VS Code setup](../../docs/vscode-acp.md) for the ACP Client launch c
 Set `LABKIT_ACP_MODEL` and the provider credential in the launch environment. The default
 provider is `anthropic`; `LABKIT_ACP_PROVIDER` also accepts `openai`, `openai-responses`, or
 `google`. These use ANTHROPIC_API_KEY, OPENAI_API_KEY and GOOGLE_API_KEY respectively.
-LABKIT_ACP_BASE_URL optionally overrides the endpoint. The example enables streaming and once-only
+LABKIT_ACP_BASE_URL optionally overrides the endpoint. The example enables streaming and explicit
 permissions. File access, Model and Thinking selectors commit the same core policy contract.
 LABKIT_ACP_MODELS adds comma-separated model IDs to the environment's explicit model registry.
 No model catalog is inferred, and no historical adapter registry is installed during restore.
@@ -350,7 +350,7 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
   notifications reflect the same committed policy. New/load/resume responses include current
   config options and legacy modes when bindings are provided. Boolean controls require the client's
   `session.configOptions.boolean` capability.
-- `session/request_permission`: once-only options, correlated through SDK requests. The core
+- `session/request_permission`: `allow_once`, `allow_always` (named tool, all arguments, live session), and `reject_once` options, correlated through SDK requests. The core
   operation's AbortSignal cancels the wait even if a client never replies; late allows cannot run tools.
 
 Sessions default to policy `permissions: "ask"`; an explicit factory policy `off` retains unattended

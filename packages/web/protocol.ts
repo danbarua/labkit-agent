@@ -121,7 +121,7 @@ export type PermissionPrompt = {
     locations?: Array<Record<string, unknown>>;
   };
   options: Array<{
-    optionId: "allow-once" | "reject-once";
+    optionId: "allow-once" | "allow-session" | "reject-once";
     name: string;
     kind: string;
   }>;

@@ -8,6 +8,14 @@ export const PermissionDecisionsSchema = z
       .strictObject({
         callId: ToolCallIdSchema,
         decision: z.enum(["allow_once", "reject_once", "cancelled"]),
+        approval: z
+          .object({
+            scope: z.literal("live-session-tool"),
+            source: z.enum(["user", "remembered"]),
+            grantId: z.string().min(1),
+          })
+          .readonly()
+          .optional(),
       })
       .readonly(),
   )

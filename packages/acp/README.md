@@ -82,7 +82,11 @@ software does not migrate historical journal formats. See
 
 A pending tool card describes intended work. Only `request_permission` approves a call, and every
 call in the batch must be approved before any tool runs. A refusal blocks the batch; a cancelled
-dialog aborts the turn. The adapter maps the typed core refusal directly to ACP `refusal`.
+dialog aborts the turn. The picker also offers approval of the named tool for all arguments until
+the live session closes. Other tools remain unapproved. Each reuse is logged and journaled with its
+grant identity; input validation and persistence gates still apply. Closing/reloading a session or
+committing configuration changes clears these approvals. Under Tool approvals, select Ask to clear
+remembered grants or explicitly allow all enabled tools without asking. The adapter maps the typed core refusal directly to ACP `refusal`.
 
 Stream text is provisional. It can be visible before EOF exposes a malformed response, and a tool
 card can show completion before its result is saved. Wait for the prompt response to decide how

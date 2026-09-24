@@ -624,6 +624,11 @@
               "kind": "allow_once"
             },
             {
+              "optionId": "allow-session",
+              "name": "Allow read_note for all arguments until session closes",
+              "kind": "allow_always"
+            },
+            {
               "optionId": "reject-once",
               "name": "Reject",
               "kind": "reject_once"
@@ -1232,6 +1237,11 @@
               "optionId": "allow-once",
               "name": "Allow once",
               "kind": "allow_once"
+            },
+            {
+              "optionId": "allow-session",
+              "name": "Allow read_note for all arguments until session closes",
+              "kind": "allow_always"
             },
             {
               "optionId": "reject-once",
@@ -29796,6 +29806,11 @@
               "kind": "allow_once"
             },
             {
+              "optionId": "allow-session",
+              "name": "Allow echo for all arguments until session closes",
+              "kind": "allow_always"
+            },
+            {
               "optionId": "reject-once",
               "name": "Reject",
               "kind": "reject_once"
@@ -29823,6 +29838,11 @@
               "optionId": "allow-once",
               "name": "Allow once",
               "kind": "allow_once"
+            },
+            {
+              "optionId": "allow-session",
+              "name": "Allow echo for all arguments until session closes",
+              "kind": "allow_always"
             },
             {
               "optionId": "reject-once",
@@ -31159,6 +31179,11 @@
               "kind": "allow_once"
             },
             {
+              "optionId": "allow-session",
+              "name": "Allow echo for all arguments until session closes",
+              "kind": "allow_always"
+            },
+            {
               "optionId": "reject-once",
               "name": "Reject",
               "kind": "reject_once"
@@ -31186,6 +31211,11 @@
               "optionId": "allow-once",
               "name": "Allow once",
               "kind": "allow_once"
+            },
+            {
+              "optionId": "allow-session",
+              "name": "Allow echo for all arguments until session closes",
+              "kind": "allow_always"
             },
             {
               "optionId": "reject-once",
@@ -32134,6 +32164,11 @@
               "kind": "allow_once"
             },
             {
+              "optionId": "allow-session",
+              "name": "Allow echo for all arguments until session closes",
+              "kind": "allow_always"
+            },
+            {
               "optionId": "reject-once",
               "name": "Reject",
               "kind": "reject_once"
@@ -32661,6 +32696,11 @@
               "optionId": "allow-once",
               "name": "Allow once",
               "kind": "allow_once"
+            },
+            {
+              "optionId": "allow-session",
+              "name": "Allow echo for all arguments until session closes",
+              "kind": "allow_always"
             },
             {
               "optionId": "reject-once",

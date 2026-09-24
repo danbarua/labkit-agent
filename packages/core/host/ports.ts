@@ -118,7 +118,7 @@ export const PermissionResponseSchema = z.strictObject({
   outcome: z.discriminatedUnion("outcome", [
     z.strictObject({
       outcome: z.literal("selected"),
-      optionId: z.enum(["allow-once", "reject-once"]),
+      optionId: z.enum(["allow-once", "allow-session", "reject-once"]),
     }),
     z.strictObject({ outcome: z.literal("cancelled") }),
   ]),
@@ -138,9 +138,9 @@ export type PermissionRequest = Readonly<{
     locations?: readonly ToolLocation[];
   }>;
   options: readonly Readonly<{
-    optionId: "allow-once" | "reject-once";
+    optionId: "allow-once" | "allow-session" | "reject-once";
     name: string;
-    kind: "allow_once" | "reject_once";
+    kind: "allow_once" | "allow_always" | "reject_once";
   }>[];
 }>;
 /** Authoritative response, unlike display sinks. Exceptions and malformed responses fail closed. */

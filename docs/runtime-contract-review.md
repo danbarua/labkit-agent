@@ -124,3 +124,23 @@ console auto-scroll effect dependency rule; changed core/ACP implementation chec
 provider credits were used. The inspected token-settings run was
 `4203fc52-6d9e-4dbf-92bc-8aa29a6bb6b2`: retained requests show 8192/32768 followed by 4096/16384,
 and its persisted diagnostics contain no warnings or errors.
+
+## Correction: remembered tool approval
+
+The once-only ACP picker made repeated tool use require repeated user intervention. It now offers
+`allow-session`: approval of the named tool for all arguments until the live session closes or
+configuration changes. The host owns grants. It installs a grant only when the committed permission
+outcome releases the batch; refused/cancelled batches discard new grants. Every later call still
+validates inputs and commits a permission decision with the original grant identity and source.
+Restoration makes no calls and does not recreate live approvals. An already committed grant survives
+cancellation of a later turn. ACP Tool approvals exposes Ask (clear grants) and an explicit option to
+allow all enabled tools without asking. No default permission was silently broadened.
+
+Verification: 547 core/ACP tests passed with DEBUG logs, type checking and the web build passed,
+and fixture entry points passed 42 and 25 scenarios. The built ACP launcher performs two reads
+with one permission response. Persisted grant/reuse/revocation diagnostics were inspected under
+`.session-artifacts/permission-grants/b4065919-66d6-474f-ba10-4fbf42a238d9`; routine success has no
+warnings/errors. The changed fixture baseline only adds the new permission option; existing
+outcomes and tool dispatch counts remain unchanged. The full suite also exposed cancellation
+while request capture was pending: transport now checks cancellation again before HTTP dispatch,
+with a regression test proving no fetch after cancellation.

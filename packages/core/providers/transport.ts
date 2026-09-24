@@ -130,6 +130,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
         body: redact(JSON.stringify(request.body)),
         endpoint: base + request.path + query,
       });
+      signal.throwIfAborted();
       phase = "fetch";
       diagnostic("provider", "debug", "provider.http.started", trace);
       const response = await fetcher(base + request.path + query, {

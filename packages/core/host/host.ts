@@ -98,6 +98,7 @@ export type StreamUpdateSink = (notification: HostStreamNotification) => unknown
 
 export type ExecutionContext = Readonly<{
   permissions?: "off" | "ask";
+  policyVersion?: number;
   completionTimeoutMs?: number;
   toolTimeoutMs?: number;
   prompt?: PromptInput;
@@ -149,6 +150,9 @@ export function createHost(
     }
   >();
   const requestPermission = bindings.requestPermission;
+  const remembered = new Map<string, string>();
+  let permissionPolicyVersion: number | undefined;
+
   const grants = new Map<
     ActorId,
     {
@@ -156,6 +160,7 @@ export function createHost(
       approved: boolean;
       inputs: Map<string, unknown>;
       pending: HostToolNotification[];
+      remembered: Map<string, string>;
     }
   >();
   const revoke = (id: ActorId) => {
@@ -292,6 +297,18 @@ export function createHost(
     context: ExecutionContext,
   ): undefined => {
     if (closed) throw new Error("Host closed");
+    if (permissionPolicyVersion !== context.policyVersion) {
+      if (remembered.size)
+        diagnostic("host", "info", "permission.grants_cleared", {
+          sessionId: bindings.sessionId,
+          reason: "Committed policy changed; previous tool approvals no longer apply",
+          previousPolicyVersion: permissionPolicyVersion,
+          policyVersion: context.policyVersion,
+          toolNames: [...remembered.keys()],
+        });
+      remembered.clear();
+      permissionPolicyVersion = context.policyVersion;
+    }
     context = freeze({
       ...context,
       prompt: context.prompt ? structuredClone(context.prompt) : undefined,
@@ -552,6 +569,7 @@ export function createHost(
           approved: false,
           inputs: new Map<string, unknown>(),
           pending: [] as HostToolNotification[],
+          remembered: new Map<string, string>(),
         };
         grants.set(command.child.id, grant);
         spawn(
@@ -623,6 +641,23 @@ export function createHost(
                     toolName: call.name,
                     locations,
                   };
+                  const rememberedGrant =
+                    remembered.get(call.name) ?? grant.remembered.get(call.name);
+                  if (rememberedGrant) {
+                    const approval = {
+                      scope: "live-session-tool" as const,
+                      source: "remembered" as const,
+                      grantId: rememberedGrant,
+                    };
+                    decisions.push({ callId: call.id, decision: "allow_once", approval });
+                    diagnostic("host", "info", "permission.reused", {
+                      ...permissionContext,
+                      ...approval,
+                      reason:
+                        "User previously approved this tool for all arguments in this live session",
+                    });
+                    continue;
+                  }
                   diagnostic("host", "info", "permission.waiting", {
                     ...permissionContext,
                     reason: "Tool execution requires user approval; batch execution is blocked",
@@ -645,6 +680,11 @@ export function createHost(
                         },
                         options: [
                           { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+                          {
+                            optionId: "allow-session",
+                            name: `Allow ${call.name} for all arguments until session closes`,
+                            kind: "allow_always",
+                          },
                           { optionId: "reject-once", name: "Reject", kind: "reject_once" },
                         ],
                       }),
@@ -655,7 +695,8 @@ export function createHost(
                   const decision =
                     response.outcome.outcome === "cancelled"
                       ? "cancelled"
-                      : response.outcome.optionId === "allow-once"
+                      : response.outcome.optionId === "allow-once" ||
+                          response.outcome.optionId === "allow-session"
                         ? "allow_once"
                         : "reject_once";
                   diagnostic("host", "info", "permission.decided", {
@@ -678,7 +719,17 @@ export function createHost(
                       durationMs: Math.round(performance.now() - permissionStartedAt),
                     });
                   }
-                  decisions.push({ callId: call.id, decision });
+                  const approval =
+                    response.outcome.outcome === "selected" &&
+                    response.outcome.optionId === "allow-session"
+                      ? {
+                          scope: "live-session-tool" as const,
+                          source: "user" as const,
+                          grantId: permissionContext.requestId,
+                        }
+                      : undefined;
+                  if (approval) grant.remembered.set(call.name, approval.grantId);
+                  decisions.push({ callId: call.id, decision, ...(approval ? { approval } : {}) });
                   if (decision !== "allow_once") break;
                 } catch (error) {
                   throw failure(error, {
@@ -720,6 +771,20 @@ export function createHost(
             command.completion.calls.some((call) => !grant.inputs.has(call.id)))
         )
           throw new Error("Missing tool permission grant");
+        for (const [toolName, grantId] of grant?.remembered ?? []) {
+          remembered.set(toolName, grantId);
+          diagnostic("host", "info", "permission.granted", {
+            sessionId: bindings.sessionId,
+            turnId,
+            childId: command.child.id,
+            toolName,
+            grantId,
+            scope: "live-session-tool",
+            policyVersion: context.policyVersion,
+            reason:
+              "User approved this tool for all arguments until this session closes or its policy changes",
+          });
+        }
         if (command.permission) grants.delete(command.permission.id);
         let batch: Actor<BatchState, BatchEvent, BatchCommand>;
         const runBatchCommand = (batchCommand: BatchCommand): undefined => {
@@ -935,6 +1000,7 @@ export function createHost(
       for (const { actor } of children.values()) void actor.cancel();
       pendingTools.clear();
       grants.clear();
+      remembered.clear();
     },
     get snapshot() {
       return freeze(
