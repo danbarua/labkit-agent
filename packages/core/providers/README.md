@@ -162,10 +162,9 @@ emits no warning. Capture storage is caller-owned and separate from bounded diag
 
 ## Attachments
 
-Check `session.model.capabilities.media` before offering attachment choices. Even supported text
-has a representation limit: a large document may be represented by a hash stub instead of its full
-contents. An application that needs extraction must arrange it explicitly; attachment support is
-not an automatic document-reading workflow.
+Check `session.model.capabilities.media` before offering attachment choices. Accepted text
+attachments are sent in full. The runtime does not replace their contents with a hash placeholder.
+The selected model’s context limit still applies; a provider rejection remains an explicit failure.
 
 Every profile accepts text/plain and text/markdown. Anthropic @2–@4 additionally support user PNG,
 JPEG and PDF as base64 blocks. Google profiles support user audio as native `inlineData` parts,
@@ -174,8 +173,8 @@ and bytes are preserved; no transcription or text stub is substituted. See Googl
 [audio input documentation](https://ai.google.dev/gemini-api/docs/generate-content/audio).
 The environment must bind a model that supports the declared media. Other profiles still reject
 audio before HTTP. Tool-result blobs and other unsupported media fail before HTTP.
-Attachment bytes are verified by hash/length through an operation-local resolver. Inline UTF-8 text
-is limited to 65,536 bytes; larger text becomes a named SHA-256 stub, not its full contents. No implicit
+Attachment bytes are verified by hash/length through an operation-local resolver. UTF-8 text
+is decoded in full within the 8 MiB blob limit. No implicit
 summarization, path reading, PDF conversion or Files API is performed. Attachment refs and continuation
 refs use the same journal format as text and permissions.
 

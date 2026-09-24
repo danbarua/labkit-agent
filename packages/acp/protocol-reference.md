@@ -528,8 +528,8 @@ them. Non-file URLs remain textual references; the adapter never fetches them. C
 ingestion admits no user turn (an unreferenced blob may already have been stored).
 
 Local attachments retain the 8 MiB blob cap. Extensions select markdown, PDF, PNG, JPEG, or UTF-8
-plain text; the bound provider must support the selected media. The existing 64 KiB provider text
-inline cap is unchanged. Attaching a local resource is an explicit user input and does not create
+plain text; the bound provider must support the selected media. Accepted text attachments are sent in full within the blob limit; oversized model context
+is reported as a provider failure rather than silently substituted content. Attaching a local resource is an explicit user input and does not create
 a tool permission request. Model-initiated file access still uses the permission-gated tools.
 Image, audio, and embedded-context capabilities are advertised. PNG/JPEG image data and embedded binary
 resources (PNG/JPEG/PDF or UTF-8 plain text/markdown) require canonical base64 and the same 8 MiB
@@ -543,7 +543,7 @@ profile. Custom completion ports without a provider registry cannot resolve atta
 before storage/admission. Local audio file links use the declared audio MIME type or a recognized
 extension. Reload displays the saved audio reference without invoking a model; a new prompt can
 resolve the saved bytes. Audio playback in the installed editor still needs verification.
-The existing provider text inline cap still applies to embedded resources.
+Embedded text resources follow the same full-content rule.
 
 Client-supplied stdio, HTTP, SSE, and ACP-proxied MCP servers are supported. MCP OAuth, cross-provider switching,
 and ACP HTTP transport remain unimplemented. No usage_update is fabricated from provider usage deltas:

@@ -73,9 +73,7 @@ export function attachmentText(ref: BlobRef, blobs?: BlobResolver): string {
   if (ref.media !== "text/plain" && ref.media !== "text/markdown")
     throw new Error(`Cannot inline attachment media as text: ${ref.media}`);
   const bytes = attachmentBytes(ref, blobs);
-  return bytes.byteLength <= 65536
-    ? new TextDecoder("utf-8", { fatal: true }).decode(bytes)
-    : `[attached: ${ref.name ?? ref.media} sha256:${ref.id}]`;
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 }
 export function attachmentBytes(ref: BlobRef, blobs?: BlobResolver): Uint8Array {
   if (!blobs) throw new Error(`Missing blob resolver: ${ref.id}`);

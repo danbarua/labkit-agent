@@ -1687,93 +1687,113 @@ for (const type of ["http", "sse"] as const) {
   });
 }
 
-test("ACP embedded image, PDF, and editor text reach provider wire through blobs only", async () => {
+test("ACP embedded image, PDF, and large editor text reach provider wire through blobs only", async () => {
   const { anthropicMessagesV2 } = await import("@labkit-agent/core/providers");
   const { SessionIdSchema } = await import("@labkit-agent/core/types");
-  const base = setup();
-  const text = "UNSAVED_EDITOR_CONTENT_SENTINEL";
-  const image = Buffer.from("IMAGE_CONTENT_SENTINEL").toString("base64");
-  const pdf = Buffer.from("PDF_CONTENT_SENTINEL").toString("base64");
-  let wire: any;
-  const h = harness({
-    ...base.options,
-    sessionOptions: async (context) => {
-      const original = await base.options.sessionOptions(context);
-      return {
-        ...original,
-        configuration: {
-          ...original.configuration,
-          policy: { maxOutputTokens: 16384, provider: anthropicMessagesV2.id },
-        },
-        bindings: {
-          ...original.bindings,
-          complete: undefined,
-          providers: new Map([
-            [
-              anthropicMessagesV2.id,
-              {
-                profile: anthropicMessagesV2,
-                transport: {
-                  baseUrl: "https://provider.invalid",
-                  fetch: (async (_url, init) => {
-                    wire = JSON.parse(String(init?.body));
-                    return Response.json({
-                      role: "assistant",
-                      content: [{ type: "text", text: "Done" }],
-                      stop_reason: "end_turn",
-                    });
-                  }) as typeof fetch,
-                },
-              },
-            ],
-          ]),
-        },
-      };
-    },
-  });
-  try {
-    await h.initialize();
-    const id = await h.newSession();
-    const response = await h.request("session/prompt", {
-      sessionId: id,
-      prompt: [
-        { type: "image", mimeType: "image/png", data: image },
-        {
-          type: "resource",
-          resource: { uri: "file:///outside/unsaved.md", mimeType: "text/markdown", text },
-        },
-        {
-          type: "resource",
-          resource: {
-            uri: "https://must-not-fetch.invalid/doc.pdf",
-            mimeType: "application/pdf",
-            blob: pdf,
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = `.session-artifacts/acp-full-text/${crypto.randomUUID()}`;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    const base = setup();
+    const text = "Documentation body. ".repeat(4000) + "UNSAVED_EDITOR_CONTENT_SENTINEL";
+    const image = Buffer.from("IMAGE_CONTENT_SENTINEL").toString("base64");
+    const pdf = Buffer.from("PDF_CONTENT_SENTINEL").toString("base64");
+    let wire: any;
+    const h = harness({
+      ...base.options,
+      sessionOptions: async (context) => {
+        const original = await base.options.sessionOptions(context);
+        return {
+          ...original,
+          configuration: {
+            ...original.configuration,
+            policy: { maxOutputTokens: 16384, provider: anthropicMessagesV2.id },
           },
-        },
-      ],
+          bindings: {
+            ...original.bindings,
+            complete: undefined,
+            providers: new Map([
+              [
+                anthropicMessagesV2.id,
+                {
+                  profile: anthropicMessagesV2,
+                  transport: {
+                    baseUrl: "https://provider.invalid",
+                    capture: async (event) => {
+                      await Bun.write(
+                        `${directory}/${event.kind}.json`,
+                        JSON.stringify(event, null, 2),
+                      );
+                    },
+                    fetch: (async (_url, init) => {
+                      wire = JSON.parse(String(init?.body));
+                      return Response.json({
+                        role: "assistant",
+                        content: [{ type: "text", text: "Done" }],
+                        stop_reason: "end_turn",
+                      });
+                    }) as typeof fetch,
+                  },
+                },
+              ],
+            ]),
+          },
+        };
+      },
     });
-    expect(response.error).toBeUndefined();
-    expect(response.result.stopReason).toBe("end_turn");
-    const content = wire.messages[0].content;
-    expect(content).toContainEqual({
-      type: "image",
-      source: { type: "base64", media_type: "image/png", data: image },
-    });
-    expect(content).toContainEqual({
-      type: "document",
-      source: { type: "base64", media_type: "application/pdf", data: pdf },
-    });
-    expect(JSON.stringify(content)).toContain(text);
-    const journal = await base.persistence.load(
-      SessionIdSchema.parse(id),
-      new AbortController().signal,
-    );
-    expect(JSON.stringify(journal)).not.toContain(text);
-    expect(JSON.stringify(journal)).not.toContain(image);
-    expect(JSON.stringify(journal)).not.toContain(pdf);
-  } finally {
-    await h.close();
-  }
+    try {
+      await h.initialize();
+      const id = await h.newSession();
+      const response = await h.request("session/prompt", {
+        sessionId: id,
+        prompt: [
+          { type: "image", mimeType: "image/png", data: image },
+          {
+            type: "resource",
+            resource: { uri: "file:///outside/unsaved.md", mimeType: "text/markdown", text },
+          },
+          {
+            type: "resource",
+            resource: {
+              uri: "https://must-not-fetch.invalid/doc.pdf",
+              mimeType: "application/pdf",
+              blob: pdf,
+            },
+          },
+        ],
+      });
+      expect(response.error).toBeUndefined();
+      expect(response.result.stopReason).toBe("end_turn");
+      const content = wire.messages[0].content;
+      expect(content).toContainEqual({
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: image },
+      });
+      expect(content).toContainEqual({
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: pdf },
+      });
+      expect(JSON.stringify(content)).toContain(text);
+      const journal = await base.persistence.load(
+        SessionIdSchema.parse(id),
+        new AbortController().signal,
+      );
+      expect(JSON.stringify(journal)).not.toContain(text);
+      expect(JSON.stringify(journal)).not.toContain(image);
+      expect(JSON.stringify(journal)).not.toContain(pdf);
+    } finally {
+      await h.close();
+    }
+  });
+  const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(
+    records.find(
+      (record) => record.event === "attachment.stored" && record.media === "text/markdown",
+    ).bytes,
+  ).toBeGreaterThan(65536);
+  expect(records.filter((record) => ["warning", "error"].includes(record.level))).toHaveLength(0);
 });
 
 for (const scenario of [

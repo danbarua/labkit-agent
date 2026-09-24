@@ -72,7 +72,7 @@ test("all profiles inline small markdown while retaining refs on the canonical r
   });
 });
 
-test("large text uses a named hash stub; invalid bytes and unsupported media fail closed", () => {
+test("large text is sent in full; invalid bytes and unsupported media fail closed", () => {
   const bytes = new Uint8Array(65537).fill(65);
   const large = { ...ref, id: hashBlob(bytes), bytes: bytes.length };
   const request = CompletionRequestSchema.parse({
@@ -80,7 +80,7 @@ test("large text uses a named hash stub; invalid bytes and unsupported media fai
     messages: [{ role: "user", text: "", parts: [{ type: "blob", ref: large }] }],
   });
   expect(openaiChat.encode(request, () => bytes).body).toMatchObject({
-    messages: [{ role: "user", content: `[attached: DESIGN.md sha256:${large.id}]` }],
+    messages: [{ role: "user", content: new TextDecoder().decode(bytes) }],
   });
   expect(() => openaiChat.encode(request, () => markdown)).toThrow("do not match");
   expect(() => openaiChat.encode(input)).toThrow("resolver");
