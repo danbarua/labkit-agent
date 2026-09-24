@@ -1,0 +1,24 @@
+@import "./styles/globals.css";
+
+@layer base {
+  :root {
+    @apply font-sans;
+  }
+
+  body {
+    @apply m-0 min-h-screen min-w-[320px] bg-paper text-ink antialiased;
+  }
+
+  ::selection {
+    background: #14b8a638;
+    color: #0b1220;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation: none !important;
+  }
+}

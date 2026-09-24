@@ -1,0 +1,138 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Labkit brand palette, from the design language board.
+ * Semantic roles map that palette into the existing component tokens.
+ * Primary actions are Deep Ink on paper; Lab Teal is the accent, not the button fill.
+ */
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-wordmark: "Outfit Variable", "Inter Variable", ui-sans-serif, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-ink: #0b1220;
+  --color-indigo: #1e2a44;
+  --color-teal: #14b8a6;
+  --color-amber: #f59e0b;
+  --color-paper: #f8fafc;
+  --color-cool: #94a3b8;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  color-scheme: light;
+  --radius: 0.5rem;
+  --background: #f8fafc;
+  --foreground: #0b1220;
+  --card: #ffffff;
+  --card-foreground: #0b1220;
+  --popover: #ffffff;
+  --popover-foreground: #0b1220;
+  --primary: #0b1220;
+  --primary-foreground: #f8fafc;
+  --secondary: #ffffff;
+  --secondary-foreground: #0b1220;
+  --muted: #eef2f6;
+  --muted-foreground: #5c6b82;
+  --accent: #e7f6f4;
+  --accent-foreground: #0b1220;
+  --destructive: #dc2626;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #14b8a6;
+  --chart-1: #14b8a6;
+  --chart-2: #1e2a44;
+  --chart-3: #f59e0b;
+  --chart-4: #0b1220;
+  --chart-5: #94a3b8;
+  --sidebar: #f8fafc;
+  --sidebar-foreground: #0b1220;
+  --sidebar-primary: #0b1220;
+  --sidebar-primary-foreground: #f8fafc;
+  --sidebar-accent: #eef2f6;
+  --sidebar-accent-foreground: #0b1220;
+  --sidebar-border: #e2e8f0;
+  --sidebar-ring: #14b8a6;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #0b1220;
+  --foreground: #f8fafc;
+  --card: #1e2a44;
+  --card-foreground: #f8fafc;
+  --popover: #1e2a44;
+  --popover-foreground: #f8fafc;
+  --primary: #14b8a6;
+  --primary-foreground: #0b1220;
+  --secondary: #1e2a44;
+  --secondary-foreground: #f8fafc;
+  --muted: #1e2a44;
+  --muted-foreground: #94a3b8;
+  --accent: #163832;
+  --accent-foreground: #f8fafc;
+  --destructive: #f87171;
+  --border: rgb(248 250 252 / 12%);
+  --input: rgb(248 250 252 / 16%);
+  --ring: #14b8a6;
+  --chart-1: #14b8a6;
+  --chart-2: #94a3b8;
+  --chart-3: #f59e0b;
+  --chart-4: #f8fafc;
+  --chart-5: #1e2a44;
+  --sidebar: #0b1220;
+  --sidebar-foreground: #f8fafc;
+  --sidebar-primary: #14b8a6;
+  --sidebar-primary-foreground: #0b1220;
+  --sidebar-accent: #1e2a44;
+  --sidebar-accent-foreground: #f8fafc;
+  --sidebar-border: rgb(248 250 252 / 12%);
+  --sidebar-ring: #14b8a6;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

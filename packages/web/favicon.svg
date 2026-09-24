@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" role="img">
+  <title>Labkit Agent</title>
+  <path d="M6.05 1.35h3.9v1.05h-.7v1.85L12.15 11.15a1.55 1.55 0 0 1-1.35 2.35H5.2a1.55 1.55 0 0 1-1.35-2.35L6.75 4.25V2.4h-.7V1.35Z" stroke="#14B8A6" stroke-width="1.35" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M4.61 9.35H5.61" stroke="#14B8A6" stroke-width="0.7" stroke-linecap="round"/>
+  <circle cx="6.31" cy="9.35" r="0.72" fill="#14B8A6"/>
+  <path d="M6.86 9.05 8.01 8.05" stroke="#14B8A6" stroke-width="0.7" stroke-linecap="round"/>
+  <circle cx="8.81" cy="7.35" r="0.62" fill="none" stroke="#14B8A6" stroke-width="0.7"/>
+  <circle cx="8.81" cy="11.15" r="0.62" fill="none" stroke="#14B8A6" stroke-width="0.7"/>
+</svg>

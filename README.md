@@ -1,3 +1,5 @@
+<img src="packages/web/brand/logo.svg" alt="Labkit Agent" width="280" />
+
 # Labkit Agent
 
 Labkit Agent is an experimental runtime for computational-science agents. Its unusual
@@ -41,7 +43,7 @@ policy event with a specific version.
 | `packages/core/providers`   | Versioned provider profiles and fetch transport             |
 | `packages/core/environment` | Event sources and renderer bindings                         |
 | `packages/core/logging`     | Environment-owned diagnostics                               |
-| `packages/web`              | Small local completion console                              |
+| `packages/web`              | Brand design system and local web surface                   |
 
 Each core module documents its local contracts in its own README where present.
 Cross-module architecture and flow diagrams live in [`docs/`](./docs/).
@@ -55,10 +57,10 @@ bunx tsc --noEmit
 bun run format:check
 ```
 
-Use `bun run dev` for the local web console and `bun run build` for its production
+Use `bun run dev` for the local web surface and `bun run build` for its production
 bundle.
 
 The project is still experimental. Persistence is an injected contract rather than a
 bundled durable backend, and protocol integration described in the design notes is not
-all implemented. The web package is currently a provider console, not a complete
-session interface.
+all implemented. The web package currently presents the brand design system, not a
+complete session interface.
