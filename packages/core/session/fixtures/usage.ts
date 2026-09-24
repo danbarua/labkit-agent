@@ -1,12 +1,7 @@
 // Start here: ordinary usage through the package's public API. Dependencies are local doubles.
 import { z } from "zod";
 
-import {
-  createSession,
-  defineTool,
-  restoreSession,
-  type BoundSessionOptions,
-} from "../../index.ts";
+import { createSession, defineTool, restoreSession, type SessionOptions } from "../../index.ts";
 import { deterministicIds } from "../test-support.ts";
 import type { Scenario } from "./support.ts";
 
@@ -23,7 +18,7 @@ export const conversationUsage: Scenario = {
   dependencies: { completions: [] },
   async run(f) {
     let modelCalls = 0;
-    const options: BoundSessionOptions = {
+    const options: SessionOptions = {
       persistence: f.persistence,
       configuration: {
         agent: "reviewer",
@@ -104,7 +99,7 @@ function toolUsage(allow: boolean): Scenario {
       let reads = 0;
       let modelCalls = 0;
       let permissions = 0;
-      const options: BoundSessionOptions = {
+      const options: SessionOptions = {
         persistence: f.persistence,
         configuration: {
           agent: "reviewer",
@@ -183,5 +178,7 @@ function toolUsage(allow: boolean): Scenario {
     },
   };
 }
+
 export const approveToolUsage = toolUsage(true);
+
 export const denyToolUsage = toolUsage(false);

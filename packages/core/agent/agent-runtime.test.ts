@@ -32,7 +32,9 @@ function harness(overrides: Partial<RuntimeOptions> = {}) {
   });
   return { runtime, requests, state: () => runtime.snapshot.conversation };
 }
+
 const answer = (text: string) => ({ kind: "answer", text });
+
 const calls = (...ids: string[]) => ({
   kind: "tools",
   text: "searching",
@@ -291,7 +293,7 @@ test("tool failure cancels siblings and preserves results already settled", asyn
   executions[1]!.reject(new Error("offline"));
   await until(() => state().log.length === 1);
   expect(executions[2]!.signal.aborted).toBe(true);
-  expect(state().log[0]!.outcome).toEqual({ kind: "failed", error: { message: "offline" } });
+  expect(state().log[0]!.outcome).toMatchObject({ kind: "failed", error: { message: "offline" } });
   expect(state().log[0]!.messages.at(-1)).toEqual(
     MessageSchema.parse({ role: "tool", callId: "a", text: "found" }),
   );
@@ -365,7 +367,10 @@ test("projection and handoff failures are actor outcomes and preserve a valid te
   await until(() => requests.length === 1);
   requests[0]!.resolve({ kind: "handoff", text: "draft", agent: "reviewer" });
   await until(() => state().log.length === 1);
-  expect(state().log[0]!.outcome).toEqual({ kind: "failed", error: { message: "packet failed" } });
+  expect(state().log[0]!.outcome).toMatchObject({
+    kind: "failed",
+    error: { message: "packet failed" },
+  });
 });
 
 test("cancelling prompt preparation prevents a late projection from launching HTTP", async () => {

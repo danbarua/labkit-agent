@@ -25,7 +25,7 @@ export const thinkingContinuationBranchesSwitchV2: Scenario = {
     providerResponses: true,
     policy: {
       provider: "anthropic-messages@2",
-      thinking: "adaptive",
+      thinking: "budget",
       maxOutputTokens: 2048,
     },
     completions: thinkingContinuationBranchesSwitchV2Responses,
@@ -250,7 +250,7 @@ export const googleThinkingParallelToolsV2: Scenario = {
     providerResponses: true,
     policy: {
       provider: "google-generate@2",
-      thinking: "adaptive",
+      thinking: "budget",
     },
     completions: googleThinkingParallelToolsV2Responses,
   },
@@ -382,7 +382,7 @@ export const thinkingParityProviderSwitchV2: Scenario = {
     providerResponses: true,
     policy: {
       provider: "google-generate@2",
-      thinking: "adaptive",
+      thinking: "budget",
     },
     completions: thinkingParityProviderSwitchV2Responses,
   },
@@ -413,7 +413,7 @@ export const thinkingParityProviderSwitchV2: Scenario = {
     f.action("Update root policy; expect accepted.");
     const receipt4 = await root.updatePolicy({
       provider: "google-generate@2",
-      thinking: "adaptive",
+      thinking: "budget",
     });
     f.check("Policy update admission", receipt4.kind, "accepted");
     f.record({ op: "policy", session: "root", receipt: receipt4 });
@@ -540,7 +540,7 @@ export const streamAnthropicMessages3V2: Scenario = {
     policy: {
       provider: "anthropic-messages@3",
       stream: true,
-      thinking: "adaptive",
+      thinking: "budget",
       maxOutputTokens: 2048,
     },
     completions: streamAnthropicMessages3V2Responses,
@@ -598,7 +598,7 @@ export const streamGoogleGenerate3V2: Scenario = {
     policy: {
       provider: "google-generate@3",
       stream: true,
-      thinking: "adaptive",
+      thinking: "budget",
       maxOutputTokens: 2048,
     },
     completions: streamGoogleGenerate3V2Responses,

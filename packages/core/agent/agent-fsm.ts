@@ -38,6 +38,7 @@ export const admittedCompletionSchema = (agents: ReadonlySet<string>, tools: Rea
       "Unpermitted tool",
     )
     .brand<"AdmittedCompletion">();
+
 export type AdmittedCompletion = z.infer<ReturnType<typeof admittedCompletionSchema>>;
 
 export type TurnState =
@@ -59,6 +60,7 @@ export type TurnState =
   | Readonly<{ status: "executing_tools"; turn: TurnData; child: Ref<"batch"> }>
   | Readonly<{ status: "cancelling_tools"; turn: TurnData; child: Ref<"batch"> }>
   | Readonly<{ status: "done"; record: TurnRecord }>;
+
 export type TurnEvent =
   | { type: "user"; text: string }
   | { type: "abort" }
@@ -74,6 +76,7 @@ export type TurnEvent =
   | { type: "permission_settled"; child: Ref<"permission">; result: Result<PermissionDecisions> }
   | { type: "batch_settled"; child: Ref<"batch">; outcome: BatchOutcome }
   | { type: "failed"; child: ChildRef; error: Failure };
+
 export type TurnCommand =
   | { type: "prepare_model"; child: Ref<"prepare">; turn: TurnData }
   | { type: "complete"; child: Ref<"completion">; turn: TurnData; request: PreparedModel }
@@ -91,7 +94,9 @@ export type TurnCommand =
       completion: Extract<Completion, { kind: "tools" }>;
     }
   | { type: "cancel"; child: ChildRef };
+
 type Active = Exclude<TurnState, { status: "idle" | "done" }>;
+
 type D = Decision<TurnState, TurnCommand>;
 
 function done(turn: TurnData, outcome: Outcome): D {
@@ -100,6 +105,7 @@ function done(turn: TurnData, outcome: Outcome): D {
     commands: [],
   };
 }
+
 function prepare(turn: TurnData): D {
   if (turn.steps === 0) return done(turn, { kind: "exhausted" });
   const next = {
@@ -113,12 +119,21 @@ function prepare(turn: TurnData): D {
     commands: [{ type: "prepare_model", child, turn: next }],
   };
 }
+
 function abort(state: Active): D {
   return {
-    ...done(state.turn, { kind: "aborted" }),
+    ...done(state.turn, {
+      kind: "aborted",
+      reason: failure({
+        message: "User cancelled the active turn",
+        classification: "cancelled",
+        operation: { ...state.child, turnId: state.turn.id },
+      }),
+    }),
     commands: [{ type: "cancel", child: state.child }],
   };
 }
+
 function fail(state: Active, event: { child: ChildRef; error: Failure }): D {
   if (event.child.id !== state.child.id || event.child.kind !== state.child.kind)
     return stay(state);
@@ -127,12 +142,14 @@ function fail(state: Active, event: { child: ChildRef; error: Failure }): D {
     commands: [{ type: "cancel", child: state.child }],
   };
 }
+
 function resultFailure(turn: TurnData, result: Exclude<Result<unknown>, { kind: "succeeded" }>): D {
   return done(
     turn,
     result.kind === "failed" ? { kind: "failed", error: result.error } : { kind: "aborted" },
   );
 }
+
 function bargeIn(state: Active, event: { text: string }): D {
   const next = prepare(appendMessage(state.turn, { role: "user", text: event.text }));
   return { ...next, commands: [{ type: "cancel", child: state.child }, ...next.commands] };
@@ -237,8 +254,30 @@ export const decideTurn = defineMachine<TurnState, TurnEvent, TurnCommand>({
         return done(
           state.turn,
           refused.decision === "cancelled"
-            ? { kind: "aborted" }
-            : { kind: "failed", error: failure("Tool permission rejected") },
+            ? {
+                kind: "aborted",
+                reason: failure({
+                  message: "User cancelled permission request",
+                  classification: "cancelled",
+                  operation: { ...state.child, turnId: state.turn.id, callId: refused.callId },
+                }),
+              }
+            : {
+                kind: "failed",
+                error: failure({
+                  message: "Tool permission rejected",
+                  classification: "permission_refused",
+                  phase: "permission",
+                  operation: {
+                    id: state.child.id,
+                    kind: "permission",
+                    turnId: state.turn.id,
+                    callId: refused.callId,
+                    toolName: state.completion.calls.find((call) => call.id === refused.callId)!
+                      .name,
+                  },
+                }),
+              },
         );
       return {
         state: {
@@ -292,7 +331,14 @@ export const decideTurn = defineMachine<TurnState, TurnEvent, TurnCommand>({
           }),
         state.turn,
       );
-      return done(turn, { kind: "aborted" });
+      return done(turn, {
+        kind: "aborted",
+        reason: failure({
+          message: "User cancelled the active tool batch",
+          classification: "cancelled",
+          operation: { ...state.child, turnId: turn.id },
+        }),
+      });
     },
   },
   done: {},

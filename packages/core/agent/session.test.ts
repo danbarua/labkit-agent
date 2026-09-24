@@ -1,12 +1,7 @@
 import { expect, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
 
-import {
-  createAgentRuntime,
-  defineTool,
-  type AgentRuntime,
-  type RuntimeOptions,
-} from "./agent-runtime.ts";
+import { createAgentRuntime, defineTool, type RuntimeOptions } from "./agent-runtime.ts";
 import type { ChatCompletionRequest } from "./agent.ts";
 import { deferred, until } from "./test-support.ts";
 
@@ -31,12 +26,15 @@ function harness(overrides: Partial<RuntimeOptions> = {}) {
   });
   return { runtime, requests };
 }
+
 const answer = (text: string) => ({ kind: "answer", text });
+
 const toolCalls = (...ids: string[]) => ({
   kind: "tools",
   text: "searching",
   calls: ids.map((id) => ({ id, name: "lookup", args: {} })),
 });
+
 async function finish(h: ReturnType<typeof harness>, text = "first") {
   await h.runtime.fire({ type: "user", text });
   await until(() => h.requests.length > 0);
@@ -307,7 +305,7 @@ test("failed turn outcomes release pending forks and later source work stays ind
   const pending = h.runtime.fork();
   h.requests[0]!.reject(new Error("offline"));
   const fork = await pending;
-  expect(fork.snapshot.conversation.log[0]?.outcome).toEqual({
+  expect(fork.snapshot.conversation.log[0]?.outcome).toMatchObject({
     kind: "failed",
     error: { message: "offline" },
   });

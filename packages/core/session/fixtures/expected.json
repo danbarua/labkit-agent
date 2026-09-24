@@ -1,40 +1,6 @@
 [
   {
     "name": "plain-conversation",
-    "inputs": {
-      "name": "plain-conversation",
-      "allowance": 4,
-      "completions": [
-        {
-          "kind": "answer",
-          "text": "Hello"
-        },
-        {
-          "kind": "answer",
-          "text": "Again"
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Hi",
-          "wait": true
-        },
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Continue",
-          "wait": true
-        },
-        {
-          "op": "restore",
-          "session": "root",
-          "target": "restored",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -268,6 +234,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -327,6 +308,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -343,7 +338,8 @@
                 "type": "user",
                 "text": "Hi"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -399,7 +395,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -428,7 +425,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -470,7 +468,8 @@
                 "type": "user",
                 "text": "Continue"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -534,7 +533,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -563,7 +563,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -683,6 +684,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -742,6 +758,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -758,7 +788,8 @@
                 "type": "user",
                 "text": "Hi"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -814,7 +845,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -843,7 +875,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -885,7 +918,8 @@
                 "type": "user",
                 "text": "Continue"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -949,7 +983,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -978,7 +1013,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -1014,36 +1050,6 @@
   },
   {
     "name": "system-changes",
-    "inputs": {
-      "name": "system-changes",
-      "allowance": 4,
-      "completions": [
-        {
-          "kind": "answer",
-          "text": "Brief"
-        }
-      ],
-      "steps": [
-        {
-          "op": "system",
-          "session": "root",
-          "inputs": ["First", "Second"],
-          "wait": true
-        },
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Hi",
-          "wait": true
-        },
-        {
-          "op": "restore",
-          "session": "root",
-          "target": "restored",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -1207,6 +1213,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": ["First", "Second"],
         "systemVersion": 1,
         "partial": [],
@@ -1266,6 +1287,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -1294,7 +1329,8 @@
                 "type": "user",
                 "text": "Hi"
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -1358,7 +1394,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -1387,7 +1424,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -1491,6 +1529,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": ["First", "Second"],
         "systemVersion": 1,
         "partial": [],
@@ -1550,6 +1603,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -1578,7 +1645,8 @@
                 "type": "user",
                 "text": "Hi"
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -1642,7 +1710,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -1671,7 +1740,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -1707,44 +1777,6 @@
   },
   {
     "name": "tools",
-    "inputs": {
-      "name": "tools",
-      "allowance": 4,
-      "completions": [
-        {
-          "kind": "tools",
-          "text": "Checking",
-          "calls": [
-            {
-              "id": "c1",
-              "name": "echo",
-              "args": {
-                "text": "one"
-              }
-            },
-            {
-              "id": "c2",
-              "name": "echo",
-              "args": {
-                "text": "two"
-              }
-            }
-          ]
-        },
-        {
-          "kind": "answer",
-          "text": "Checked"
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Run tools",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -2011,6 +2043,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -2070,6 +2117,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -2086,7 +2147,8 @@
                 "type": "user",
                 "text": "Run tools"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -2142,7 +2204,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -2187,7 +2250,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -2256,7 +2320,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -2344,7 +2409,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -2373,7 +2439,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -2439,64 +2506,6 @@
   },
   {
     "name": "partial-cancellation-late-result",
-    "inputs": {
-      "name": "partial-cancellation-late-result",
-      "allowance": 4,
-      "completions": [
-        {
-          "kind": "tools",
-          "text": "Working",
-          "calls": [
-            {
-              "id": "fast",
-              "name": "echo",
-              "args": {
-                "text": "fast"
-              }
-            },
-            {
-              "id": "slow",
-              "name": "echo",
-              "args": {
-                "text": "defer:slow"
-              }
-            }
-          ]
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Go",
-          "wait": false
-        },
-        {
-          "op": "partial",
-          "session": "root",
-          "wait": true,
-          "count": 1
-        },
-        {
-          "op": "abort",
-          "session": "root",
-          "wait": true
-        },
-        {
-          "op": "release",
-          "session": "root",
-          "wait": true,
-          "name": "slow",
-          "value": "late"
-        },
-        {
-          "op": "restore",
-          "session": "root",
-          "target": "restored",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -2582,7 +2591,16 @@
               }
             ],
             "outcome": {
-              "kind": "aborted"
+              "kind": "aborted",
+              "reason": {
+                "message": "User cancelled the active tool batch",
+                "classification": "cancelled",
+                "operation": {
+                  "id": "00000000-0000-4000-8000-000000000001/turn/1/3",
+                  "kind": "batch",
+                  "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                }
+              }
             }
           }
         }
@@ -2639,7 +2657,16 @@
                 }
               ],
               "outcome": {
-                "kind": "aborted"
+                "kind": "aborted",
+                "reason": {
+                  "message": "User cancelled the active tool batch",
+                  "classification": "cancelled",
+                  "operation": {
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/3",
+                    "kind": "batch",
+                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                  }
+                }
               }
             }
           ],
@@ -2682,6 +2709,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -2741,6 +2783,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -2757,7 +2813,8 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -2813,7 +2870,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -2858,7 +2916,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -2889,7 +2948,8 @@
               "event": {
                 "type": "abort"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -2920,7 +2980,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -2966,7 +3027,16 @@
                   }
                 ],
                 "outcome": {
-                  "kind": "aborted"
+                  "kind": "aborted",
+                  "reason": {
+                    "message": "User cancelled the active tool batch",
+                    "classification": "cancelled",
+                    "operation": {
+                      "id": "00000000-0000-4000-8000-000000000001/turn/1/3",
+                      "kind": "batch",
+                      "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                    }
+                  }
                 }
               }
             }
@@ -3023,7 +3093,16 @@
                 }
               ],
               "outcome": {
-                "kind": "aborted"
+                "kind": "aborted",
+                "reason": {
+                  "message": "User cancelled the active tool batch",
+                  "classification": "cancelled",
+                  "operation": {
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/3",
+                    "kind": "batch",
+                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                  }
+                }
               }
             }
           ],
@@ -3066,6 +3145,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -3125,6 +3219,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -3141,7 +3249,8 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -3197,7 +3306,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -3242,7 +3352,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -3273,7 +3384,8 @@
               "event": {
                 "type": "abort"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -3304,7 +3416,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -3350,7 +3463,16 @@
                   }
                 ],
                 "outcome": {
-                  "kind": "aborted"
+                  "kind": "aborted",
+                  "reason": {
+                    "message": "User cancelled the active tool batch",
+                    "classification": "cancelled",
+                    "operation": {
+                      "id": "00000000-0000-4000-8000-000000000001/turn/1/3",
+                      "kind": "batch",
+                      "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                    }
+                  }
                 }
               }
             }
@@ -3361,52 +3483,6 @@
   },
   {
     "name": "fork",
-    "inputs": {
-      "name": "fork",
-      "allowance": 4,
-      "completions": [
-        {
-          "kind": "answer",
-          "text": "Shared"
-        },
-        {
-          "kind": "answer",
-          "text": "Child"
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "First",
-          "wait": true
-        },
-        {
-          "op": "fork",
-          "session": "root",
-          "target": "child",
-          "wait": true
-        },
-        {
-          "op": "system",
-          "session": "child",
-          "inputs": ["Independent"],
-          "wait": true
-        },
-        {
-          "op": "input",
-          "session": "child",
-          "text": "Branch",
-          "wait": true
-        },
-        {
-          "op": "restore",
-          "session": "child",
-          "target": "restored",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -3640,6 +3716,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -3699,6 +3790,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -3715,7 +3820,8 @@
                 "type": "user",
                 "text": "First"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -3771,7 +3877,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -3800,7 +3907,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -3846,7 +3954,8 @@
                   "sessionId": "00000000-0000-4000-8000-000000000006"
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           }
         ]
@@ -3941,6 +4050,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": ["Independent"],
         "systemVersion": 1,
         "partial": [],
@@ -4019,6 +4143,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -4047,7 +4185,8 @@
                 "type": "user",
                 "text": "Branch"
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -4115,7 +4254,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -4144,7 +4284,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -4266,6 +4407,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": ["Independent"],
         "systemVersion": 1,
         "partial": [],
@@ -4344,6 +4500,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -4372,7 +4542,8 @@
                 "type": "user",
                 "text": "Branch"
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -4440,7 +4611,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -4469,7 +4641,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -4505,72 +4678,6 @@
   },
   {
     "name": "active-turn-fork",
-    "inputs": {
-      "name": "active-turn-fork",
-      "allowance": 4,
-      "completions": [
-        {
-          "defer": "answer",
-          "value": {
-            "kind": "answer",
-            "text": "Boundary"
-          }
-        },
-        {
-          "kind": "answer",
-          "text": "Parent next"
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "First",
-          "wait": false
-        },
-        {
-          "op": "requests",
-          "session": "root",
-          "wait": true,
-          "count": 1
-        },
-        {
-          "op": "fork",
-          "session": "root",
-          "target": "child",
-          "wait": false
-        },
-        {
-          "op": "system",
-          "session": "root",
-          "inputs": ["Busy"],
-          "wait": true,
-          "expected": "busy"
-        },
-        {
-          "op": "release",
-          "session": "root",
-          "wait": true,
-          "name": "answer"
-        },
-        {
-          "op": "settle",
-          "session": "root",
-          "wait": true
-        },
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Next",
-          "wait": true
-        },
-        {
-          "op": "join",
-          "session": "child",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -4811,6 +4918,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -4870,6 +4992,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -4886,7 +5022,8 @@
                 "type": "user",
                 "text": "First"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -4942,7 +5079,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -4961,7 +5099,8 @@
                   "sessionId": "00000000-0000-4000-8000-000000000005"
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -4990,7 +5129,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -5032,7 +5172,8 @@
                 "type": "user",
                 "text": "Next"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -5096,7 +5237,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -5125,7 +5267,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -5231,6 +5374,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -5309,6 +5467,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -5319,71 +5491,6 @@
   },
   {
     "name": "successive-compaction-empty-reset",
-    "inputs": {
-      "name": "successive-compaction-empty-reset",
-      "allowance": 4,
-      "completions": [
-        {
-          "kind": "answer",
-          "text": "Source"
-        },
-        {
-          "kind": "answer",
-          "text": "After compaction"
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Original",
-          "wait": true
-        },
-        {
-          "op": "compact",
-          "session": "root",
-          "target": "compact1",
-          "context": [
-            {
-              "role": "user",
-              "text": "Summary one"
-            }
-          ],
-          "wait": true
-        },
-        {
-          "op": "input",
-          "session": "compact1",
-          "text": "More",
-          "wait": true
-        },
-        {
-          "op": "compact",
-          "session": "compact1",
-          "target": "compact2",
-          "context": [
-            {
-              "role": "user",
-              "text": "Summary two"
-            }
-          ],
-          "wait": true
-        },
-        {
-          "op": "compact",
-          "session": "compact2",
-          "target": "reset",
-          "context": [],
-          "wait": true
-        },
-        {
-          "op": "restore",
-          "session": "reset",
-          "target": "restored",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -5597,6 +5704,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -5656,6 +5778,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -5672,7 +5808,8 @@
                 "type": "user",
                 "text": "Original"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -5728,7 +5865,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -5757,7 +5895,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -5809,7 +5948,8 @@
                   ]
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           }
         ]
@@ -5893,6 +6033,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -5959,6 +6114,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -5975,7 +6144,8 @@
                 "type": "user",
                 "text": "More"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -6035,7 +6205,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -6064,7 +6235,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -6116,7 +6288,8 @@
                   ]
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           }
         ]
@@ -6183,6 +6356,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -6249,6 +6437,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -6270,7 +6472,8 @@
                   "context": []
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           }
         ]
@@ -6332,6 +6535,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -6393,6 +6611,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -6456,6 +6688,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -6517,6 +6764,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -6527,41 +6788,6 @@
   },
   {
     "name": "handoff",
-    "inputs": {
-      "name": "handoff",
-      "allowance": 4,
-      "completions": [
-        {
-          "kind": "handoff",
-          "agent": "b",
-          "text": "Delegate"
-        },
-        {
-          "kind": "answer",
-          "text": "From B"
-        }
-      ],
-      "steps": [
-        {
-          "op": "system",
-          "session": "root",
-          "inputs": ["Shared instruction"],
-          "wait": true
-        },
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Help",
-          "wait": true
-        },
-        {
-          "op": "restore",
-          "session": "root",
-          "target": "restored",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -6768,6 +6994,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": ["Shared instruction"],
         "systemVersion": 1,
         "partial": [],
@@ -6827,6 +7068,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -6855,7 +7110,8 @@
                 "type": "user",
                 "text": "Help"
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -6915,7 +7171,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -6945,7 +7202,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -6980,7 +7238,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -7044,7 +7303,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -7073,7 +7333,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -7185,6 +7446,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": ["Shared instruction"],
         "systemVersion": 1,
         "partial": [],
@@ -7244,6 +7520,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -7272,7 +7562,8 @@
                 "type": "user",
                 "text": "Help"
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -7332,7 +7623,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -7362,7 +7654,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -7397,7 +7690,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -7461,7 +7755,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -7490,7 +7785,8 @@
                   }
                 }
               },
-              "systemVersion": 1
+              "systemVersion": 1,
+              "policyVersion": 0
             }
           },
           {
@@ -7530,25 +7826,6 @@
   },
   {
     "name": "exhaustion",
-    "inputs": {
-      "name": "exhaustion",
-      "allowance": 1,
-      "completions": [
-        {
-          "kind": "handoff",
-          "agent": "b",
-          "text": "Delegate"
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Help",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -7692,6 +7969,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 1,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -7751,6 +8043,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 1,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -7767,7 +8073,8 @@
                 "type": "user",
                 "text": "Help"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -7823,7 +8130,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -7853,7 +8161,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -7888,7 +8197,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -7924,29 +8234,6 @@
   },
   {
     "name": "failure",
-    "inputs": {
-      "name": "failure",
-      "allowance": 4,
-      "completions": [
-        {
-          "error": "Scripted transport failure"
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Help",
-          "wait": true
-        },
-        {
-          "op": "restore",
-          "session": "root",
-          "target": "restored",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -8009,7 +8296,19 @@
             "outcome": {
               "kind": "failed",
               "error": {
-                "message": "Scripted transport failure"
+                "message": "Scripted transport failure",
+                "classification": "execution",
+                "operation": {
+                  "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
+                  "kind": "completion",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                },
+                "phase": "run",
+                "cause": {
+                  "name": "Error",
+                  "message": "Scripted transport failure"
+                }
               }
             }
           }
@@ -8044,7 +8343,19 @@
               "outcome": {
                 "kind": "failed",
                 "error": {
-                  "message": "Scripted transport failure"
+                  "message": "Scripted transport failure",
+                  "classification": "execution",
+                  "operation": {
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
+                    "kind": "completion",
+                    "sessionId": "00000000-0000-4000-8000-000000000001",
+                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                  },
+                  "phase": "run",
+                  "cause": {
+                    "name": "Error",
+                    "message": "Scripted transport failure"
+                  }
                 }
               }
             }
@@ -8088,6 +8399,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -8147,6 +8473,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -8163,7 +8503,8 @@
                 "type": "user",
                 "text": "Help"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -8219,7 +8560,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -8242,12 +8584,25 @@
                   "result": {
                     "kind": "failed",
                     "error": {
-                      "message": "Scripted transport failure"
+                      "message": "Scripted transport failure",
+                      "classification": "execution",
+                      "operation": {
+                        "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
+                        "kind": "completion",
+                        "sessionId": "00000000-0000-4000-8000-000000000001",
+                        "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                      },
+                      "phase": "run",
+                      "cause": {
+                        "name": "Error",
+                        "message": "Scripted transport failure"
+                      }
                     }
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -8270,7 +8625,19 @@
                 "outcome": {
                   "kind": "failed",
                   "error": {
-                    "message": "Scripted transport failure"
+                    "message": "Scripted transport failure",
+                    "classification": "execution",
+                    "operation": {
+                      "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
+                      "kind": "completion",
+                      "sessionId": "00000000-0000-4000-8000-000000000001",
+                      "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                    },
+                    "phase": "run",
+                    "cause": {
+                      "name": "Error",
+                      "message": "Scripted transport failure"
+                    }
                   }
                 }
               }
@@ -8305,7 +8672,19 @@
               "outcome": {
                 "kind": "failed",
                 "error": {
-                  "message": "Scripted transport failure"
+                  "message": "Scripted transport failure",
+                  "classification": "execution",
+                  "operation": {
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
+                    "kind": "completion",
+                    "sessionId": "00000000-0000-4000-8000-000000000001",
+                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                  },
+                  "phase": "run",
+                  "cause": {
+                    "name": "Error",
+                    "message": "Scripted transport failure"
+                  }
                 }
               }
             }
@@ -8349,6 +8728,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -8408,6 +8802,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -8424,7 +8832,8 @@
                 "type": "user",
                 "text": "Help"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -8480,7 +8889,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -8503,12 +8913,25 @@
                   "result": {
                     "kind": "failed",
                     "error": {
-                      "message": "Scripted transport failure"
+                      "message": "Scripted transport failure",
+                      "classification": "execution",
+                      "operation": {
+                        "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
+                        "kind": "completion",
+                        "sessionId": "00000000-0000-4000-8000-000000000001",
+                        "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                      },
+                      "phase": "run",
+                      "cause": {
+                        "name": "Error",
+                        "message": "Scripted transport failure"
+                      }
                     }
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -8531,7 +8954,19 @@
                 "outcome": {
                   "kind": "failed",
                   "error": {
-                    "message": "Scripted transport failure"
+                    "message": "Scripted transport failure",
+                    "classification": "execution",
+                    "operation": {
+                      "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
+                      "kind": "completion",
+                      "sessionId": "00000000-0000-4000-8000-000000000001",
+                      "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                    },
+                    "phase": "run",
+                    "cause": {
+                      "name": "Error",
+                      "message": "Scripted transport failure"
+                    }
                   }
                 }
               }
@@ -8543,25 +8978,6 @@
   },
   {
     "name": "invalid-context",
-    "inputs": {
-      "name": "invalid-context",
-      "allowance": 4,
-      "completions": [],
-      "steps": [
-        {
-          "op": "invalid-context",
-          "session": "root",
-          "context": [
-            {
-              "role": "tool",
-              "callId": "orphan",
-              "text": "Invalid"
-            }
-          ],
-          "wait": true
-        }
-      ]
-    },
     "requests": [],
     "results": [
       {
@@ -8625,6 +9041,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -8684,6 +9115,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -8694,63 +9139,6 @@
   },
   {
     "name": "interrupted-recovery",
-    "inputs": {
-      "name": "interrupted-recovery",
-      "allowance": 4,
-      "completions": [
-        {
-          "kind": "tools",
-          "text": "Working",
-          "calls": [
-            {
-              "id": "fast",
-              "name": "echo",
-              "args": {
-                "text": "fast"
-              }
-            },
-            {
-              "id": "slow",
-              "name": "echo",
-              "args": {
-                "text": "defer:slow"
-              }
-            }
-          ]
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Go",
-          "wait": false
-        },
-        {
-          "op": "partial",
-          "session": "root",
-          "wait": true,
-          "count": 1
-        },
-        {
-          "op": "close",
-          "session": "root",
-          "wait": true
-        },
-        {
-          "op": "restore",
-          "session": "root",
-          "target": "restored",
-          "wait": true
-        },
-        {
-          "op": "restore",
-          "session": "restored",
-          "target": "twice",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -8890,6 +9278,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [
@@ -8960,6 +9363,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -8976,7 +9393,8 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -9032,7 +9450,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -9077,7 +9496,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -9151,7 +9571,18 @@
               "outcome": {
                 "kind": "failed",
                 "error": {
-                  "message": "Interrupted session; external effects were not replayed"
+                  "message": "Interrupted session; external effects were not replayed",
+                  "classification": "interrupted",
+                  "operation": {
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/3",
+                    "kind": "batch",
+                    "sessionId": "00000000-0000-4000-8000-000000000001",
+                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                  },
+                  "phase": "executing_tools",
+                  "cause": {
+                    "message": "Interrupted session; external effects were not replayed"
+                  }
                 }
               }
             }
@@ -9195,6 +9626,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -9254,6 +9700,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -9270,7 +9730,8 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -9326,7 +9787,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -9371,7 +9833,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -9448,7 +9911,18 @@
                 "outcome": {
                   "kind": "failed",
                   "error": {
-                    "message": "Interrupted session; external effects were not replayed"
+                    "message": "Interrupted session; external effects were not replayed",
+                    "classification": "interrupted",
+                    "operation": {
+                      "id": "00000000-0000-4000-8000-000000000001/turn/1/3",
+                      "kind": "batch",
+                      "sessionId": "00000000-0000-4000-8000-000000000001",
+                      "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                    },
+                    "phase": "executing_tools",
+                    "cause": {
+                      "message": "Interrupted session; external effects were not replayed"
+                    }
                   }
                 }
               }
@@ -9508,7 +9982,18 @@
               "outcome": {
                 "kind": "failed",
                 "error": {
-                  "message": "Interrupted session; external effects were not replayed"
+                  "message": "Interrupted session; external effects were not replayed",
+                  "classification": "interrupted",
+                  "operation": {
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/3",
+                    "kind": "batch",
+                    "sessionId": "00000000-0000-4000-8000-000000000001",
+                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                  },
+                  "phase": "executing_tools",
+                  "cause": {
+                    "message": "Interrupted session; external effects were not replayed"
+                  }
                 }
               }
             }
@@ -9552,6 +10037,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -9611,6 +10111,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -9627,7 +10141,8 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -9683,7 +10198,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -9728,7 +10244,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -9805,7 +10322,18 @@
                 "outcome": {
                   "kind": "failed",
                   "error": {
-                    "message": "Interrupted session; external effects were not replayed"
+                    "message": "Interrupted session; external effects were not replayed",
+                    "classification": "interrupted",
+                    "operation": {
+                      "id": "00000000-0000-4000-8000-000000000001/turn/1/3",
+                      "kind": "batch",
+                      "sessionId": "00000000-0000-4000-8000-000000000001",
+                      "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                    },
+                    "phase": "executing_tools",
+                    "cause": {
+                      "message": "Interrupted session; external effects were not replayed"
+                    }
                   }
                 }
               }
@@ -9817,44 +10345,6 @@
   },
   {
     "name": "interrupted-completion",
-    "inputs": {
-      "name": "interrupted-completion",
-      "allowance": 4,
-      "completions": [
-        {
-          "defer": "answer",
-          "value": {
-            "kind": "answer",
-            "text": "Unobserved"
-          }
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Go",
-          "wait": false
-        },
-        {
-          "op": "requests",
-          "session": "root",
-          "wait": true,
-          "count": 1
-        },
-        {
-          "op": "close",
-          "session": "root",
-          "wait": true
-        },
-        {
-          "op": "restore",
-          "session": "root",
-          "target": "restored",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -9974,6 +10464,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -10033,6 +10538,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -10049,7 +10568,8 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -10105,7 +10625,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           }
         ]
@@ -10137,7 +10658,18 @@
               "outcome": {
                 "kind": "failed",
                 "error": {
-                  "message": "Interrupted session; external effects were not replayed"
+                  "message": "Interrupted session; external effects were not replayed",
+                  "classification": "interrupted",
+                  "operation": {
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
+                    "kind": "completion",
+                    "sessionId": "00000000-0000-4000-8000-000000000001",
+                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                  },
+                  "phase": "awaiting_model",
+                  "cause": {
+                    "message": "Interrupted session; external effects were not replayed"
+                  }
                 }
               }
             }
@@ -10181,6 +10713,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -10240,6 +10787,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -10256,7 +10817,8 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -10312,7 +10874,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -10347,7 +10910,18 @@
                 "outcome": {
                   "kind": "failed",
                   "error": {
-                    "message": "Interrupted session; external effects were not replayed"
+                    "message": "Interrupted session; external effects were not replayed",
+                    "classification": "interrupted",
+                    "operation": {
+                      "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
+                      "kind": "completion",
+                      "sessionId": "00000000-0000-4000-8000-000000000001",
+                      "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                    },
+                    "phase": "awaiting_model",
+                    "cause": {
+                      "message": "Interrupted session; external effects were not replayed"
+                    }
                   }
                 }
               }
@@ -10359,20 +10933,6 @@
   },
   {
     "name": "rejected-append",
-    "inputs": {
-      "name": "rejected-append",
-      "allowance": 4,
-      "fault": "reject-input",
-      "completions": [],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Not accepted",
-          "wait": true
-        }
-      ]
-    },
     "requests": [],
     "results": [
       {
@@ -10387,7 +10947,7 @@
         "session": "root",
         "terminal": {
           "kind": "failed",
-          "message": "Session persistence failed"
+          "message": "Scripted rejected append"
         }
       }
     ],
@@ -10447,6 +11007,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -10506,6 +11081,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -10516,31 +11105,6 @@
   },
   {
     "name": "lost-acknowledgement",
-    "inputs": {
-      "name": "lost-acknowledgement",
-      "allowance": 4,
-      "fault": "lose-input",
-      "completions": [
-        {
-          "kind": "answer",
-          "text": "Only once"
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Go",
-          "wait": true
-        },
-        {
-          "op": "restore",
-          "session": "root",
-          "target": "restored",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -10684,6 +11248,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -10743,6 +11322,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -10759,7 +11352,8 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -10815,7 +11409,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -10844,7 +11439,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -10948,6 +11544,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -11007,6 +11618,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -11023,7 +11648,8 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -11079,7 +11705,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -11108,7 +11735,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -11144,45 +11772,6 @@
   },
   {
     "name": "lost-recovery-acknowledgement",
-    "inputs": {
-      "name": "lost-recovery-acknowledgement",
-      "allowance": 4,
-      "fault": "lose-recovery",
-      "completions": [
-        {
-          "defer": "answer",
-          "value": {
-            "kind": "answer",
-            "text": "Unobserved"
-          }
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Go",
-          "wait": false
-        },
-        {
-          "op": "requests",
-          "session": "root",
-          "wait": true,
-          "count": 1
-        },
-        {
-          "op": "close",
-          "session": "root",
-          "wait": true
-        },
-        {
-          "op": "restore",
-          "session": "root",
-          "target": "restored",
-          "wait": true
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -11302,6 +11891,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -11361,6 +11965,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -11377,7 +11995,8 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -11433,7 +12052,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           }
         ]
@@ -11465,7 +12085,18 @@
               "outcome": {
                 "kind": "failed",
                 "error": {
-                  "message": "Interrupted session; external effects were not replayed"
+                  "message": "Interrupted session; external effects were not replayed",
+                  "classification": "interrupted",
+                  "operation": {
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
+                    "kind": "completion",
+                    "sessionId": "00000000-0000-4000-8000-000000000001",
+                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                  },
+                  "phase": "awaiting_model",
+                  "cause": {
+                    "message": "Interrupted session; external effects were not replayed"
+                  }
                 }
               }
             }
@@ -11509,6 +12140,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -11568,6 +12214,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -11584,7 +12244,8 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -11640,7 +12301,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -11675,7 +12337,18 @@
                 "outcome": {
                   "kind": "failed",
                   "error": {
-                    "message": "Interrupted session; external effects were not replayed"
+                    "message": "Interrupted session; external effects were not replayed",
+                    "classification": "interrupted",
+                    "operation": {
+                      "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
+                      "kind": "completion",
+                      "sessionId": "00000000-0000-4000-8000-000000000001",
+                      "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+                    },
+                    "phase": "awaiting_model",
+                    "cause": {
+                      "message": "Interrupted session; external effects were not replayed"
+                    }
                   }
                 }
               }
@@ -11687,49 +12360,6 @@
   },
   {
     "name": "barge-in",
-    "inputs": {
-      "name": "barge-in",
-      "allowance": 4,
-      "completions": [
-        {
-          "defer": "old",
-          "value": {
-            "kind": "answer",
-            "text": "Late"
-          }
-        },
-        {
-          "kind": "answer",
-          "text": "New"
-        }
-      ],
-      "steps": [
-        {
-          "op": "input",
-          "session": "root",
-          "text": "First",
-          "wait": false
-        },
-        {
-          "op": "requests",
-          "session": "root",
-          "wait": true,
-          "count": 1
-        },
-        {
-          "op": "input",
-          "session": "root",
-          "text": "Second",
-          "wait": true
-        },
-        {
-          "op": "release",
-          "session": "root",
-          "wait": true,
-          "name": "old"
-        }
-      ]
-    },
     "requests": [
       {
         "model": "test-model",
@@ -11928,6 +12558,21 @@
             ]
           ]
         },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
@@ -11987,6 +12632,20 @@
                       }
                     ]
                   ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
                 }
               }
             }
@@ -12003,7 +12662,8 @@
                 "type": "user",
                 "text": "First"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -12059,7 +12719,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -12074,7 +12735,8 @@
                 "type": "user",
                 "text": "Second"
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -12134,7 +12796,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {
@@ -12163,7 +12826,8 @@
                   }
                 }
               },
-              "systemVersion": 0
+              "systemVersion": 0,
+              "policyVersion": 0
             }
           },
           {

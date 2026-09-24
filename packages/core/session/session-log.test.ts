@@ -21,6 +21,7 @@ async function fixture() {
   if (loaded.kind !== "loaded") throw new Error("Expected stream");
   return { session, batches: loaded.batches };
 }
+
 function corrupt(batches: readonly CommittedBatch[], change: (record: any) => void) {
   return batches.map((batch) => ({
     ...batch,
@@ -109,7 +110,7 @@ test("v2 replay rejects policy version drift, downgrade, and advertised tool esc
       if (r.body.kind === "event") r.body.policyVersion++;
     },
     (r: any) => {
-      if (r.body.kind === "policy") r.version = 1;
+      if (r.body.kind === "policy") r.version = 999;
     },
     (r: any) => {
       if (r.body.event?.event?.type === "prepared")
@@ -129,8 +130,8 @@ test("replay requires policy agent coverage and the original advertised tool ord
       ["b", { model: "m", tools: ["echo"] }],
     ]),
     tools: new Map([
-      ["echo", original.tools!.get("echo")!],
-      ["other", original.tools!.get("echo")!],
+      ["echo", original.bindings.tools!.get("echo")!],
+      ["other", original.bindings.tools!.get("echo")!],
     ]),
   });
   const session = await createSession(options);
@@ -145,7 +146,7 @@ test("replay requires policy agent coverage and the original advertised tool ord
   expect(() =>
     replay(
       corrupt(loaded.batches, (record) => {
-        if (record.body.kind === "upgrade") delete record.body.policy.tools.b;
+        if (record.body.kind === "created") delete record.body.seed.policy.tools.b;
       }),
     ),
   ).toThrow("capabilities");

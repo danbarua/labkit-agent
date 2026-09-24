@@ -7,22 +7,12 @@ import {
   createSession,
   defineTool,
   restoreSession,
-  type BoundSessionOptions,
+  type SessionOptions,
 } from "./session-runtime.ts";
 import { deferred, testOptions, until } from "./test-support.ts";
 
-export function boundOptions(): BoundSessionOptions {
-  const legacy = testOptions();
-  return {
-    persistence: legacy.persistence,
-    configuration: { agent: legacy.agent, agents: legacy.agents, steps: legacy.steps },
-    bindings: {
-      tools: legacy.tools,
-      id: legacy.id,
-      complete: (request, signal) =>
-        legacy.complete!({ ...request, baseUrl: legacy.baseUrl, apiKey: legacy.apiKey, signal }),
-    },
-  };
+export function boundOptions(): SessionOptions {
+  return testOptions();
 }
 test("v2 policy changes allowance and tools only after idle commit, restores and forks", async () => {
   const options = boundOptions();
@@ -37,7 +27,7 @@ test("v2 policy changes allowance and tools only after idle commit, restores and
       },
     },
   });
-  expect(session.snapshot.durable.records[0]?.version).toBe(2);
+  expect(session.snapshot.durable.records[0]?.version).toBe(1);
   const before = session.snapshot;
   expect((await session.updatePolicy({ steps: 1, tools: { a: [] } })).kind).toBe("accepted");
   const turn = session.input("Go");
@@ -51,15 +41,14 @@ test("v2 policy changes allowance and tools only after idle commit, restores and
   expect(child.snapshot.durable.policy).toEqual(session.snapshot.durable.policy);
   expect((await session.updatePolicy({ tools: { a: ["undeclared"] } })).kind).toBe("failed");
 });
-test("v1 upgrades append-only through explicit policy boundary", async () => {
+test("policy changes append without rewriting prior records", async () => {
   const options = testOptions();
   const session = await createSession(options);
   await session.input("legacy").settled;
   const bytes = journalJSONL(session.snapshot.durable);
   await session.updatePolicy({ steps: 2 });
   expect(journalJSONL(session.snapshot.durable).startsWith(bytes)).toBe(true);
-  expect(session.snapshot.durable.records.slice(-2).map((record) => record.body.kind)).toEqual([
-    "upgrade",
+  expect(session.snapshot.durable.records.slice(-1).map((record) => record.body.kind)).toEqual([
     "policy",
   ]);
   await session.input("new").settled;

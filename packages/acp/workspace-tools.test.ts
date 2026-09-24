@@ -27,6 +27,7 @@ async function fixture() {
     cleanup: () => rm(root, { recursive: true, force: true }),
   };
 }
+
 const signal = () => new AbortController().signal;
 
 test("file tools resolve absolute locations, read/write/list JSON values, and bind cwd without chdir", async () => {
@@ -162,11 +163,10 @@ test("workspace example validates environment, enables load and disables self-ha
     expect(() => workspaceAgent({})).toThrow("LABKIT_ACP_MODEL");
     expect(() => workspaceAgent({ LABKIT_ACP_MODEL: "m" })).toThrow("ANTHROPIC_API_KEY");
     for (const [provider, key] of [
-      ["anthropic-messages@3", "ANTHROPIC_API_KEY"],
-      ["anthropic-messages@4", "ANTHROPIC_API_KEY"],
-      ["openai-chat@2", "OPENAI_API_KEY"],
-      ["openai-responses@3", "OPENAI_API_KEY"],
-      ["google-generate@3", "GOOGLE_API_KEY"],
+      ["anthropic", "ANTHROPIC_API_KEY"],
+      ["openai", "OPENAI_API_KEY"],
+      ["openai-responses", "OPENAI_API_KEY"],
+      ["google", "GOOGLE_API_KEY"],
     ]) {
       const agent = workspaceAgent({
         LABKIT_ACP_PROVIDER: provider,
@@ -198,7 +198,11 @@ test("workspace example validates environment, enables load and disables self-ha
           )
           ?.options.map((option) => option.value),
       ).toEqual(
-        provider!.startsWith("openai") ? ["off", "low", "medium", "high"] : ["off", "adaptive"],
+        provider!.startsWith("openai")
+          ? ["off", "low", "medium", "high"]
+          : provider === "google"
+            ? ["off", "budget"]
+            : ["off", "adaptive"],
       );
       expect(JSON.stringify(options.configuration)).not.toContain("TEST_SECRET");
     }
@@ -283,56 +287,29 @@ test("additional roots preserve primary relative paths and enforce every root's 
   }
 });
 
-test("workspace restores the saved Anthropic wire version after changing the launch default", async () => {
+test("workspace restores committed model selection without invoking transport", async () => {
   const f = await fixture();
   try {
-    const env = { LABKIT_ACP_MODEL: "claude-sonnet-5", ANTHROPIC_API_KEY: "TEST_SECRET" };
-    for (const [saved, current] of [
-      ["anthropic-messages@4", "anthropic-messages@3"],
-      ["anthropic-messages@3", "anthropic-messages@4"],
-    ]) {
-      const original = await workspaceAgent({ ...env, LABKIT_ACP_PROVIDER: saved }).sessionOptions({
-        cwd: f.cwd,
-        signal: signal(),
-      });
-      const requestPermission = async () => ({ outcome: { outcome: "cancelled" as const } });
-      const session = await createSession({
-        ...original,
-        bindings: { ...original.bindings, requestPermission },
-      });
-      const id = session.snapshot.durable.conversation.sessionId;
-      await session.updatePolicy({ thinking: "adaptive" });
-      await session.close();
-      const rebound = await workspaceAgent({ ...env, LABKIT_ACP_PROVIDER: current }).sessionOptions(
-        { cwd: f.cwd, sessionId: id, signal: signal() },
-      );
-      let requests = 0;
-      const providers = new Map(
-        [...rebound.bindings.providers!].map(([key, binding]) => [
-          key,
-          {
-            ...binding,
-            transport: {
-              ...binding.transport,
-              fetch: (async () => {
-                requests++;
-                throw new Error("Restore must not fetch");
-              }) as unknown as typeof fetch,
-            },
-          },
-        ]),
-      );
-      const restored = await restoreSession(
-        { ...rebound, bindings: { ...rebound.bindings, providers, requestPermission } },
-        id,
-      );
-      expect(restored.snapshot.durable.policy).toMatchObject({
-        provider: saved,
-        thinking: "adaptive",
-      });
-      expect(requests).toBe(0);
-      await restored.close();
-    }
+    const env = {
+      LABKIT_ACP_MODEL: "first",
+      LABKIT_ACP_MODELS: "second",
+      ANTHROPIC_API_KEY: "TEST_SECRET",
+    };
+    const original = await workspaceAgent(env).sessionOptions({ cwd: f.cwd, signal: signal() });
+    const requestPermission = async () => ({ outcome: { outcome: "cancelled" as const } });
+    const options = { ...original, bindings: { ...original.bindings, requestPermission } };
+    const session = await createSession(options);
+    expect((await session.updatePolicy({ model: "second", thinking: "adaptive" })).kind).toBe(
+      "accepted",
+    );
+    await session.close();
+    const restored = await restoreSession(options, session.snapshot.durable.conversation.sessionId);
+    expect(restored.snapshot.durable.policy).toMatchObject({
+      provider: "anthropic",
+      model: "second",
+      thinking: "adaptive",
+    });
+    await restored.close();
   } finally {
     await f.cleanup();
   }

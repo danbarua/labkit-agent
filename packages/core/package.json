@@ -16,6 +16,7 @@
     "./providers": "./providers/index.ts",
     "./policy": "./policy/index.ts",
     "./environment": "./environment/index.ts",
+    "./environment/provider-capture": "./environment/provider-capture.ts",
     "./logging": "./logging/index.ts",
     "./fsm": "./fsm/index.ts",
     "./testing": "./session/testing/memory-persistence.ts",

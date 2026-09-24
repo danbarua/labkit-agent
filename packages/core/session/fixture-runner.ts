@@ -13,9 +13,13 @@ import { fixtureEnvironment, type Scenario } from "./fixtures/support.ts";
 import { journalJSONL, journalMarkdown, type JournalState } from "./session-log.ts";
 
 export { scenarios } from "./fixtures/index.ts";
+
 const fixtureRoot = new URL("./fixtures/", import.meta.url);
+
 const defaultArtifacts = new URL("../../../.session-artifacts/latest/", import.meta.url).pathname;
+
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
+
 const baselineSchema = z.array(
   z
     .object({
@@ -26,6 +30,7 @@ const baselineSchema = z.array(
     })
     .passthrough(),
 );
+
 const labels = { a: "Primary assistant", b: "Handoff specialist" };
 
 async function logging() {
@@ -59,6 +64,7 @@ function difference(actual: unknown, expected: unknown, path = "$"): unknown {
   }
   return { path, expected, actual };
 }
+
 function display(value: unknown): string {
   if (Array.isArray(value)) {
     if (value.every((item) => typeof item === "string"))
@@ -69,6 +75,7 @@ function display(value: unknown): string {
     return "structured value (details in assertions.json)";
   return value === null ? "no difference" : String(value);
 }
+
 function transcript(states: Record<string, JournalState>) {
   const seen = new Map<string, { alias: string; state: JournalState }>();
   return Object.entries(states)
@@ -269,12 +276,12 @@ export async function runFixtures(
   options: { update?: boolean; artifactDirectory?: string; version?: 1 | 2 } = {},
 ) {
   await logging();
-  const version = options.version ?? 1;
-  const selected = scenarios.filter((scenario) => scenario.version === version);
+  const version = options.version;
+  const selected = scenarios.filter(
+    (scenario) => version === undefined || scenario.version === version,
+  );
   const runId = crypto.randomUUID();
-  const directory =
-    options.artifactDirectory ??
-    (version === 2 ? `${defaultArtifacts.replace(/\/$/, "")}-v2` : defaultArtifacts);
+  const directory = `${options.artifactDirectory ?? defaultArtifacts}/${runId}`;
   await Bun.write(
     `${directory}/run.json`,
     json({
@@ -298,7 +305,7 @@ export async function runFixtures(
   await Bun.write(
     `${directory}/README.md`,
     [
-      `# Session examples — v${version}`,
+      `# Session examples — ${version ? `group ${version}` : "all scenarios"}`,
       "",
       "Start with conversation and tools for ordinary usage; persistence and branching explain failure and recovery guarantees. Each report links to executable TypeScript, checks, the transcript, and exact evidence. Providers are simulated; the runtime is real.",
       "",
@@ -317,20 +324,17 @@ export async function runFixtures(
       `Session examples failed: ${failures.map((result) => `${result.output.name}: ${result.failure?.message ?? "Unknown failure"}`).join("\n")}. Read ${resolve(directory)}/README.md`,
     );
   if (options.update) {
-    const suffix = version === 2 ? "-v2" : "";
-    const path = new URL(`expected${suffix}.json`, fixtureRoot);
-    const old = baselineSchema.parse(await Bun.file(path).json());
-    // Preserve legacy input metadata, but it is no longer interpreted or compared.
-    await Bun.write(
-      path,
-      json(
-        results.map((result) => ({
-          ...old.find((entry) => entry.name === result.output.name),
-          ...result.output,
-        })),
-      ),
-    );
+    for (const group of [1, 2]) {
+      const suffix = group === 2 ? "-v2" : "";
+      const path = new URL(`expected${suffix}.json`, fixtureRoot);
+      const selectedResults = results.filter(
+        (_result, index) => selected[index]?.version === group,
+      );
+      if (selectedResults.length)
+        await Bun.write(path, json(selectedResults.map((result) => result.output)));
+    }
   }
+
   return {
     structured,
     markdown,
@@ -345,7 +349,7 @@ if (import.meta.main) {
     throw new Error("Usage: bun run packages/core/session/fixture-runner.ts [--v2] [--update]");
   const result = await runFixtures({
     update: args.includes("--update"),
-    version: args.includes("--v2") ? 2 : 1,
+    version: args.includes("--v2") ? 2 : undefined,
   });
   console.log(
     `${result.count} session examples ${args.includes("--update") ? "updated" : "passed"}.`,

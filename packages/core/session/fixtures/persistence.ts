@@ -436,7 +436,7 @@ export const queueRecoveryV2: Scenario = {
 };
 
 export const lostAcknowledgementV2: Scenario = {
-  name: "lost-acknowledgement",
+  name: "policy-lost-acknowledgement",
   version: 2,
   group: "persistence",
   purpose:

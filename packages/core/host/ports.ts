@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { createChatCompletion, type PreparedModel } from "../agent/agent.ts";
 import type { BlobResolver } from "../agent/content.ts";
-import { AgentIdSchema, ToolNameSchema } from "../agent/types.ts";
+import { AgentIdSchema, ToolNameSchema, type CompletionSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import type { StreamDeltaSink } from "../providers/types.ts";
 
@@ -20,13 +20,16 @@ export const ToolKindSchema = z.enum([
   "switch_mode",
   "other",
 ]);
+
 export type ToolKind = z.infer<typeof ToolKindSchema>;
+
 export const ToolLocationSchema = z
   .strictObject({
     path: z.string().refine(isAbsolute, "Tool location must be an absolute path"),
     line: z.number().int().nonnegative().optional(),
   })
   .readonly();
+
 export type ToolLocation = z.infer<typeof ToolLocationSchema>;
 
 /**
@@ -36,7 +39,14 @@ export type ToolLocation = z.infer<typeof ToolLocationSchema>;
  * Strings pass through; other JSON values are serialized for model tool messages.
  */
 /** Ephemeral display identity for this live invocation; never journaled or an authorization grant. */
-export type ToolRunContext = Readonly<{ toolCallId: string }>;
+export type ToolRunContext = Readonly<{
+  toolCallId: string;
+  sessionId?: string;
+  turnId?: string;
+  batchId?: string;
+  callId?: string;
+}>;
+
 export type Tool = Readonly<{
   description?: string;
   kind?: ToolKind;
@@ -49,6 +59,7 @@ export type Tool = Readonly<{
     context?: ToolRunContext,
   ) => unknown | Promise<unknown>;
 }>;
+
 export function defineTool<S extends z.ZodType>(definition: {
   input: S;
   description?: string;
@@ -82,7 +93,14 @@ export const AgentDefinitionSchema = z
     tools: z.array(ToolNameSchema).default([]).readonly(),
   })
   .readonly();
+
 export type AgentDefinition = z.input<typeof AgentDefinitionSchema>;
+
+export type CompletionPortResponse = Readonly<{
+  completion: z.input<typeof CompletionSchema>;
+  continuationPayload?: unknown;
+}>;
+
 export type CompletionPort = (
   request: PreparedModel,
   signal: AbortSignal,
@@ -95,6 +113,7 @@ export type CompletionPort = (
     generation?: number;
   }>,
 ) => unknown | Promise<unknown>;
+
 export const PermissionResponseSchema = z.strictObject({
   outcome: z.discriminatedUnion("outcome", [
     z.strictObject({
@@ -104,6 +123,7 @@ export const PermissionResponseSchema = z.strictObject({
     z.strictObject({ outcome: z.literal("cancelled") }),
   ]),
 });
+
 export type PermissionRequest = Readonly<{
   sessionId?: string;
   turnId: string;
@@ -128,6 +148,7 @@ export type PermissionPort = (
   request: PermissionRequest,
   signal: AbortSignal,
 ) => unknown | Promise<unknown>;
+
 export type ExecutionBindings = Readonly<{
   agents: ReadonlyMap<string, AgentDefinition>;
   tools?: ReadonlyMap<string, Tool>;
@@ -145,6 +166,7 @@ export function completionTransport(options: {
   return (request, signal) =>
     createChatCompletion({ ...request, baseUrl, apiKey, signal }, fetcher);
 }
+
 export function copyRegistries(bindings: Pick<ExecutionBindings, "agents" | "tools">) {
   const agents = new Map(
     [...bindings.agents].map(([id, definition]) => [

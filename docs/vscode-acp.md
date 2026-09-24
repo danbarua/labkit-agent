@@ -33,7 +33,7 @@ in workspace settings. Bun also loads environment files from the launched proces
 directory; the adapter never changes that directory. File operations use the absolute cwd from
 `session/new`, independently of the process cwd. Leave `acp.defaultWorkingDirectory` unset to use
 the opened workspace. Other provider profiles and credentials are listed in the
-[ACP README](../packages/acp/README.md#workspace-agent-for-vs-code).
+[ACP README](../packages/acp/README.md#configure-a-host).
 
 ## First conversation
 

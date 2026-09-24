@@ -54,7 +54,7 @@ for (const profile of streamingProfiles) {
           stream: true,
           thinking:
             profile.id.startsWith("anthropic") || profile.id.startsWith("google")
-              ? "adaptive"
+              ? "budget"
               : "high",
           maxOutputTokens: 2048,
           messages: [],

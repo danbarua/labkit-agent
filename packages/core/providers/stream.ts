@@ -11,6 +11,7 @@ export async function assembleStream(
   sink?: StreamDeltaSink,
   context: ProviderDiagnosticContext = {},
   secrets: readonly string[] = [],
+  captureChunk?: (text: string) => void | Promise<void>,
 ): Promise<unknown> {
   if (
     !response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream") ||
@@ -102,7 +103,9 @@ export async function assembleStream(
       const chunk = await reader.read();
       signal.throwIfAborted();
       if (chunk.value) bytes += chunk.value.byteLength;
-      buffer += chunk.done ? decoder.decode() : decoder.decode(chunk.value, { stream: true });
+      const text = chunk.done ? decoder.decode() : decoder.decode(chunk.value, { stream: true });
+      await captureChunk?.(text);
+      buffer += text;
       for (;;) {
         const index = buffer.search(/[\r\n]/);
         if (index < 0 || (!chunk.done && buffer[index] === "\r" && index === buffer.length - 1))

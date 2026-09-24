@@ -12,15 +12,18 @@ import {
 } from "./index.ts";
 
 const response = (body: unknown) => ({ status: 200, headers: new Headers(), body });
+
 const request = CompletionRequestSchema.parse({
   model: "fixture-model",
   messages: [{ role: "user", text: "Go" }],
   tools: [],
   successors: [],
 });
+
 const googleBody = (parts: unknown[]) => ({
   candidates: [{ finishReason: "STOP", content: { role: "model", parts } }],
 });
+
 const signedParts = (round: number) => [
   { text: "private", thought: true },
   { text: `work ${round}`, thoughtSignature: `text-sig-${round}` },
@@ -29,6 +32,7 @@ const signedParts = (round: number) => [
     thoughtSignature: `call-sig-${round}-${i}`,
   })),
 ];
+
 const reasoning = (round: number) => ({
   type: "reasoning",
   id: `rs_${round}`,
@@ -38,7 +42,7 @@ const reasoning = (round: number) => ({
 
 test("Google v2 exact budget mapping, parallel calls, and two-owner signed parts round-trip", () => {
   expect(googleGenerateV2.capabilities.thinking).toEqual({ mode: "budget", maxTokens: 1024 });
-  expect(googleGenerateV2.encode({ ...request, thinking: "adaptive" })).toEqual({
+  expect(googleGenerateV2.encode({ ...request, thinking: "budget" })).toEqual({
     path: "/models/fixture-model:generateContent",
     method: "POST",
     headers: {},
@@ -58,7 +62,7 @@ test("Google v2 exact budget mapping, parallel calls, and two-owner signed parts
     const parts = signedParts(round);
     const decoded = googleGenerateV2.decode(response(googleBody(parts)), {
       ...request,
-      thinking: "adaptive",
+      thinking: "budget",
     });
     expect(decoded).toEqual({
       completion: {
@@ -87,7 +91,7 @@ test("Google v2 exact budget mapping, parallel calls, and two-owner signed parts
   const body = googleGenerateV2.encode(
     CompletionRequestSchema.parse({
       ...request,
-      thinking: "adaptive",
+      thinking: "budget",
       messages,
       continuations: envelopes.toReversed(),
     }),
@@ -115,7 +119,7 @@ test("Google v2 exact budget mapping, parallel calls, and two-owner signed parts
 test("Google v2 rejects stripped signatures with thinking on, including through transport; v1 stays strict", async () => {
   const parts = signedParts(0).map(({ thoughtSignature, ...part }) => part);
   expect(() =>
-    googleGenerateV2.decode(response(googleBody(parts)), { ...request, thinking: "adaptive" }),
+    googleGenerateV2.decode(response(googleBody(parts)), { ...request, thinking: "budget" }),
   ).toThrow("thoughtSignature");
   expect(
     googleGenerateV2.decode(response(googleBody(parts)), { ...request, thinking: "off" })
@@ -145,7 +149,7 @@ test("Google v2 rejects stripped signatures with thinking on, including through 
     port.complete(
       PreparedModelSchema.parse({
         provider: googleGenerateV2.id,
-        thinking: "adaptive",
+        thinking: "budget",
         model: request.model,
         messages: [],
       }),

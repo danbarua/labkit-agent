@@ -1,142 +1,114 @@
-# Execution host
+# Completion and tool integration
 
-Both runtimes use `createHost` for completion, preparation, handoff and tool-batch execution.
-It owns copied registries, child actors and cancellation. It has no persistence port or session FSM.
-The agent runtime remains nonjournaled; the session runtime releases work after committed receipts.
+The host owns the lifetime of external work for both session and in-memory runtimes. Put tools,
+completion adapters, and permission UI here through bindings. Do not put controllers or callbacks
+in snapshots, and do not add a second execution loop in a UI or protocol adapter: two loops could
+execute the same admitted tool call twice.
 
-`dispatch(command, context)` captures and freezes the prompt, permissions and projection functions
-for that operation. Private sinks report correlated turn and individual tool outcomes. Reporting a
-tool result does not advance its batch: `releaseTool(outcome)` is a separate, single-use operation.
-The session calls it only after its append commits. Closing a host drops late outcomes and cancels
-only its own children. Forks allocate independent hosts.
+Most consumers only need `defineTool` and `CompletionPort`, exported by the session API. Direct
+`createHost` integration is for runtime authors who also take responsibility for outcome routing
+and the result-release gate described below.
 
-`ports.ts` owns `Tool`, `defineTool`, `CompletionPort`, registry copying and `completionTransport`.
-The latter captures credentials, provider URL and fetch implementation in its closure. Existing agent
-exports remain compatibility exports; new integrations can import the host port definitions directly.
-
-The reusable completion/tool contract suites accept adapter factories over scripted sources. They
-exercise the adapter through the same validating operation actor used by the host. Cancellation
-means the signal is delivered and late results cannot settle the actor again; it does not assert
-rollback or exactly-once external effects. `host.test.ts` separately verifies the tool release gate.
-
-Tool outputs are JSON-only: null, booleans, finite numbers, strings, arrays and plain objects.
-Return null instead of undefined, and explicitly convert dates or class instances to JSON data.
-The host reports output validation failures through the same correlated tool-outcome path as
-execution errors. Error-continuation policy can project that failure into a model tool message.
-
-Attachment I/O is supplied through the execution context's `loadBlobs` binding. Preparation calls
-it to validate projected refs. Completion calls it again after the prepared journal receipt and
-passes the resulting BlobId-keyed resolver as the optional third argument to `CompletionPort`.
-Each call receives its operation's AbortSignal. Bytes and resolver functions never enter prepared
-snapshots, child outcomes, or journal events. The session binding owns persistence and media checks;
-the host continues to own operation lifetime and cancellation.
-
-For completion, `loadBlobs` receives `includeContinuations: true`; preparation omits it and reads
-only attachment refs. After admitting completion, the host stamps continuation owner/provider and
-awaits the session-supplied `storeContinuation` binding inside the completion operation. This binding
-keeps small payloads inline or writes large payloads as blobs. It receives the same AbortSignal;
-only a validated envelope can enter the child outcome. The host itself owns no persistence handle.
-
-## Tool display notifications
-
-`defineTool` accepts optional `kind` (default `other`) and a pure synchronous `locations(parsedArgs)`
-callback returning `{ path, line? }[]`. Paths must be absolute; lines are nonnegative integers.
-The callback receives a copy of validated input and must perform no I/O. Metadata errors omit
-locations and emit a diagnostic; they do not authorize, reject, or change execution.
+## Implement a tool
 
 ```ts
+import { isAbsolute } from "node:path";
+
+import { defineTool } from "@labkit-agent/core";
+import { z } from "zod";
+
 const readDesign = defineTool({
-  input: z.object({ path: z.string() }),
+  input: z.object({ path: z.string().refine(isAbsolute, "Use an absolute path") }),
   kind: "read",
-  locations: ({ path }) => [{ path }],
-  run: ({ path }) => Bun.file(path).text(),
+  locations: ({ path }) => [{ path }], // Validated absolute display path, not authorization.
+  async run({ path }, signal, context) {
+    signal.throwIfAborted();
+    return Bun.file(path).text();
+  },
 });
 ```
 
-The optional third sink, `createHost(bindings, { turn, tool, toolUpdate })`, receives frozen
-`HostToolNotification` values. Public runtimes expose it as `RuntimeOptions.toolUpdate` or
-`SessionBindings.toolUpdate` (also supported by legacy flat session options). Bindings are captured
-at construction and inherited by forks. Each notification includes sessionId when available,
-turnId, batchId, the provider's callId, and toolCallId (the unique operation child ID).
+Input is validated before execution. Output must be JSON: use null instead of undefined and convert
+dates/classes explicitly. Output validation can fail after the tool's external effect has happened;
+a failure therefore does not imply rollback. Keep parsing and `locations` pure, since the host may
+use them before permission is granted. Enforce filesystem or service access rules inside your tool;
+display locations are not a sandbox.
 
-- `sessionUpdate: "tool_call"` is emitted on spawn with name, title (the tool name), kind,
-  rawInput, and status `pending`.
-- After input validation, `tool_call_update` supplies locations before `tool.run` is invoked.
-  Invalid input produces `failed` without deriving locations or running the tool.
-- Operation transitions emit `in_progress`, then `completed` or `failed`; output validation
-  remains in progress. Cancellation maps to failed. Repeated status values are suppressed.
-- Terminal updates supply rawOutput: the validated, normalized tool-result string on success,
-  or `{ error: message }` for failure/cancellation. Updates omit unchanged fields.
+Pass the operation's AbortSignal into downstream I/O. `ToolRunContext` supplies `sessionId`,
+`turnId`, `batchId`, provider `callId`, and unique operation `toolCallId`. Use it for nested request
+capture or resources such as a terminal. Names and argument equality do not distinguish repeated
+calls. Context is not an approval token, and a tool called directly outside the host has no context.
 
-Tool callbacks may also accept a third optional `ToolRunContext` argument. The host supplies a
-frozen `{ toolCallId }` containing the same operation child ID as these notifications. `defineTool`
-forwards it without adding it to input schemas or journal records. Direct two-argument calls remain
-valid and have no context. This identity lets adapters associate operation-owned display resources
-(such as an ACP terminal) without guessing from the tool name, arguments, or provider call ID.
-It is not an approval grant or a journal receipt.
+## Implement a completion binding
 
-This is best-effort display data, not a journal event or permission gate. Callback exceptions,
-rejected promises, and pending promises do not affect operation results or delay dependent work.
-The completed notification can arrive before the result append commits; only `tool` and
-`releaseTool` advance the batch. Replay/restore emits no historical tool updates. Closing the host
-suppresses further notifications; cancellation while open emits one terminal update, ignoring late
-validation/output. Consumers should use session snapshots for authoritative state.
+`CompletionPort(request, signal, blobs?, onDelta?, correlation?)` receives a validated prepared
+request. Return `{ completion, continuationPayload? }`; the host validates the untrusted response
+before accepting it. The public request/response types and the
+[executable exchange](../session/examples/completion-binding.ts) show tool arguments and messages.
+Use [provider bindings](../providers/README.md) for supported HTTP dialects.
 
-ACP tool notifications and once-only permission requests are implemented in process.
-The separate [ACP stdio adapter](../../acp/README.md) carries them over JSON-RPC.
-Streaming uses the same notification-only helper through a fourth sink, `streamUpdate`.
-It receives frozen `HostStreamNotification` values with sessionId, turnId, completionId (child ID),
-generation, and `sessionUpdate: "completion" | "completion_update"`. Status transitions are
-pending → in_progress → completed/failed; cancellation maps to failed. Intermediate updates carry
-append-only text/thinking strings or provider-native usage fields, omitting unchanged fields.
-CompletionPort's optional fourth argument receives these deltas without ownership or journal data.
-The host validates delta shape, adds identity, and drops notifications after cancellation/settlement.
+Use the supplied blob resolver for attachments and continuations; it is scoped to that operation.
+Do not retain it in domain state. The session arranges blob storage and loading while the host owns
+cancellation. A continuation write failure prevents a successful completion outcome, so tools
+cannot run from a response whose required context could not be saved.
 
-Only the final assembled body is decoded and admitted. Completed display status follows admission
-and any continuation blob storage but does not certify a journal receipt. Incomplete/error streams
-fail the completion child and never publish a successful partial model_settled. Stream callbacks,
-like tool callbacks, cannot fail operations or hold the execution gate. Both runtimes capture the
-optional streamUpdate binding; session provider profiles opt into streaming through policy.
+Optional deltas are for display. A stream still needs one complete validated response: partial text
+cannot authorize tool execution or count as a successful answer. Pass correlation into transport
+capture so a bad response can be identified without reconstructing the request from the journal.
 
-## Permission requests
+## Permission and display ports
 
-`ExecutionBindings.requestPermission(request, signal)` is an authoritative port, separate from the
-four notification/outcome sinks. Context `permissions: "ask"` inserts `awaiting_permission` between
-an admitted tools completion and `run_tools`. Without that setting, execution retains its existing
-behavior. The nonjournaled runtime opts in when `RuntimeOptions.requestPermission` is supplied;
-sessions use an explicit policy setting.
+`requestPermission(request, signal)` is authoritative. With `permissions: "ask"`, the host validates
+inputs and asks about calls in order. Return a selected `allow-once` or `reject-once` option, or a
+cancelled outcome. Every call must be allowed before the batch runs. A malformed response or callback
+failure fails closed; cancellation revokes in-memory grants, and late approval cannot start a tool.
+No approval is remembered for the next invocation.
 
-Requests carry sessionId, turnId, requestId, a pending toolCall (including kind, rawInput and parsed
-locations), and the two options `allow-once` / `allow_once` and `reject-once` / `reject_once`.
-Return `{ outcome: { outcome: "selected", optionId: "allow-once" } }` (or `reject-once`), or
-`{ outcome: { outcome: "cancelled" } }`. Unknown options, malformed responses and callback failures
-fail closed. Remembered choices are not supported.
+`toolUpdate` and `streamUpdate` are best-effort display subscribers. Their exceptions or pending
+promises cannot block execution. Use their operation IDs to update existing cards/chunks. Restore
+emits no historical host notifications; render saved history from session state instead.
 
-Calls are presented in admitted order. Every call must be allowed before any tool in the batch runs.
-A rejection fails the turn; cancellation aborts it. Every valid response emits Info
-`permission.decided`. Rejection additionally emits Warning `permission.refused`, identifying the
-tool, arguments, locations, permission child, blocked batch size and refusal reason so that a
-warning-only scan exposes the intervention. Neither fabricates a tool result for an unrun
-call. Pending tool notifications and permission requests share the eventual tool child ID. Permission
-approval does not mark a tool in_progress: that transition still belongs to actual execution.
+| Signal              | Suitable use                               | Authority it does not provide                   |
+| ------------------- | ------------------------------------------ | ----------------------------------------------- |
+| Pending tool card   | Show intended work and resolved locations. | Permission to execute.                          |
+| Completed tool card | Show the locally validated result.         | Proof that the result was saved.                |
+| Stream delta        | Show provisional text or thinking.         | A complete answer or admitted tool call.        |
+| Permission response | Allow this call within its batch.          | A journal receipt or approval for another call. |
 
-Input parsing occurs before asking and its exact result is held in host memory for execution after
-approval. Parsers and location callbacks must not perform tool effects. Locations remain display
-metadata, not a filesystem sandbox. Runtime functions, parsed inputs and grants never enter the
-journal. Abort/close revoke grants and signal the pending callback; late responses cannot run tools.
-The port receives a frozen request. Unlike display sinks, its response is awaited and validated.
+## Why a tool result has a separate release gate
 
-## Runtime diagnostics
+A session must save each tool result before a batch can use it. Otherwise the next model request
+could depend on a result that disappears after a crash. The host reports the result to the runtime,
+then waits for `releaseTool(outcome)`. The session calls that method only after the matching append
+receipt. The in-memory runtime releases immediately because it makes no persistence promise.
 
-Host diagnostics identify the session, operation child and dispatching turn. Completion calls
-forward that correlation to the provider transport as an optional fifth port argument. Tool events
-include batch/provider call IDs, host tool call ID, tool name, status changes and resolved paths.
-`permission.waiting` means the whole batch is blocked on the named request; `permission.decided`
-records the once-only choice and elapsed time. `tool.awaiting_release` identifies a finished tool
-whose result still awaits the caller's release gate, rather than implying a journal commit.
+Direct host consumers must release each correlated result at most once. Do not release from a
+notification callback or infer a commit from logging. See the
+[tool-result diagram](../../../docs/session-runtime.md#save-each-tool-result-before-continuing).
 
-`child.failed` preserves the original error and cause before the operation actor converts it into
-its domain failure, with the failing validation/execution phase and elapsed time. Cancellation and
-terminal outcomes remain independently visible. Diagnostics are best effort and never decide or
-release work. Configure sinks at the environment boundary; use debug test capture to inspect these
-same runtime events (`LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/session/observability.test.ts`).
+## Cancellation is a settlement rule, not rollback
+
+The host captures optional completion/tool deadlines when spawning work. Expiry sends cancellation
+with classification `timeout` and its limit. Explicit cancellation has a different reason. Timers
+are cleared on settlement/close; permission waiting has no deadline in core.
+
+An operation settles once. A tool that ignores cancellation may still change the outside world, but
+its late result cannot complete a replacement operation or restart the loop. Batch failure cancels
+unfinished siblings with the initiating failure attached, preserving which call caused the stop.
+There is no implicit retry. Forks own separate hosts, so closing one does not cancel another.
+
+## Find the cause of a stopped operation
+
+`child.failed` records the originating validation/execution phase and diagnostic cause;
+`child.timed_out` adds the configured limit. `tool.awaiting_release` means execution finished but
+the runtime has not released its result. For a session, investigate storage when that wait persists.
+`permission.waiting` instead means the entire batch awaits a user decision. These waits require
+different interventions and must not be presented as a generic “tool running” state.
+
+Public failures preserve serializable operation identity and cause; runtime logs additionally carry
+stacks. Configure the [environment sink](../logging/README.md) and join records by session/turn/child
+and batch/call IDs. Inspect real success and failure paths with:
+
+```sh
+LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/host packages/core/session/consumer-contract.test.ts
+```

@@ -1,195 +1,117 @@
-# Agent flow diagrams
+# Operation identity and cancellation
 
-Supplementary visuals for [`core-runtime.md`](./core-runtime.md).
+These diagrams explain actor behavior shared by both runtimes. Actor commit installs immutable
+state; it does **not** mean journal persistence. The session adds the
+[receipt gates](session-runtime.md) before commands execute. Dashed returns below are outcomes,
+not permission to bypass those gates.
 
-## Message routing
-
-```mermaid
-flowchart LR
-  caller[Runtime caller]
-  conversation[Conversation actor]
-  runtime[Runtime command dispatcher]
-  preparation[Prompt preparation operation]
-  completion[Completion operation]
-  handoff[Handoff preparation operation]
-  batch[Tool batch actor]
-  tools[Tool operation actors]
-
-  caller -->|user / abort| conversation
-  conversation -->|prepare_model| runtime
-  conversation -->|complete| runtime
-  conversation -->|prepare_handoff| runtime
-  conversation -->|run_tools| runtime
-  conversation -->|cancel child| runtime
-
-  runtime -->|start| preparation
-  runtime -->|start| completion
-  runtime -->|start| handoff
-  runtime -->|start| batch
-  runtime -->|cancel| preparation
-  runtime -->|cancel| completion
-  runtime -->|cancel| handoff
-  runtime -->|cancel| batch
-
-  preparation -->|prepared| runtime
-  completion -->|model_settled| runtime
-  handoff -->|handoff_prepared| runtime
-  batch -->|batch_settled| runtime
-  runtime -->|child + turnId| conversation
-
-  batch -->|spawn_tool| runtime
-  runtime -->|start| tools
-  batch -->|cancel_tool| runtime
-  runtime -->|cancel| tools
-  tools -->|tool_settled| runtime
-  runtime -->|tool_settled + callId| batch
-```
-
-## Turn state transitions
+## A turn has a permission phase
 
 ```mermaid
 stateDiagram-v2
   [*] --> idle
-
-  idle --> preparing_model: user [steps remain]
-  idle --> done: user [no steps]
+  idle --> preparing_model: user, steps remain
+  idle --> done: user, no steps / exhausted
   idle --> done: abort
-
-  preparing_model --> awaiting_model: prepared / succeeded
-  preparing_model --> preparing_model: user / replace child
-  preparing_model --> done: user [no steps]
-  preparing_model --> done: abort or failed or cancelled
-
-  awaiting_model --> done: model_settled / answer
-  awaiting_model --> executing_tools: model_settled / tools
-  awaiting_model --> preparing_handoff: model_settled / handoff
-  awaiting_model --> preparing_model: user / replace child
-  awaiting_model --> done: user [no steps]
-  awaiting_model --> done: abort or failed or cancelled
-
-  preparing_handoff --> preparing_model: handoff_prepared / succeeded [steps remain]
-  preparing_handoff --> done: handoff_prepared / succeeded [no steps]
-  preparing_handoff --> preparing_model: user / replace child
-  preparing_handoff --> done: user [no steps]
-  preparing_handoff --> done: abort or failed or cancelled
-
-  executing_tools --> preparing_model: batch_settled / succeeded [steps remain]
-  executing_tools --> done: batch_settled / succeeded [no steps]
-  executing_tools --> done: batch_settled / failed or cancelled
+  preparing_model --> awaiting_model: prepared / consume step
+  awaiting_model --> done: answer
+  awaiting_model --> awaiting_permission: tools, permissions ask
+  awaiting_model --> executing_tools: tools, permissions off
+  awaiting_permission --> executing_tools: every call approved
+  awaiting_permission --> done: refusal, failure, or cancellation
+  awaiting_model --> preparing_handoff: handoff
+  preparing_handoff --> preparing_model: prepared, steps remain
+  preparing_handoff --> done: prepared, no steps / exhausted
+  executing_tools --> preparing_model: batch success, steps remain
+  executing_tools --> done: batch success, no steps / exhausted
+  executing_tools --> done: batch failure or cancellation
   executing_tools --> cancelling_tools: abort
-
-  cancelling_tools --> done: batch_settled / preserve accepted results
-
-  done --> idle: record turn / increment sequence / reset allowance
+  cancelling_tools --> done: batch outcome, preserve accepted results
+  preparing_model --> done: failure or cancellation
+  awaiting_model --> done: failure or cancellation
+  preparing_handoff --> done: failure or cancellation
+  done --> idle: record terminal turn and reset allowance
 ```
 
-## Operation actor transitions
+Replacement input is omitted from this diagram for readability; the sequence below covers it.
+Permission refusal fails the whole turn before any tool starts. Permission-dialog cancellation
+aborts it. The distinction must survive into a client-facing result.
+
+## Replace model work without accepting its late answer
+
+```mermaid
+sequenceDiagram
+  participant A as Application
+  participant C as Conversation
+  participant H as Shared host
+  participant O as Old operation
+  participant N as New operation
+  A->>C: replacement user input
+  C->>C: install new child identity in the same turn
+  C->>H: cancel old child; start replacement
+  H->>O: abort signal
+  H->>N: start
+  N-->>H: result for new child
+  H-->>C: correlated outcome
+  C->>C: accept matching turn and child
+  O-->>H: late result, if adapter ignored signal
+  H->>H: ignore already-cancelled operation result
+  Note over C,H: Conversation also rejects mismatched turn or child identities.
+```
+
+Both inputs settle with the same terminal turn. Under the default policy, replacement applies to
+preparation/completion/handoff, not tool or permission work. A timeout uses the same cancellation
+machinery with a distinct typed reason; it does not spawn a replacement automatically.
+
+## Cancelling a batch preserves what was accepted
+
+```mermaid
+sequenceDiagram
+  participant A as Application
+  participant C as Conversation
+  participant H as Host
+  participant B as Tool batch
+  participant T as Tools A and B
+  H->>T: start both calls
+  T-->>H: A succeeds
+  Note over H,B: Session saves A's result before release.<br/>In-memory runtime releases immediately.
+  H->>B: accept A result
+  A->>C: abort
+  C->>C: enter cancelling_tools
+  C->>H: cancel batch
+  H->>B: cancel
+  B->>H: cancel unfinished B
+  H->>T: abort B signal
+  B-->>C: cancelled batch with A result, through host
+  C->>C: record aborted turn with accepted result
+```
+
+Tool B may already have changed an external service. Its cancellation is not proof that nothing
+happened. On failure, unfinished siblings receive the initiating call's cause so the public outcome
+and logs can explain why the rest of the batch stopped.
+
+## An operation settles once
 
 ```mermaid
 stateDiagram-v2
   [*] --> ready
   ready --> validating_input: start
-  validating_input --> running: input_valid
+  validating_input --> running: valid input
   running --> validating_output: returned
-  validating_output --> succeeded: output_valid
-
+  validating_output --> succeeded: valid output
+  validating_input --> failed: invalid input
+  running --> failed: execution failure
+  validating_output --> failed: invalid output
   ready --> cancelled: cancel
   validating_input --> cancelled: cancel
   running --> cancelled: cancel
   validating_output --> cancelled: cancel
-
-  ready --> failed: failed
-  validating_input --> failed: failed
-  running --> failed: failed
-  validating_output --> failed: failed
-
   succeeded --> [*]
   failed --> [*]
   cancelled --> [*]
 ```
 
-## Tool batch transitions
-
-```mermaid
-stateDiagram-v2
-  [*] --> ready
-  ready --> running: start / spawn_tool for each call
-  running --> running: tool_settled / accept result and remove pending call
-  running --> running: tool_settled / ignore unknown or duplicate callId
-  running --> settled: last tool succeeded / notify batch success
-  running --> settled: tool failed or cancelled / cancel pending tools
-  running --> settled: cancel / cancel pending tools
-  settled --> [*]
-```
-
-## Barge-in and stale outcomes
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant U as Runtime caller
-  participant C as Conversation actor
-  participant R as Runtime dispatcher
-  participant Old as Previous child
-  participant New as Replacement child
-
-  U->>C: user
-  C->>C: commit replacement childId
-  C->>R: cancel(previous childId)
-  C->>R: prepare_model(replacement childId)
-  R->>Old: cancel
-  R->>New: start
-  New-->>R: prepared(replacement childId)
-  R-->>C: child(turnId, prepared)
-  C->>C: accept matching turnId + childId
-  Old-->>R: late terminal outcome(previous childId)
-  R-->>C: child(turnId, late outcome)
-  C->>C: ignore stale childId
-```
-
-## Tool cancellation with partial results
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant U as Runtime caller
-  participant C as Conversation actor
-  participant B as Tool batch actor
-  participant T1 as Tool operation A
-  participant T2 as Tool operation B
-
-  C->>B: start(calls A, B)
-  B->>T1: spawn_tool / start
-  B->>T2: spawn_tool / start
-  T1-->>B: tool_settled(A, succeeded)
-  B->>B: retain result A; #B remains pending
-  U->>C: abort
-  C->>C: executing_tools → cancelling_tools
-  C->>B: cancel
-  B->>T2: cancel_tool / cancel
-  B->>B: settle cancelled with result A
-  B-->>C: batch_settled(cancelled, partial results)
-  C->>C: append result A; #record aborted turn
-```
-
-## Fork publication boundary
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant U as Runtime caller
-  participant C as Source conversation actor
-  participant Child as Active child
-  participant R as Runtime dispatcher
-  participant F as Forked runtime
-
-  U->>C: request(fork or compact)
-  C->>C: queue request while turn is active
-  Child-->>C: child(turnId, terminal outcome)
-  C->>C: record turn + install idle turn
-  C->>C: capture fork snapshot + drain request
-  C->>C: commit source state
-  C->>R: reply(captured snapshot)
-  R->>F: construct independent runtime
-  R-->>U: resolve fork or compact promise
-```
+Cancellation carries a reason. The surrounding host/turn translates a timeout reason into a failed
+terminal outcome with classification `timeout`; user cancellation remains distinguishable. A
+terminal actor does not accept a late success. Keep arbitrary Error objects and AbortControllers
+outside snapshots; retain serializable causes and operation identity inside outcomes.

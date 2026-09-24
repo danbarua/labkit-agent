@@ -19,9 +19,8 @@ import {
 import {
   createSession,
   restoreSession,
-  type BoundSessionOptions,
   type JournalState,
-  type MediaKind,
+  type SessionOptions,
   type SessionPersistence,
   type SessionRuntime,
   type SessionState,
@@ -63,12 +62,14 @@ export type SessionOptionsContext = Readonly<{
   publishPlan?: PlanSink;
   signal: AbortSignal;
 }>;
-export type AcpSessionOptions = BoundSessionOptions & {
+
+export type AcpSessionOptions = SessionOptions & {
   config?: readonly AcpConfigBinding[];
   commands?: readonly AcpCommand[];
   /** Persist host metadata after runtime initialization, before visible lifecycle publication. */
   onReady?: (sessionId: string, signal: AbortSignal) => void | Promise<void>;
 };
+
 export type AcpOptions = Readonly<{
   auth?: AcpAuth;
   /** Bind tools to cwd without changing process.cwd(). On load, validate cwd against saved ownership. */
@@ -97,11 +98,11 @@ export type AcpOptions = Readonly<{
   ) => SessionInfoUpdate | undefined | Promise<SessionInfoUpdate | undefined>;
   agentInfo?: { name: string; version: string; title?: string };
 }>;
+
 type Session = {
   runtime: SessionRuntime;
   dispose: () => Promise<void>;
   persistence: SessionPersistence;
-  media: (provider: string | undefined) => readonly MediaKind[];
   promptController?: AbortController;
   promptRpcRequestId?: string;
   cwd: string;
@@ -165,6 +166,7 @@ function toolUpdate(event: HostToolNotification, terminals: readonly string[] = 
       : {}),
   };
 }
+
 function observeSafely<T>(
   callback: ((value: T) => unknown) | undefined,
   value: T,
@@ -595,10 +597,6 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         mcpServers: structuredClone(params.mcpServers),
         dispose: cleanup,
         persistence: original.persistence,
-        media: (provider: string | undefined): readonly MediaKind[] =>
-          (provider
-            ? original.bindings.providers?.get(provider)?.profile.capabilities.media
-            : undefined) ?? [],
         busy: false,
         promptDone: Promise.resolve(),
         configurationTail: Promise.resolve(),
@@ -617,7 +615,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         terminals: new Map<string, string[]>(),
         toolCards: new Map(),
       };
-      const bound: BoundSessionOptions = {
+      const bound: SessionOptions = {
         ...original,
         configuration: {
           ...original.configuration,
@@ -1292,7 +1290,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           entry.persistence,
           entry.runtime.snapshot.durable.conversation.sessionId,
           promptSignal,
-          entry.media(entry.runtime.snapshot.durable.policy?.provider),
+          entry.runtime.model?.capabilities.media ?? [],
           entry.additionalDirectories,
         );
         promptSignal.throwIfAborted();
@@ -1330,18 +1328,8 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           throw new RequestError(-32000, "Session storage failed", { message: result.message });
         const outcome = result.record.outcome;
         if (outcome.kind === "failed") {
-          const refused = entry.runtime.snapshot.durable.records.some((record) => {
-            const body = record.body;
-            return (
-              body.kind === "event" &&
-              body.event.type === "child" &&
-              body.event.turnId === result.turnId &&
-              body.event.event.type === "permission_settled" &&
-              body.event.event.result.kind === "succeeded" &&
-              body.event.event.result.value.some((decision) => decision.decision === "reject_once")
-            );
-          });
-          if (refused) return { stopReason: "refusal" };
+          if (outcome.error.classification === "permission_refused")
+            return { stopReason: "refusal" };
           throw new RequestError(-32000, "Agent turn failed", outcome.error);
         }
         return {

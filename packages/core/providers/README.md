@@ -1,331 +1,162 @@
-# Completion profiles and transport bindings
+# Model bindings and provider transport
 
-The environment binds provider code and credentials. Policy records only a versioned
-profile ID, an optional model override, and generation settings. Host operation actors
-still own admission, tool dispatch, handoff, cancellation, and settlement. Profiles
-perform no I/O and never run a tool loop.
+Use provider bindings when you want the session to make HTTP model calls. Use a custom
+`CompletionPort` when your application already has a completion source. Both return through the
+same admission and persistence gates; neither should execute model-requested tools itself.
 
-## Bind a session
+A user selects a provider, model, and settings. The environment resolves those into a wire model ID
+and an encoder/decoder profile. This keeps adapter revisions out of your UI while retaining the
+implementation identity needed to diagnose a bad request. Declare the models you support: core
+cannot infer from a model name whether your endpoint supports adaptive thinking or images.
 
-This example assumes an injected SessionPersistence and tool registry:
+## Declare the selection your application offers
 
 ```ts
 import { createSession } from "../session/index.ts";
-import { anthropicMessages, openaiResponses } from "./index.ts";
+import { anthropicMessagesV4 } from "./index.ts";
 
 const session = await createSession({
   persistence,
   configuration: {
     agent: "researcher",
-    agents: new Map([["researcher", { model: modelId, tools: ["search"], successors: [] }]]),
+    agents: new Map([["researcher", { model: "reviewer", tools: [], successors: [] }]]),
     steps: 8,
-    policy: {
-      provider: "openai-responses@1",
-      stream: false,
-      thinking: "off",
-      maxOutputTokens: 2048,
-    },
+    policy: { provider: "anthropic", model: "reviewer", thinking: "adaptive", stream: true },
   },
   bindings: {
-    tools,
     providers: new Map([
       [
-        openaiResponses.id,
+        "anthropic",
         {
-          profile: openaiResponses,
-          transport: {
-            baseUrl: "https://api.openai.com/v1",
-            headers: { Authorization: `Bearer ${openaiKey}` },
-            fetch,
-          },
-        },
-      ],
-      [
-        anthropicMessages.id,
-        {
-          profile: anthropicMessages,
+          profile: anthropicMessagesV4,
+          models: new Map([
+            ["reviewer", { wireModel: configuredModelId, profile: anthropicMessagesV4 }],
+          ]),
           transport: {
             baseUrl: "https://api.anthropic.com/v1",
             headers: { "x-api-key": anthropicKey },
-            fetch,
+            capture: run.capture,
           },
         },
       ],
     ]),
   },
 });
-
-// The patch is journaled at a fully quiescent idle boundary.
-const receipt = await session.updatePolicy({
-  provider: "anthropic-messages@1",
-  model: anthropicModelId,
-});
+await session.updatePolicy({ model: "reviewer", thinking: "off", permissions: "off" });
 ```
 
-Choose model IDs that support the requested settings. This library does not maintain
-a model capability catalog or silently remove unsupported settings. Omit undefined
-patch fields; they are not a reset operation.
+Supply exactly one completion port or provider registry. A provider-bound session requires an
+explicit provider policy. A model registry requires an explicit model selection and rejects unknown
+names with the supported alternatives. Bindings without a model registry accept the requested wire
+model directly, using their declared profile. Binding keys need not match profile IDs. Registries,
+capabilities, profiles and transport settings are captured at construction; credentials and origins
+are never journal data. Restore validates persisted selections before external work.
 
-Supply exactly one of bindings.complete (a custom completion port) or bindings.providers.
-Provider-bound creation requires an explicit configuration.policy.provider. Restore
-uses the persisted policy rather than the creation default. Bind every profile ID
-referenced by the journal; missing IDs reject restore before any external work starts.
-The binding registry, profile methods, and transport settings are captured at construction.
-Behavioral compatibility of code behind an ID remains the caller's responsibility.
-Use a new versioned ID when changing wire semantics.
+## Choose settings without silently changing their meaning
 
-Base URLs include the API version prefix: /v1 for OpenAI/Anthropic, /v1beta for Google.
-Origin, headers, fetch, and keys are never policy fields. Headers are supplied by the
-environment: Bearer authorization for OpenAI-compatible services, x-api-key for Anthropic,
-and x-goog-api-key for Google. xAI and local servers use openai-chat@1 with their own
-transport binding; no separate xAI dialect is included.
+| Setting           | What the binding must promise                              | Why rejection matters                                                    |
+| ----------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Adaptive thinking | Native adaptive capability.                                | A fixed token budget is a different user choice.                         |
+| Budget thinking   | Declared manual token budget.                              | The current profiles use 1024 tokens; arbitrary budgets are not implied. |
+| Streaming         | A supported dialect and complete-response assembler.       | Visible text alone cannot establish a valid answer or tool call.         |
+| Media             | Support for the supplied media in the bound model/profile. | A stored attachment ref does not mean its contents reached the model.    |
 
-## Contracts
+Switching model and incompatible settings should be one policy patch. Unsupported combinations
+fail before HTTP, so the caller gets a configuration error instead of paying for a request the
+adapter cannot represent. Binding declarations remain your responsibility: local validation does
+not prove that a remote model deployment accepts them.
 
-PreparedModel is now credential-free. Its existing projected-message DTO is retained
-for compatibility with prompt policies and historical journals. At the profile boundary,
-canonicalRequest converts it into CompletionRequest: domain messages with text, parsed
-JSON tool arguments, correlated call IDs, advertisements, and successor names. Profiles
-never see the journal or connection settings. AbortSignal is a separate port argument.
+## Implemented dialects
 
-Each profile has pure encode(request, blobs?) and decode(response, request?) methods.
-The transport passes the captured request to decode for request-dependent validation. Encoding returns a
-relative POST path, non-secret protocol headers, and a body. The transport attaches the
-origin and credentials and makes one HTTP attempt. There are no retries or SDK dependencies.
-Decode rejects malformed, truncated, refused, built-in-tool, and unsupported continuation
-data where exposed by the dialect. The host validates completion shape and permissions.
+All existing encoder/decoder implementations remain available to environment authors:
 
-The built-in IDs are openai-chat@1, openai-responses@1, anthropic-messages@1,
-anthropic-messages@2, google-generate@1, google-generate@2, and openai-responses@2.
-Streaming adds openai-chat@2, anthropic-messages@3, google-generate@3, and openai-responses@3. Responses sends the complete projected input with store:false and
-never sends previous_response_id or a server conversation reference. Anthropic combines
-tool results into user content blocks. Google emits function declarations using
-parametersJsonSchema and pairs function responses with call IDs and names. When Google
-omits a call ID, the profile derives one from the response part index; identities remain
-scoped to the domain tool batch.
+| Profile                   | Thinking            | Streaming | Continuations            |
+| ------------------------- | ------------------- | --------- | ------------------------ |
+| openai-chat@1 / @2        | effort              | @2        | none                     |
+| openai-responses@1        | off                 | no        | none                     |
+| openai-responses@2 / @3   | effort              | @3        | encrypted reasoning      |
+| anthropic-messages@1      | off                 | no        | none                     |
+| anthropic-messages@2 / @3 | budget, 1024 tokens | @3        | signed/redacted thinking |
+| anthropic-messages@4      | native adaptive     | yes       | signed/redacted thinking |
+| google-generate@1         | off                 | no        | none                     |
+| google-generate@2 / @3    | budget, 1024 tokens | @3        | signed model parts       |
 
-Anthropic requires max_tokens; its profile uses maxOutputTokens or an explicit profile
-default of 1024. This default is part of anthropic-messages@1's versioned behavior.
+Anthropic manual thinking requires maxOutputTokens > 1024. Native adaptive thinking sends no manual
+budget; Anthropic's default max_tokens is 1024 when unspecified. Responses always sends store:false
+and the complete projected input, never previous_response_id or a server conversation reference.
+`handoff_to` is reserved for agent routing; do not register a tool with that name. Mixed handoff/tool
+output is rejected because a single completion cannot both transfer control and start a local batch.
 
-## Streaming
+Profiles encode/decode only. The shared transport makes exactly one HTTP attempt with the operation
+AbortSignal. Base URLs include /v1 or /v1beta. Origins, keys and fetch implementations are bindings.
+Profile paths are relative and cannot redirect credentials. The nonjournaled Chat convenience port
+uses the same HTTP transport; its custom-server handoff field is isolated from provider profiles.
 
-Enable `policy.stream: true` with a streaming-capable profile. Bind the optional
-`bindings.streamUpdate(notification)` callback to render progress. The fourth host sink carries
-completion ID, turn/generation and session identity, pending/in_progress/completed/failed status,
-and incremental `text`, `thinking`, or `usage` fields. Text/thinking values append; usage objects
-are provider-native snapshots/updates. These are display data, never journal evidence. Consumers
-can discard them; the completion still assembles and settles normally without a callback.
+## Port and continuation contracts
 
-| New streaming profile  | Base nonstream dialect | Required terminal evidence                                  |
-| ---------------------- | ---------------------- | ----------------------------------------------------------- |
-| `openai-chat@2`        | `openai-chat@1`        | Valid finish_reason followed by `[DONE]`                    |
-| `anthropic-messages@3` | `anthropic-messages@2` | Closed content blocks, valid stop_reason, then message_stop |
-| `google-generate@3`    | `google-generate@2`    | Candidate finishReason STOP                                 |
-| `openai-responses@3`   | `openai-responses@2`   | response.completed with complete output                     |
+`CompletionPortRequest`, `CompletionPortResponse` and `CompletionPort` are exported from the session
+entry point. Prepared requests contain projected role/content messages, JSON argument strings,
+correlated tool_call_id values and tool advertisements. `canonicalRequest` converts these into domain
+messages with parsed arguments for profiles. See the executable
+[completion binding example](../session/examples/completion-binding.ts) and
+[consumer acceptance tests](../session/consumer-contract.test.ts).
 
-Existing IDs still reject stream:true. New profiles retain their base nonstream wire shapes when
-stream is off/omitted, including thinking, attachment and continuation rules. Their envelopes use
-the new provider ID and join only to that exact ID. Switching between IDs does not inject old
-continuations into the new profile.
+Some providers require opaque signed or encrypted context from a previous response. Preserve it
+through `continuationPayload`; do not turn it into visible reasoning or manufacture a replacement.
+The host assigns provider and completion ownership, and the session saves it with the outcome
+before tools may run. Projection selects only envelopes belonging to retained assistant messages
+and the selected provider. Switching providers does not send another provider's opaque payloads.
 
-Each profile's `stream()` creates a fresh operation-local assembler. Transport performs one fetch
-and parses SSE across arbitrary byte/UTF-8/line boundaries. Chat assembles indexed function-call
-argument fragments; Anthropic assembles content blocks, JSON arguments and signatures. Google
-preserves streamed parts, attaching a signature-only fragment to its preceding part. Responses
-uses the complete output from response.completed, retaining encrypted reasoning. Only the assembled
-body passes through `decode`, once. No tool or handoff can execute from a delta.
+Large payloads use session blobs rather than oversized journal fields. Fork retains the required
+context; compaction drops it with prior assistant history. Restore rebuilds ownership without
+calling a model or reading blobs. See [storage limits](../../../docs/session-persistence.md).
 
-OpenAI and Anthropic use stream:true on their usual endpoints; Chat also requests usage. Google
-uses streamGenerateContent with alt=sse. Neither retries nor server conversation IDs are introduced.
-Malformed/unsupported events, invalid UTF-8, provider errors, missing terminal evidence, or a
-truncated SSE frame fail the completion. SSE frames are capped at 16,777,216 characters. Cancellation
-uses the completion child's AbortSignal and cancels the body reader. Failed/cancelled operations
-never publish a successful partial completion or continuation. Closing/barge-in suppresses late data.
+## Streaming and evidence
 
-Rejected Anthropic stop reasons produce an explicit failure with the bounded stop-reason identifier
-and available numeric input/output token counts. `max_tokens` reports output truncation;
-`model_context_window_exceeded` reports context exhaustion. These messages survive as the ordinary
-failed completion error in the journal and ACP response. Generated content is excluded from routine success events. Transport retains HTTP error bodies,
-provider request IDs, status and nested failure causes; configured credential values are redacted.
-Historical errors that discarded these details cannot be reconstructed.
+Streaming profiles use operation-local SSE assemblers. Chat requires finish_reason and [DONE];
+Anthropic requires closed blocks, stop_reason and message_stop; Google requires finishReason STOP;
+Responses requires response.completed. Malformed JSON/UTF-8, truncated frames, provider errors or
+missing terminal evidence fail the completion. SSE frames are capped at 16,777,216 characters.
+Only the final assembled body is decoded and admitted. Deltas are best-effort display data and never
+release tools, certify receipts or become a successful partial completion.
 
-The host emits completed only after final decode, completion admission and continuation storage;
-the journal still commits one model_settled event per operation. The display status can precede its
-append receipt, so dependent tools wait for the existing receipt gate. Policy and transport both
-reject unsupported streaming before fetch. Prepared records capture stream:true using the existing
-provider-settings journal gate (v3 or later); there is no new journal version or turn phase.
+`TransportBinding.capture` receives actual HTTP request/response bodies and completion metadata,
+including endpoint, selected/wire model, profile, status, upstream request ID, stop reason, usage,
+parse stage and errors. Request evidence precedes fetch; malformed JSON and partial SSE remain
+available on failure. Transport excludes credential headers and redacts configured credential values.
+The environment-owned [disk capture sink](../environment/provider-capture.ts) writes a unique run
+manifest and per-call report linking retained bodies. Supply tool context correlation to nested
+requests. No reconstructed traffic is presented as actual HTTP.
 
-Wire references: [OpenAI streaming](https://developers.openai.com/api/docs/guides/streaming-responses),
-[Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), and
-[Google streamGenerateContent](https://ai.google.dev/api/generate-content#method:-models.streamgeneratecontent).
+Diagnostic event families include `provider.completion.*`, `provider.http.*`, `provider.stream.*`,
+`child.failed`, and `child.settled`. They retain session/turn/child IDs, timing, actual provider errors and cancellation.
+Terminal failures carry serializable causes, HTTP status/request ID and parsing phase. Mutable Errors
+and stacks stay outside snapshots. Inspect the launcher's durable diagnostic files; deterministic
+consumer runs retain diagnostics and full traffic under `.session-artifacts/consumer*/<run-id>` and
+`.session-artifacts/peer-review/<run-id>`. WARNING/ERROR records explain failures; routine success
+emits no warning. Capture storage is caller-owned and separate from bounded diagnostic logging.
 
-## Handoff and persistence
+## Attachments
 
-handoff_to is a reserved protocol tool. It is advertised only for nonempty successors,
-decoded into the existing handoff outcome, and never dispatched to a tool implementation.
-Mixed handoff/tool batches and unauthorized targets fail. Agent definitions may set
-successors:[] to prohibit handoff or list allowed agents. Omission retains the legacy
-permission to hand off to any registered agent, including when upgrading an old journal.
-Successors are registry capabilities; changing them requires a compatible new session,
-not mutating an existing registry.
+Check `session.model.capabilities.media` before offering attachment choices. Even supported text
+has a representation limit: a large document may be represented by a hash stub instead of its full
+contents. An application that needs extraction must arrange it explicitly; attachment support is
+not an automatic document-reading workflow.
 
-Provider-aware sessions start at v3, use v4 for non-off thinking or continuations, and
-upgrade to v5 for blob refs. A journal never downgrades its record version. Existing v1/v2 streams retain their original bytes. A first provider
-policy patch appends the explicit v3/v4 policy boundary; a v1 stream
-first includes its existing v2 policy upgrade in the same atomic append. Prepared events
-capture effective model, provider/settings, successors, and policy version. Replay checks
-these against the captured policy and registry. Commit-before-dispatch, recovery without
-replaying effects, and independent fork/compaction streams remain unchanged.
+Every profile accepts text/plain and text/markdown. Anthropic @2–@4 additionally support user PNG,
+JPEG and PDF as base64 blocks. Tool-result blobs and other unsupported media fail before HTTP.
+Attachment bytes are verified by hash/length through an operation-local resolver. Inline UTF-8 text
+is limited to 65,536 bytes; larger text becomes a named SHA-256 stub, not its full contents. No implicit
+summarization, path reading, PDF conversion or Files API is performed. Attachment refs and continuation
+refs use the same journal format as text and permissions.
 
-Legacy createChatCompletion and completionTransport remain convenience wrappers around
-openai-chat@1 and the shared HTTP transport. Only that compatibility wrapper accepts
-the old custom-server message.handoff field and retains the old HTTP error-body message.
-New profiles use the reserved tool and retain HTTP error details and provider request IDs. Legacy callback connection
-fields exist only at the callback adapter boundary, not in prepared snapshots.
-
-## Thinking and continuation envelopes
-
-Profiles declare `capabilities.thinking`, `capabilities.stream`, and `capabilities.media`.
-Policy validation and transport reject unsupported thinking before HTTP. All profiles accept
-plain text and markdown attachments; additional media and replay support are versioned:
-
-| Profile                | Enabled thinking policy      | Continuation replay         | Additional user media |
-| ---------------------- | ---------------------------- | --------------------------- | --------------------- |
-| `openai-chat@1`        | low, medium, high            | None                        | None                  |
-| `openai-responses@1`   | None                         | Rejects reasoning items     | None                  |
-| `openai-responses@2`   | low, medium, high            | Encrypted reasoning items   | None                  |
-| `google-generate@1`    | None                         | Rejects thoughts/signatures | None                  |
-| `google-generate@2`    | adaptive → 1024-token budget | Signed model parts          | None                  |
-| `anthropic-messages@1` | None                         | Rejects thinking blocks     | None                  |
-| `anthropic-messages@2` | adaptive → 1024-token budget | Signed/redacted thinking    | PNG, JPEG, PDF        |
-
-The ACP permission/JSON-RPC adapter is **not done**.
-The shared host now provides in-process tool lifecycle notifications (ACP steps 1–2). No profile starts a server conversation or uses a Files API.
-OpenAI Chat remains unchanged: off maps to none; omission leaves effort absent.
-
-`google-generate@2` declares `{ mode: "budget", maxTokens: 1024 }`. Policy adaptive enables the
-versioned 1024-token default; off/omitted sends `thinkingBudget: 0`. Decode excludes thought text
-from the domain completion and preserves the model parts list, including text/function-call
-signatures. With thinking enabled, every function call must have a nonempty `thoughtSignature`.
-Encode replays each owner's parts without concatenating signed parts or adjacent model messages.
-Function responses still use the domain call IDs/names. No Interactions API or stored conversation
-is used.
-
-`openai-responses@2` maps low/medium/high to `reasoning.effort`, off to none, and omission to no
-effort field. It always sends `store: false`; unless explicitly off it requests
-`include: ["reasoning.encrypted_content"]`. Decode preserves encrypted reasoning and its item ID;
-an ID without encrypted content fails closed. Encode inserts these reasoning input items
-immediately before that owner's message/function calls, never as `previous_response_id`.
-See [OpenAI stateless reasoning](https://developers.openai.com/api/docs/guides/reasoning).
-
-`anthropic-messages@2` accepts policy `thinking:"adaptive"`. Its frozen wire behavior targets
-models supporting manual extended thinking (for example Claude Sonnet 4.5):
-`thinking:{type:"enabled",budget_tokens:1024}` and an explicit `maxOutputTokens > 1024`.
-The off/omitted path sends disabled thinking and defaults max_tokens to 1024. Models requiring
-native adaptive thinking use `anthropic-messages@4`; this profile never switches wire
-shapes based on model names. See [Anthropic extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking).
-
-`anthropic-messages@4` supports streaming and sends `thinking: { type: "adaptive" }` for policy
-adaptive, without `budget_tokens` or the manual budget's output-token minimum. Off/omitted explicitly
-disables thinking; the default max_tokens remains 1024. It reuses @3's signed continuation, media,
-and stream assembly contracts, with envelopes owned by the new profile ID. Choose this profile for
-native-adaptive models such as Sonnet 5, which rejects manual extended thinking. Existing @2/@3
-wire behavior is unchanged. The caller selects a compatible model; no model-name inference is used.
-
-Decode returns `{ completion, continuationPayload? }`; transport validates JSON and freezes it.
-Profiles stay owner-blind. The host admits completion and stamps the payload with the profile ID
-and the active completion child's `{ turnId, generation }`. Session storage keeps serialized
-payloads of at most 65,536 JSON characters inline as `{ provider, owner, payload }`. Larger payloads
-are UTF-8 JSON blobs stored under the same session before settlement, with an envelope
-`{ provider, owner, payloadBlob }` and no inline payload. The 8 MiB raw blob cap still applies.
-Blob-backed envelopes require journal v5; inline continuations require at least v4.
-
-Prepare uses `matchingContinuations` to join by owner and exact provider, retaining references
-only. Completion resolves payload blobs through its operation-local resolver after the prepared
-append commits. Replay and idle restore never load payload bytes. Missing/corrupt bytes fail
-completion before HTTP. Request parsing rejects orphan or foreign-provider envelopes.
-Anthropic inserts thinking before the owner's text/tool-use blocks and refuses adjacent assistant
-merges involving thinking, so blocks never move across another assistant's content.
-
-One model_settled event commits the completion and envelope in the same append. Dependent tools
-wait for that receipt. A failed/cancelled blob write cannot publish the envelope; a failed journal
-append can leave an unreferenced blob. Provider switches retain stored envelopes without injecting
-them into another profile. Forks copy envelopes and payload blobs for inherited assistant owners;
-compaction drops them. Prepared replay compares envelopes as a keyed set, independent of array order.
-Existing v1/v2/v3 bytes remain compatible.
-
-## Verification and sources
-
-The reusable profileContract runs exact encode vectors, decode vectors, malformed-output,
-unsupported-settings, correlation, and handoff cases. Transport tests cover credentials,
-single attempts, late cancellation, and binding isolation. Session tests cover provider
-profiles through tools/handoff, policy changes, restore, fork/compaction, recovery,
-uncertain/rejected appends, and journal tampering.
+## Verification
 
 ```sh
-bun test packages/core/providers packages/core/session/provider-runtime.test.ts
-bun test packages/core
+bun test packages/core/providers packages/core/session/consumer-contract.test.ts
+LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/providers
 bunx tsc --noEmit
 ```
 
-Tests use fixture bodies and injected fetch functions, not paid live API calls.
-
-Wire references checked during implementation:
-
-- [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling)
-- [OpenAI Responses migration and stateless input](https://developers.openai.com/api/docs/guides/migrate-to-responses)
-- [Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create)
-- [Google GenerateContent](https://ai.google.dev/api/generate-content)
-- [Google thinking budgets](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
-- [Google thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)
-
-## Attachment media and operation-local bytes
-
-Every profile declares `capabilities.media`. All built-ins accept `text/plain` and `text/markdown`.
-Anthropic `@2` additionally accepts user-message PNG/JPEG refs as base64 image blocks and PDF refs
-as `{ type: "document", source: { type: "base64", media_type: "application/pdf", data } }`.
-PDF/image refs on other profiles and tool-result blob parts are unsupported. PDFs are never decoded
-as text or sent using URL/file_id sources. The 8 MiB raw blob cap remains unchanged; byte count
-cannot establish PDF page count or token/context fit, which the caller must consider.
-
-Domain and prepared messages contain optional text/blob parts. When parts are present, their text
-parts concatenate to the legacy text field. Default history and slim handoff projections retain
-parts on the messages they keep. The canonical request keeps refs even when encoding text inline.
-`encode(request, blobs?)` receives a synchronous BlobId-keyed resolver supplied by the host's
-completion operation; neither profiles nor projection policies read persistence themselves.
-
-Inline text shape is versioned wire behavior. OpenAI Chat `@1`, Responses/Google `@1` and `@2`, and
-Anthropic `@1` combine explicit text and attachment text into one string, separated by a newline.
-Anthropic `@2` preserves separate text blocks: `Review` plus a small DESIGN.md produces two blocks.
-The encode vectors intentionally lock this difference; do not normalize `@2` to match `@1`.
-
-Text blobs of at most 65,536 bytes are decoded as UTF-8 and inlined. Larger text uses
-`[attached: NAME sha256:FULL_HASH]`; the ref remains on the request. This includes markdown on
-Anthropic `@2`: a 70 KiB DESIGN.md sends only the hash stub, not its contents or a document block.
-The model cannot review those omitted contents. Raising the inline cap or adding markdown document encoding
-requires an explicit versioned profile change (a later Anthropic revision); current profiles never
-silently decode text beyond 64 KiB. No summarization, filesystem path reads, model calls, or implicit
-PDF conversion occur. Invalid UTF-8 or mismatched bytes fail encoding before HTTP. Existing
-text-only encode vectors remain unchanged.
-
-Preparation checks media and existence after projection; completion reloads immutable bytes after
-the prepared record commits. Canonical requests and all journal records store refs only. Blob
-storage is session-scoped, content-addressed and owned by the persistence adapter.
-
-## Provider diagnostics
-
-Transport emits `provider.completion.started/completed/failed/cancelled`,
-`provider.http.started/received/completed/rejected/failed/cancelled`, and
-`provider.stream.started/completed/failed/cancelled`. The host supplies session, turn, child
-and generation identities. `httpRequestId` identifies the single HTTP attempt independently
-of any host request ID; `providerRequestId` is the upstream response header. Profile/model,
-thinking/stream settings, output limit, message/tool counts, phase and integer `durationMs`
-make failures attributable to the actual operation. Success includes numeric usage and terminal
-reasons without dumping response text. Stream summaries include byte/frame/delta counts and
-last event; failures include buffered characters and the assembler's actual terminal-evidence error.
-
-HTTP rejection diagnostics and propagated errors preserve the provider error body, status and
-request ID. Actual bound authorization/API-key values are scrubbed even when echoed in prose;
-error identity, stack and causes survive translation. Provider code owns no sink: retrieve these
-events from the launcher's configured diagnostic file. Inspect real test output with
-`LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/providers`.
+Tests use injected responses and make no paid provider calls. Exact wire vectors, cancellation,
+credential redaction, streaming EOF, model selection, restoration and nested request sizes are covered.

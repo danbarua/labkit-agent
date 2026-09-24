@@ -1,11 +1,33 @@
 # Operational logging
 
-Core uses LogTape across environments: Bun, browsers, and other supported JavaScript
-runtimes. The environment configures it; importing core does not configure logging.
-Without configuration, diagnostics are silent. No session owns a sink or resets logging.
+Logs explain why work stopped; the journal establishes what committed; provider captures show what
+was actually sent and received. Use the evidence appropriate to the question. A log line cannot
+release a persistence gate, and a journal cannot contain a response rejected before admission.
 
-Use the exports from this directory's index.ts (or LogTape directly) at the environment
-entry point:
+Configure LogTape once in your launcher before creating sessions. Without configuration, core's
+diagnostics are silent. Logging belongs to the environment because several sessions can share a
+sink: closing one session must not dispose the others' evidence. The logging helpers are portable;
+the core package as a whole has a Bun runtime contract.
+
+## Investigate a stopped turn
+
+Start with the public terminal failure's operation identity and cause. Find that session/turn/child
+in the durable log. A WARNING/ERROR-only scan should explain the exception itself; INFO/DEBUG adds
+the sequence. `permission.waiting` means a user decision is outstanding, `tool.awaiting_release`
+means a result is awaiting its runtime gate, and `child.timed_out` names an expired limit. Treating
+all three as “still running” would send an operator to the wrong component.
+
+For HTTP or parse failures, follow the provider request ID and operation into an opt-in
+[traffic capture](../environment/README.md#retained-provider-traffic). Do not reconstruct a supposed
+HTTP request from projected journal messages: encoding, streaming, and response failure matter.
+The ACP CLI already writes rotating logs under `~/.labkit/logs`; see its
+[retrieval and retention settings](../../../docs/vscode-acp.md#runtime-diagnostics).
+
+## Configure delivery
+
+For an embedded development process, a console sink is enough to inspect the events. A launched
+agent also needs a bounded durable sink, a documented location, and retention. This example only
+illustrates routing; it does not supply that production storage:
 
 ```ts
 import { configure, getConsoleSink, reset } from "@logtape/logtape";

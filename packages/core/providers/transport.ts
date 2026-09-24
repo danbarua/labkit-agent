@@ -4,7 +4,7 @@ import type { PreparedModel } from "../agent/agent.ts";
 import { blobRefs, type BlobResolver } from "../agent/content.ts";
 import { CompletionSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
-import { diagnostic, diagnosticError } from "../logging/index.ts";
+import { diagnostic, diagnosticError, redactDiagnostics } from "../logging/index.ts";
 import { HANDOFF_TOOL } from "./shared.ts";
 import { assembleStream } from "./stream.ts";
 import {
@@ -28,7 +28,16 @@ export type ProviderDiagnosticContext = Readonly<{
   httpRequestId?: string;
   provider?: string;
   model?: string;
+  toolCallId?: string;
 }>;
+
+export type ProviderCapture = (
+  event: Readonly<{
+    kind: "http_request" | "http_response" | "completion";
+    httpRequestId: string;
+    [key: string]: unknown;
+  }>,
+) => void | Promise<void>;
 
 /** Numeric usage and terminal reasons only; never copy generated content. */
 function responseEvidence(body: unknown): Record<string, unknown> {
@@ -55,7 +64,9 @@ export type TransportBinding = Readonly<{
   baseUrl: string;
   headers?: Readonly<Record<string, string>>;
   fetch?: typeof fetch;
+  capture?: ProviderCapture;
 }>;
+
 export function httpTransport(binding: TransportBinding, legacyChatErrors = false) {
   const base = z
     .url({ protocol: /^https?$/ })
@@ -66,6 +77,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
     throw new Error("Transport base URL must not contain credentials, query, or fragment");
   const headers = { ...binding.headers };
   const fetcher = binding.fetch ?? fetch;
+  const captureSink = binding.capture;
   // Remove actual configured credentials even when a provider echoes them in prose.
   const secrets = Object.entries(headers)
     .filter(([name]) => /authorization|api[-_]?key|token|secret|cookie/i.test(name))
@@ -83,10 +95,25 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
     const trace = {
       ...context,
       httpRequestId: context.httpRequestId ?? crypto.randomUUID(),
-      endpoint: base + request.path,
+      endpoint:
+        base + request.path + (request.query ? `?${new URLSearchParams(request.query)}` : ""),
       method: request.method,
       streaming: !!streaming,
     };
+    const capture = async (
+      kind: "http_request" | "http_response",
+      fields: Record<string, unknown>,
+    ) => {
+      if (captureSink)
+        await captureSink(
+          redactDiagnostics(
+            { kind, ...trace, ...fields },
+            secrets,
+          ) as Parameters<ProviderCapture>[0],
+        );
+    };
+    let responseBody = "";
+    let responseMetadata: Record<string, unknown> = {};
     let phase = "encode";
     try {
       signal.throwIfAborted();
@@ -98,6 +125,10 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
       )
         throw new Error("Profile endpoint must be a relative API path");
       const query = request.query ? `?${new URLSearchParams(request.query)}` : "";
+      await capture("http_request", {
+        body: redact(JSON.stringify(request.body)),
+        endpoint: base + request.path + query,
+      });
       phase = "fetch";
       diagnostic("provider", "debug", "provider.http.started", trace);
       const response = await fetcher(base + request.path + query, {
@@ -117,11 +148,13 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
         providerRequestId,
         durationMs: Math.round(performance.now() - started),
       };
+      responseMetadata = evidence;
       diagnostic("provider", "debug", "provider.http.received", evidence);
       signal.throwIfAborted();
       if (!response.ok) {
         phase = "http_error";
         const errorBody = redact(await response.text());
+        responseBody = errorBody;
         diagnostic("provider", "warning", "provider.http.rejected", { ...evidence, errorBody });
         throw Object.assign(
           new Error(
@@ -139,7 +172,23 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
           streaming.sink,
           evidence,
           secrets,
+          async (chunk) => {
+            responseBody += chunk;
+            await capture("http_response", {
+              ...evidence,
+              body: responseBody,
+              phase,
+              outcome: "in_progress",
+            });
+          },
         );
+        await capture("http_response", {
+          ...evidence,
+          body: responseBody,
+          phase,
+          ...responseEvidence(body),
+          outcome: "received",
+        });
         diagnostic("provider", "debug", "provider.http.completed", {
           ...evidence,
           durationMs: Math.round(performance.now() - started),
@@ -148,11 +197,18 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
       }
       let body: unknown;
       try {
-        body = await response.json();
+        responseBody = await response.text();
+        body = JSON.parse(responseBody);
       } catch (cause) {
         signal.throwIfAborted();
         throw new Error("Completion response is not valid JSON", { cause });
       }
+      await capture("http_response", {
+        ...evidence,
+        body: responseBody,
+        phase,
+        ...responseEvidence(body),
+      });
       signal.throwIfAborted();
       diagnostic("provider", "debug", "provider.http.completed", {
         ...evidence,
@@ -161,6 +217,12 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
       return { status: response.status, headers: response.headers, body };
     } catch (error) {
       const safeError = diagnosticError(error, secrets);
+      await capture("http_response", {
+        ...responseMetadata,
+        body: responseBody,
+        phase,
+        error: safeError,
+      });
       diagnostic(
         "provider",
         signal.aborted ? "info" : "warning",
@@ -172,15 +234,19 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
           error: safeError,
         },
       );
-      // Preserve causes while ensuring credential echoes cannot enter journal errors.
-      if (JSON.stringify(diagnosticError(error)) !== JSON.stringify(safeError))
-        throw new Error(String(safeError.message ?? "Provider request failed"), {
-          cause: safeError,
-        });
-      throw error;
+      throw Object.assign(
+        new Error(String(safeError.message ?? "Provider request failed"), { cause: safeError }),
+        {
+          ...safeError,
+          httpStatus: responseMetadata.httpStatus,
+          providerRequestId: responseMetadata.providerRequestId,
+          phase,
+        },
+      );
     }
   };
 }
+
 export function canonicalRequest(prepared: PreparedModel) {
   return parseRequest(
     {
@@ -220,15 +286,37 @@ export function canonicalRequest(prepared: PreparedModel) {
     true,
   );
 }
+
+export type ResolvedModel = Readonly<{
+  provider: string;
+  model: string;
+  wireModel: string;
+  profile: string;
+  capabilities: CompletionProfile["capabilities"];
+}>;
+
 export type ProviderBindings = ReadonlyMap<
   string,
-  Readonly<{ profile: CompletionProfile; transport: TransportBinding }>
+  Readonly<{
+    profile: CompletionProfile;
+    transport: TransportBinding;
+    models?: ReadonlyMap<string, Readonly<{ wireModel: string; profile: CompletionProfile }>>;
+  }>
 >;
 /** Copy binding identities/settings once. Code and credentials never enter restored state. */
 export function bindProviders(bindings: ProviderBindings) {
   const bound = new Map(
     [...bindings].map(([id, binding]) => {
-      if (id !== binding.profile.id) throw new Error("Provider binding identity mismatch");
+      const secrets = Object.entries(binding.transport.headers ?? {})
+        .filter(([name]) => /authorization|api[-_]?key|token|secret|cookie/i.test(name))
+        .flatMap(([, value]) => [value, value.replace(/^(Bearer|Basic)\s+/i, "")])
+        .filter(Boolean);
+      const captureSink = binding.transport.capture;
+      const capture: ProviderCapture | undefined = captureSink
+        ? (event) =>
+            captureSink(redactDiagnostics(event, secrets) as Parameters<ProviderCapture>[0])
+        : undefined;
+
       return [
         id,
         {
@@ -237,12 +325,67 @@ export function bindProviders(bindings: ProviderBindings) {
             capabilities: freeze(structuredClone(binding.profile.capabilities)),
           }),
           http: httpTransport(binding.transport),
+          capture,
+          secrets,
+          models: binding.models
+            ? new Map(
+                [...binding.models].map(([name, model]) => [
+                  name,
+                  {
+                    wireModel: model.wireModel,
+                    profile: Object.freeze({
+                      ...model.profile,
+                      capabilities: freeze(structuredClone(model.profile.capabilities)),
+                    }),
+                  },
+                ]),
+              )
+            : undefined,
         },
       ] as const;
     }),
   );
   return Object.freeze({
     ids: Object.freeze([...bound.keys()]),
+    describe: (provider: string, model: string): ResolvedModel | undefined => {
+      const binding = bound.get(provider);
+      if (!binding) return undefined;
+      const selected = binding.models?.get(model);
+      if (binding.models && !selected) return undefined;
+      const profile = selected?.profile ?? binding.profile;
+      return freeze({
+        provider,
+        model,
+        wireModel: selected?.wireModel ?? model,
+        profile: profile.id,
+        capabilities: profile.capabilities,
+      });
+    },
+    validateSelection: (
+      provider: string,
+      model: string | undefined,
+      thinking: Parameters<typeof validateThinking>[0],
+      stream?: boolean,
+    ) => {
+      const binding = bound.get(provider);
+      if (!binding)
+        throw new Error(`Unknown provider ${provider}; supported: ${[...bound.keys()].join(", ")}`);
+      const selected = binding.models?.get(model ?? "");
+      if (binding.models && !selected)
+        throw new Error(
+          `Unknown model ${model ?? "(missing)"} for ${provider}; supported: ${[...binding.models.keys()].join(", ")}`,
+        );
+      const profile = selected?.profile ?? binding.profile;
+      validateThinking(thinking, profile.capabilities.thinking);
+      if (stream && (!profile.capabilities.stream || !profile.stream))
+        throw new Error(
+          `Unsupported streaming for model ${model ?? "(default)"}; use stream:false`,
+        );
+    },
+    mediaFor: (provider: string, model: string) => {
+      const binding = bound.get(provider);
+      return (binding?.models?.get(model)?.profile ?? binding?.profile)?.capabilities.media ?? [];
+    },
     streams: new Map(
       [...bound].map(([id, binding]) => [
         id,
@@ -288,25 +431,46 @@ export function bindProviders(bindings: ProviderBindings) {
         });
         const binding = bound.get(request.provider);
         if (!binding) throw new Error("Missing versioned provider binding");
-        validateThinking(request.thinking, binding.profile.capabilities.thinking);
-        if (request.stream && (!binding.profile.capabilities.stream || !binding.profile.stream))
+        const selected = binding.models?.get(request.model);
+        if (binding.models && !selected)
+          throw new Error(
+            `Unknown model ${request.model}; supported: ${[...binding.models.keys()].join(", ")}`,
+          );
+        const profile = selected?.profile ?? binding.profile;
+        Object.assign(trace, {
+          profile: profile.id,
+          wireModel: selected?.wireModel ?? request.model,
+        });
+        validateThinking(request.thinking, profile.capabilities.thinking);
+        if (request.stream && (!profile.capabilities.stream || !profile.stream))
           throw new Error("Unsupported streaming setting");
         const input = canonicalRequest(request);
+        const wireInput = {
+          ...input,
+          provider: profile.id,
+          model: selected?.wireModel ?? input.model,
+          continuations: input.continuations?.map((entry) => ({ ...entry, provider: profile.id })),
+        };
         for (const ref of blobRefs(input.messages))
-          if (!binding.profile.capabilities.media.includes(ref.media))
+          if (!profile.capabilities.media.includes(ref.media))
             throw new Error(`Provider does not support attachment media: ${ref.media}`);
         phase = "encode";
-        const encoded = binding.profile.encode(input, blobs);
+        const encoded = profile.encode(wireInput, blobs);
         phase = "transport";
         const response = await binding.http(
           encoded,
           signal,
-          request.stream ? { assembler: binding.profile.stream!(), sink: onDelta } : undefined,
+          request.stream ? { assembler: profile.stream!(), sink: onDelta } : undefined,
           trace,
         );
-        terminalEvidence = responseEvidence(response.body);
+        terminalEvidence = {
+          httpStatus: response.status,
+          providerRequestId:
+            response.headers.get("request-id") ?? response.headers.get("x-request-id"),
+          ...responseEvidence(response.body),
+        };
         phase = "decode";
-        const decoded = binding.profile.decode(response, input);
+        const decoded = profile.decode(response, wireInput);
         const result = CompletionSchema.parse(decoded.completion);
         if (result.kind === "handoff" && !input.successors.includes(result.agent))
           throw new Error("Unpermitted handoff target");
@@ -318,6 +482,13 @@ export function bindProviders(bindings: ProviderBindings) {
             ? {}
             : { continuationPayload: z.json().parse(decoded.continuationPayload) }),
         });
+        await bound.get(request.provider!)?.capture?.({
+          kind: "completion",
+          ...trace,
+          ...terminalEvidence,
+          phase,
+          outcome: "completed",
+        });
         diagnostic("provider", "info", "provider.completion.completed", {
           ...trace,
           durationMs: Math.round(performance.now() - started),
@@ -327,6 +498,15 @@ export function bindProviders(bindings: ProviderBindings) {
         });
         return completion;
       } catch (error) {
+        const safeError = diagnosticError(error, bound.get(request.provider ?? "")?.secrets);
+        await bound.get(request.provider ?? "")?.capture?.({
+          kind: "completion",
+          ...trace,
+          ...terminalEvidence,
+          phase,
+          outcome: signal.aborted ? "cancelled" : "failed",
+          error: safeError,
+        });
         diagnostic(
           "provider",
           signal.aborted ? "info" : "warning",
@@ -339,7 +519,10 @@ export function bindProviders(bindings: ProviderBindings) {
             error: diagnosticError(error),
           },
         );
-        throw error;
+        throw Object.assign(
+          new Error(String(safeError.message ?? "Completion failed"), { cause: safeError }),
+          { phase, ...terminalEvidence },
+        );
       }
     },
   });

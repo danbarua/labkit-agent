@@ -15,12 +15,7 @@ import {
   openaiResponsesV2,
   openaiResponsesV3,
 } from "../../providers/index.ts";
-import {
-  defineTool,
-  type LegacySessionOptions,
-  type SessionOptions,
-  type SessionRuntime,
-} from "../session-runtime.ts";
+import { defineTool, type SessionOptions, type SessionRuntime } from "../session-runtime.ts";
 import { deferred, deterministicIds, lostAcknowledgement, testOptions } from "../test-support.ts";
 import { createMemoryBacking, createMemoryPersistence } from "../testing/memory-persistence.ts";
 import { BodySchema } from "../types.ts";
@@ -34,6 +29,7 @@ export type Dependencies = {
   fault?: "reject-input" | "lose-input" | "lose-recovery";
   completions: readonly unknown[];
 };
+
 export type Observation =
   | { kind: "action"; description: string }
   | {
@@ -43,6 +39,7 @@ export type Observation =
       actual: unknown;
       expected: unknown;
     };
+
 export type Scenario = {
   name: string;
   version: 1 | 2;
@@ -130,86 +127,72 @@ export function fixtureEnvironment(scenario: Dependencies) {
       return outcome;
     },
   });
-  const bind = (legacy: LegacySessionOptions): SessionOptions =>
-    scenario.format === 2
-      ? {
-          persistence: legacy.persistence,
-          configuration: {
-            agent: legacy.agent,
-            agents: legacy.agents,
-            steps: legacy.steps,
-            policy: scenario.policy,
-          },
-          bindings: {
-            tools: legacy.tools,
-            id: legacy.id,
-            ...(scenario.permissions
-              ? {
-                  requestPermission: (request: import("../../host/ports.ts").PermissionRequest) => {
-                    results.push({ permission: request });
-                    const response = scenario.permissions![permissionIndex++];
-                    if (response === undefined)
-                      throw new Error("Fixture permission script exhausted");
-                    if (typeof response === "object" && response !== null && "defer" in response) {
-                      const work = deferred<unknown>();
-                      deferredWork.set(String(response.defer), work);
-                      return work.promise;
-                    }
-                    return response;
+  const bind = (configured: SessionOptions): SessionOptions => ({
+    persistence: configured.persistence,
+    configuration: {
+      agent: configured.configuration.agent,
+      agents: configured.configuration.agents,
+      steps: configured.configuration.steps,
+      policy: scenario.policy,
+    },
+    bindings: {
+      tools: configured.bindings.tools,
+      id: configured.bindings.id,
+      ...(scenario.permissions
+        ? {
+            requestPermission: (request: import("../../host/ports.ts").PermissionRequest) => {
+              results.push({ permission: request });
+              const response = scenario.permissions![permissionIndex++];
+              if (response === undefined) throw new Error("Fixture permission script exhausted");
+              if (typeof response === "object" && response !== null && "defer" in response) {
+                const work = deferred<unknown>();
+                deferredWork.set(String(response.defer), work);
+                return work.promise;
+              }
+              return response;
+            },
+          }
+        : {}),
+      ...(scenario.providerResponses
+        ? {
+            providers: new Map(
+              [
+                anthropicMessagesV2,
+                anthropicMessagesV3,
+                googleGenerate,
+                googleGenerateV2,
+                googleGenerateV3,
+                openaiChat,
+                openaiChatV2,
+                openaiResponsesV2,
+                openaiResponsesV3,
+              ].map((profile) => [
+                profile.id,
+                {
+                  profile,
+                  transport: {
+                    baseUrl: "https://example.invalid",
+                    fetch: (async (_url, init) => {
+                      requests.push(JSON.parse(String(init?.body)));
+                      const response = scenario.completions[completionIndex++];
+                      if (response === undefined)
+                        throw new Error("Fixture provider script exhausted");
+                      if (typeof response === "object" && response !== null && "sse" in response)
+                        return new Response(z.string().parse(response.sse), {
+                          headers: { "content-type": "text/event-stream" },
+                        });
+                      return Response.json(response);
+                    }) as typeof fetch,
                   },
-                }
-              : {}),
-            ...(scenario.providerResponses
-              ? {
-                  providers: new Map(
-                    [
-                      anthropicMessagesV2,
-                      anthropicMessagesV3,
-                      googleGenerate,
-                      googleGenerateV2,
-                      googleGenerateV3,
-                      openaiChat,
-                      openaiChatV2,
-                      openaiResponsesV2,
-                      openaiResponsesV3,
-                    ].map((profile) => [
-                      profile.id,
-                      {
-                        profile,
-                        transport: {
-                          baseUrl: "https://example.invalid",
-                          fetch: (async (_url, init) => {
-                            requests.push(JSON.parse(String(init?.body)));
-                            const response = scenario.completions[completionIndex++];
-                            if (response === undefined)
-                              throw new Error("Fixture provider script exhausted");
-                            if (
-                              typeof response === "object" &&
-                              response !== null &&
-                              "sse" in response
-                            )
-                              return new Response(z.string().parse(response.sse), {
-                                headers: { "content-type": "text/event-stream" },
-                              });
-                            return Response.json(response);
-                          }) as typeof fetch,
-                        },
-                      },
-                    ]),
-                  ),
-                }
-              : {
-                  complete: (request, signal) =>
-                    legacy.complete!({
-                      ...request,
-                      baseUrl: legacy.baseUrl,
-                      apiKey: legacy.apiKey,
-                      signal,
-                    }),
-                }),
-          },
-        }
-      : legacy;
+                },
+              ]),
+            ),
+          }
+        : {
+            complete: (request, signal) => configured.bindings.complete!(request, signal),
+          }),
+    },
+  });
 
   return {
     options: bind(options),
@@ -218,8 +201,11 @@ export function fixtureEnvironment(scenario: Dependencies) {
       bind({
         ...options,
         persistence: scenario.fault === "lose-recovery" ? port : createMemoryPersistence(backing),
-        complete: () => {
-          throw new Error("Restoration invoked completion");
+        bindings: {
+          ...options.bindings,
+          complete: () => {
+            throw new Error("Restoration invoked completion");
+          },
         },
       }),
     persistence: port,
@@ -265,4 +251,5 @@ export function fixtureEnvironment(scenario: Dependencies) {
     },
   };
 }
+
 export type Fixture = ReturnType<typeof fixtureEnvironment>;

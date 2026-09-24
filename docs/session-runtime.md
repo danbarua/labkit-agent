@@ -1,360 +1,208 @@
-# Session runtime flows
+# Where a session's guarantees come from
 
-These diagrams supplement the session [module guide](../packages/core/session/README.md) and
-the existing [agent flow diagrams](./agent-flow-diagrams.md).
+A session joins two systems that cannot share a transaction: its journal and the outside world.
+The journal can prove that a tool was authorized and that a result was saved. It cannot prove that
+an interrupted external write did not happen. The design therefore commits before releasing work
+and stops interrupted work on restore instead of replaying it.
 
-## Runtime topology
+These diagrams show the boundaries an integrator must preserve. They omit mailbox plumbing;
+[core actor diagrams](agent-flow-diagrams.md) cover replacement and cancellation inside a turn.
+
+## Keep execution, decisions, and storage separate
 
 ```mermaid
 flowchart LR
-  caller[Caller]
-
-  subgraph session[Session runtime]
-    mailbox[Session actor]
-    journal[Pure journal reduction]
-    storage_op[Storage operation actor]
-  end
-
-  store[(Session store)]
-
-  subgraph host[Shared host]
-    turn_ops[Turn operation actors]
-    tool_batch[Tool batch actor]
-    tool_ops[Tool operation actors]
-  end
-
-  subgraph provider[Provider boundary]
-    port[Completion port]
-    profile[Versioned provider profile]
-    fetch[fetch]
-  end
-
-  caller -->|user · abort · system · policy · fork · compact| mailbox
-  mailbox -->|stage| journal
-  journal -->|records + deferred commands| mailbox
-  mailbox -->|append / load| storage_op
-  storage_op <--> store
-  mailbox -->|dispatch after commit| host
-  host -->|child + tool outcomes| mailbox
-  turn_ops --> port
-  port --> profile
-  profile --> fetch
-  fetch --> profile
-  profile --> port
-  port --> turn_ops
-  mailbox -->|accepted / settled / branch| caller
+  caller[Application]
+  session[Session: admission and receipt gates]
+  decisions[Pure decisions: next state and commands]
+  store[(Caller-owned persistence)]
+  host[Shared host: operation lifetime]
+  tools[Tool bindings]
+  transport[Provider transport: HTTP and capture]
+  profile[Pure profile: encode and decode]
+  external[External services]
+  caller -->|input or configuration| session
+  session <--> decisions
+  session <-->|append and load| store
+  session -->|commands after matching receipt| host
+  host --> tools
+  host --> transport
+  transport <-->|data conversion| profile
+  tools <--> external
+  transport <-->|one HTTP attempt| external
+  host -->|correlated outcomes| session
+  session -->|admission and settlement| caller
 ```
 
-## Session state transitions
+Profiles cannot fetch, and decisions cannot perform I/O. This separation lets replay reconstruct
+state without touching an external service. Bindings and credentials remain environment resources;
+they must be supplied again on restore.
 
-```mermaid
-stateDiagram-v2
-  [*] --> ready
-
-  ready --> committing: submit accepted / append
-  committing --> committing: submit / enqueue transiently
-  reconciling --> reconciling: submit / enqueue transiently
-
-  committing --> ready: appended(committed) / promote durable, dispatch, reply, drain
-  committing --> reconciling: appended(indeterminate) / load
-  committing --> failed: appended(conflict or rejected) / stop
-
-  reconciling --> ready: loaded / matching append at stream tip
-  reconciling --> committing: loaded / absent at expected revision, retry once
-  reconciling --> failed: loaded / conflict, changed revision, or repeat absence
-  reconciling --> failed: load failed or replay invalid
-
-  ready --> closed: close / stop
-  committing --> closed: close / stop
-  reconciling --> closed: close / stop
-  failed --> closed: close
-  closed --> [*]
-```
-
-## Commit before dispatch and settlement
+## Admission and settlement answer different questions
 
 ```mermaid
 sequenceDiagram
-  autonumber
-  participant C as Caller
-  participant S as Session actor
-  participant J as Journal reduction
-  participant O as Storage operation
-  participant P as Persistence port
-  participant H as Shared host
-
-  C->>S: dispatch(user)
-  S->>J: stage(durable, submission)
-  J-->>S: next state + records + deferred commands
-  S->>S: enter committing with pending next state
-  S->>O: append(request)
-  O->>P: append(records, expected revision)
-  P-->>O: committed(receipt)
-  O-->>S: appended(committed)
-  S->>S: validate receipt(durable becomes pending.next)
-  S->>H: dispatch deferred conversation commands
-  S-->>C: accepted
-
-  H-->>S: terminal child outcome
-  S->>J: stage terminal event
-  J-->>S: terminal record + next idle turn
-  S->>O: append(terminal batch)
-  O->>P: append(records, expected revision)
-  P-->>O: committed(receipt)
-  O-->>S: appended(committed)
-  S->>S: commit terminal record
-  S-->>C: settled
+  participant A as Application
+  participant S as Session
+  participant P as Persistence
+  participant H as Host
+  A->>S: input(text)
+  S->>P: append accepted input
+  P-->>S: matching committed receipt
+  S-->>A: accepted
+  S->>H: start preparation
+  Note over S,H: Prepared request commits before completion starts.<br/>Intermediate outcomes have their own receipt gates.
+  H-->>S: outcome that ends the turn
+  S->>P: append outcome and terminal record
+  P-->>S: matching committed receipt
+  S-->>A: settled with terminal record
 ```
 
-## Indeterminate append reconciliation
+The two arrows following a receipt express eligibility, not a promise about callback scheduling.
+Await admission to know input was saved; await settlement to learn how it ended. Neither a resolved
+promise nor a display notification implies a successful answer. Inspect the returned discriminants.
+
+## Permission must precede the whole batch
 
 ```mermaid
 flowchart TD
-  indeterminate[Append outcome is indeterminate]
-  load[Load and replay the stream]
-  valid{Replay valid?}
-  tip{Identical append at stream tip?}
-  revision{Still at expected revision?}
-  retried{Already retried once?}
-  committed[Promote pending state and dispatch]
-  retry[Retry the identical append request and append ID]
-  failed[Fail and stop the session]
-
-  indeterminate --> load --> valid
-  valid -->|no| failed
-  valid -->|yes| tip
-  tip -->|yes| committed
-  tip -->|no| revision
-  revision -->|no| failed
-  revision -->|yes| retried
-  retried -->|no| retry
-  retried -->|yes| failed
-  retry -->|committed| committed
-  retry -->|indeterminate, conflict, or rejection| failed
+  model[Validated model tool calls] --> intent[Commit model outcome]
+  intent --> mode{Permission policy?}
+  mode -->|off| run[Start tool batch]
+  mode -->|ask| ask[Ask once for each call in order]
+  ask --> answer{Decision}
+  answer -->|all allowed| approval[Commit permission outcome]
+  approval --> run
+  answer -->|one refused| refusal[Commit failed turn: permission_refused]
+  answer -->|cancelled| abort[Commit aborted turn]
+  answer -->|invalid response or port failure| fail[Commit failed turn with cause]
 ```
 
-## Individual tool-result commit gate
+No tool runs while the batch is waiting. Approval of call A does not allow A to start while call B
+is still undecided. A notification showing a pending tool is display evidence only. Permission
+waiting has no core timeout; the caller may cancel it.
+
+## Save each tool result before continuing
 
 ```mermaid
 sequenceDiagram
-  autonumber
-  participant T as Tool operation
-  participant H as Shared host
-  participant S as Session actor
-  participant P as Persistence port
-  participant B as Tool batch actor
-
-  T-->>H: tool outcome
-  H->>S: submit tool(turnId, batchId, callId, result)
-  S->>S: validate identities(stage tool record)
-  S->>P: append(tool record)
-  P-->>S: committed
-  S->>S: promote durable journal state
+  participant T as Tool
+  participant H as Host
+  participant S as Session
+  participant P as Persistence
+  participant B as Batch
+  T-->>H: validated result or failure
+  H-->>S: correlated tool outcome
+  Note over H,S: A terminal display update can already be visible.
+  S->>P: append individual tool outcome
+  P-->>S: matching committed receipt
   S->>H: releaseTool(outcome)
-  H->>B: tool_settled(callId, result)
-
-  alt More calls remain
-    B->>B: retain result and continue
-  else Batch settles
-    B-->>H: batch_settled
-    H->>S: submit child(turnId, batch_settled)
-    S->>P: append(batch outcome)
-    P-->>S: committed
-    S->>H: dispatch next conversation commands
-  end
+  H->>B: accept result
+  B-->>S: batch outcome, through host, when settled
+  S->>P: append batch outcome
+  P-->>S: matching committed receipt
+  S->>H: next commands, if the turn continues
 ```
 
-## Storage-operation cancellation
+Saving only the final batch would lose completed siblings if another tool hangs or the process
+stops. A durable partial result remains available for recovery even when the batch never completes.
+The batch may settle early on failure/cancellation; it does not always wait for every tool to succeed.
 
-```mermaid
-stateDiagram-v2
-  [*] --> ready
-  ready --> running: start / run storage request
-  ready --> ready: cancel / request abort, await outcome
-  running --> running: cancel / request abort, await outcome
-  running --> settled: settled / notify session
-  settled --> [*]
-
-  note right of running
-    Cancellation requests do not manufacture
-    a terminal storage result.
-  end note
-```
-
-## Transient and durable input queues
+## A lost receipt is uncertainty, not failure
 
 ```mermaid
 flowchart TD
-  input[Incoming submission]
-  session_busy{Session FSM ready?}
-  transient[Transient SessionState.queue]
-  stage[Stage against durable journal state]
-  turn_active{Turn active?}
-  policy{Input policy}
-  pending[Durable JournalState.pendingInputs]
-  append_input[Append admitted input record]
-  append_queued[Append queued record]
-  input_committed[Commit admitted input]
-  queued_committed[Commit pending input]
-  idle{Turn later becomes idle?}
-  append_dequeued[Append dequeued record]
-  dequeue_committed[Commit dequeue]
-  dispatch[Dispatch input to shared host]
-
-  input --> session_busy
-  session_busy -->|no| transient
-  transient -->|drain after current commit| stage
-  session_busy -->|yes| stage
-  stage --> turn_active
-  turn_active -->|no| append_input
-  append_input --> input_committed --> dispatch
-  turn_active -->|yes| policy
-  policy -->|queue-user| append_queued
-  policy -->|abort-tools-on-user| append_queued
-  append_queued --> pending --> queued_committed --> idle
-  idle -->|yes, pending input exists| append_dequeued
-  append_dequeued --> dequeue_committed --> dispatch
+  append[Append attempt] --> result{Result}
+  result -->|matching receipt| release[Promote durable state and release work]
+  result -->|conflict or rejection| stop[Stop session]
+  result -->|indeterminate| load[Consistent load and validation]
+  load --> found{Identical append at stream tip?}
+  found -->|yes| release
+  found -->|no| absent{Absent at expected revision and retry unused?}
+  absent -->|yes| retry[Retry same append ID and bytes once]
+  absent -->|no| stop
+  retry -->|matching receipt| release
+  retry -->|other outcome| stop
+  load -->|load or validation failure| stop
 ```
 
-## Restore and recovery
+Only the storage append is retried. No completion or tool is repeated. The persistence adapter must
+ensure a request cannot commit later after a consistent load reports it absent. Otherwise the
+runtime cannot safely decide whether dependent work may start. Close or AbortSignal cancellation
+alone is also not a storage result; restore after close to discover a dispatched append's outcome.
+
+## Input waiting and configuration are different cases
+
+A storage append can temporarily queue submissions in memory; that queue is lost on process exit.
+A `queue-user` policy instead saves user input for a later turn. Do not label both as “accepted”:
+only the receipt establishes durable admission.
+
+System/policy changes return `busy` while a turn or durable queued input is outstanding, including
+staged active work. This check happens before ordinary transient queueing. Wait for the existing
+work to drain, commit the change, then submit the next input. Active work retains its captured
+configuration; configuration changes do not change the journal format.
+
+## Restore inspects history and closes interrupted work
 
 ```mermaid
 flowchart TD
-  load[Load journal stream]
-  replay[Replay and validate without executing commands]
-  valid{Replay valid?}
-  bindings[Verify configuration and environment bindings]
-  recover{Interrupted turn or durable inputs remain?}
-  recovery[Append recovery with stable ID]
-  terminal[Record active turn as failed with committed partial results]
-  cancelled[Record pending inputs as input_cancelled]
-  build[Build ready session runtime]
-  reject[Reject restore]
-
-  load --> replay --> valid
-  valid -->|no| reject
-  valid -->|yes| bindings
-  bindings -->|mismatch| reject
-  bindings -->|valid| recover
-  recover -->|no| build
-  recover -->|yes| recovery
-  recovery --> terminal
-  recovery --> cancelled
-  terminal --> build
-  cancelled --> build
+  load[Load and validate journal and bindings] --> valid{Valid?}
+  valid -->|no| reject[Reject restore]
+  valid -->|yes| work{Unfinished work?}
+  work -->|none| ready[Return idle runtime]
+  work -->|active turn or saved queued inputs| stage[Stage recovery batch]
+  stage --> active{Active turn?}
+  active -->|yes| terminal[Include interrupted terminal failure and committed partial results]
+  active -->|no| queued[Include cancellation of any saved queued inputs]
+  terminal --> queued
+  queued --> append[Commit one atomic recovery batch]
+  append -->|receipt or reconciled commit| ready
+  append -->|cannot establish commit| reject
 ```
 
-## Persisted fork and compaction boundary
+An idle session with only queued inputs gets cancellations, not an invented failed turn. None of
+these paths invokes completion, tool, or permission bindings. Blob bytes are read only when needed
+for later work, so restoration is not a test of attachment availability. Repeating an uncertain
+action requires a new explicit invocation after restoration.
+
+## Branch publication has two persistence boundaries
 
 ```mermaid
 sequenceDiagram
-  autonumber
-  participant C as Caller
-  participant P as Parent session
-  participant PS as Parent stream
-  participant CS as Child stream
-  participant R as Child runtime
-
-  C->>P: fork or compact
-  P->>PS: append parent request and boundary
-  PS-->>P: committed
-  P->>P: commit parent transition(capture exact boundary)
-  P->>CS: append initialize(childId, seed)
-  CS-->>P: committed
-  P->>R: build from committed child seed
-  P-->>C: publish child session
-
-  Note over PS,CS: Separate streams(no cross-stream atomic transaction)
-  Note over P,R: Child inherits neither live work nor pending inputs
+  participant A as Application
+  participant S as Parent session
+  participant P as Parent journal
+  participant C as Child storage
+  A->>S: fork or compact
+  S->>P: save branch request with child ID
+  P-->>S: committed
+  Note over S,P: If a turn is active, wait for its committed terminal boundary.<br/>Capture excludes queued successor inputs.
+  S->>C: copy referenced blobs and commit child seed
+  C-->>S: child creation committed
+  S-->>A: publish independent child runtime
 ```
 
-## Provider completion boundary
+A fork retains history; compaction uses your replacement context. Neither copies live operations or
+mutates the parent. There is no transaction across parent and child streams. If publication is
+interrupted, inspect the saved child ID and restore it rather than issuing another fork blindly.
+
+## Model selection and observable traffic
 
 ```mermaid
 flowchart LR
-  host["Host completion operation actor"]
-  port["Bound CompletionPort"]
-  select{"request.provider"}
-
-  subgraph profiles["Pure versioned profiles"]
-    openai_chat["openai-chat@1"]
-    openai_responses["openai-responses@1"]
-    anthropic["anthropic-messages@1"]
-    google["google-generate@1"]
-  end
-
-  transport["HTTP transport"]
-  fetch["fetch: one attempt + AbortSignal"]
-  admission["Host completion admission"]
-  outcome["model_settled"]
-  gate["Session journal append gate"]
-
-  host --> port --> select
-  select --> openai_chat
-  select --> openai_responses
-  select --> anthropic
-  select --> google
-  openai_chat -->|encode| transport
-  openai_responses -->|encode| transport
-  anthropic -->|encode| transport
-  google -->|encode| transport
-  transport --> fetch --> transport
-  transport -->|decode with selected profile| admission
-  admission --> outcome --> gate
+  selection[Captured provider, model, settings] --> binding[Environment resolves wire ID and profile]
+  binding --> validation[Validate declared capabilities]
+  validation --> encode[Pure encoder]
+  encode --> request[Retain actual request]
+  request --> http[HTTP attempt with operation signal]
+  http --> response[Retain response or partial stream]
+  response --> decode[Assemble, decode, and validate]
+  decode --> outcome[Typed completion outcome]
+  outcome --> journal[Session receipt gate]
+  response -->|invalid or incomplete| failure[Failure with operation and cause]
 ```
 
-## Completion continuation envelopes
-
-Provider thinking support crosses the host/session boundary through one model_settled event.
-Profiles decode an owner-free payload; the host admits the completion and stamps the payload
-with provider ID and completion-child turn/generation identity. The session commits both in the
-same journal append (v4 for inline payloads, v5 for blob refs), then releases dependent work. Turn decisions do not inspect envelopes.
-Session projection retains assistant owner metadata and attaches only matching provider envelopes.
-Payloads larger than 65,536 serialized JSON characters are stored under the same session before
-settlement. Prepared envelopes retain payloadBlob refs; only completion operations resolve them
-through getBlob after the prepared append commits. Idle restore remains free of object-store I/O.
-Replay validates the keyed set against projected owners. Forks copy applicable envelopes and blobs;
-compaction drops them, and restore rebuilds them without calling a completion port.
-
-## Attachment refs and journal v5
-
-The environment stores immutable bytes through SessionPersistence.putBlob before dispatching user
-refs. Session reduction decorates user messages with text/blob parts without changing turn decisions.
-Queued input and branch seeds retain those parts. Projection is pure; prepare reads only projected
-refs and fails closed on missing or unsupported media. After the prepared append commits, the
-completion operation reloads bytes and supplies a BlobId-keyed resolver to the profile encoder.
-No bytes or resolver functions enter the journal or snapshots. Replay is structurally validating
-and I/O-free. Fork and compaction copy their cited subset before publishing the child.
-See [journal and blob persistence](session-persistence.md) for the storage contract.
-
-## Non-authoritative tool display
-
-The shared host exposes an optional `toolUpdate` sink, bound through session bindings or legacy
-runtime options. After the tools completion commits and run_tools is released, spawn emits a
-pending tool_call. Parsed-input locations arrive before tool.run, followed by operation status
-updates. Completed is a display status, not a persistence receipt: per-tool result append and
-releaseTool still control batch progression. Notifications never enter session reduction or the
-journal, and restore does not replay them. Observer failures cannot fail the session.
-
-## Streaming without turn-state changes
-
-Provider-bound stream:true requests are journaled in the existing prepared DTO. The completion
-child owns fetch, SSE framing, a fresh profile assembler and cancellation. Its fourth host sink
-emits completion identity/status plus incremental text/thinking/usage, using the same best-effort
-notification helper as tool display. Nothing in decideTurn consumes those notifications. Only one
-fully assembled body reaches decode and admission; the normal model_settled event then follows.
-Truncation/error/cancellation produces a failed/cancelled outcome, never partial authoritative text.
-Continuation storage and commit-before-dispatch are unchanged. Permission requests use the separate
-phase between admitted tools and run_tools described below.
-
-## Pre-execution permissions
-
-With policy permissions:ask, a committed tools completion enters awaiting_permission. The host asks
-for allow_once/reject_once with parsed locations and the eventual tool operation ID. Only a committed
-permission_settled approving every call releases run_tools. Rejection fails the turn, cancellation
-aborts it, and neither creates tool results. This authoritative port is separate from display sinks.
-
-The new semantics require journal v6. Replay validates the policy gate and ordered call decisions;
-restore never resumes an interrupted permission or execution phase. Parsed inputs and grants live
-only in the host and are discarded on cancellation/close. See the
-[permission contract](../packages/core/session/README.md#permission-requests-and-journal-v6).
+The capture sink is environment-owned and opt-in. A successful response is not required to retain
+the offending body: JSON parse failures and stream EOF leave evidence. Capture is separate from
+normal diagnostic logs and from the journal; each answers a different question. See
+[logging](../packages/core/logging/README.md) and [capture setup](../packages/core/environment/README.md).

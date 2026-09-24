@@ -50,7 +50,7 @@ export type BatchEvent =
   | { type: "failed"; error: Failure };
 export type BatchCommand =
   | { type: "spawn_tool"; child: Ref<"tool">; call: ToolCalls[number] }
-  | { type: "cancel_tool"; child: Ref<"tool"> }
+  | { type: "cancel_tool"; child: Ref<"tool">; reason?: Failure }
   | { type: "notify"; outcome: BatchOutcome };
 
 export function toolBatchMachine(id: Ref<"batch">) {
@@ -61,7 +61,11 @@ export function toolBatchMachine(id: Ref<"batch">) {
   ): Decision<BatchState, BatchCommand> => ({
     state: { status: "settled", outcome },
     commands: [
-      ...pending.map((call) => ({ type: "cancel_tool" as const, child: toolRef(call.id) })),
+      ...pending.map((call) => ({
+        type: "cancel_tool" as const,
+        child: toolRef(call.id),
+        ...(outcome.kind === "failed" ? { reason: outcome.error } : {}),
+      })),
       { type: "notify", outcome },
     ],
   });

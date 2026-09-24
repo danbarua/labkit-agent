@@ -1,15 +1,8 @@
 import {
-  anthropicMessages,
-  anthropicMessagesV2,
   anthropicMessagesV3,
   anthropicMessagesV4,
-  googleGenerate,
-  googleGenerateV2,
   googleGenerateV3,
-  openaiChat,
   openaiChatV2,
-  openaiResponses,
-  openaiResponsesV2,
   openaiResponsesV3,
 } from "@labkit-agent/core/providers";
 
@@ -27,27 +20,19 @@ export function workspaceAgent(
   env: Readonly<Record<string, string | undefined>> = process.env,
   directory = workspaceDirectory(),
 ): AcpOptions {
-  const profiles = [
-    anthropicMessagesV3,
-    anthropicMessagesV4,
-    openaiChatV2,
-    openaiResponsesV3,
-    googleGenerateV3,
-  ];
-  const id = env.LABKIT_ACP_PROVIDER ?? anthropicMessagesV3.id;
-  const profile = profiles.find((entry) => entry.id === id);
-  if (!profile) throw new Error("LABKIT_ACP_PROVIDER must name a supported streaming profile");
-  // Creation default is not a restore filter: saved policy owns its exact wire version.
-  const compatibleProfiles = [
-    ...profiles,
-    anthropicMessages,
-    anthropicMessagesV2,
-    googleGenerate,
-    googleGenerateV2,
-    openaiChat,
-    openaiResponses,
-    openaiResponsesV2,
-  ].filter((candidate) => candidate.id.split("@")[0] === profile.id.split("@")[0]);
+  const id = env.LABKIT_ACP_PROVIDER ?? "anthropic";
+  const profiles = new Map([
+    [
+      "anthropic",
+      env.LABKIT_ACP_THINKING_MODE === "budget" ? anthropicMessagesV3 : anthropicMessagesV4,
+    ],
+    ["openai", openaiChatV2],
+    ["openai-responses", openaiResponsesV3],
+    ["google", googleGenerateV3],
+  ]);
+  const profile = profiles.get(id);
+  if (!profile)
+    throw new Error("LABKIT_ACP_PROVIDER must be anthropic, openai, openai-responses, or google");
   const model = env.LABKIT_ACP_MODEL;
   if (!model) throw new Error("Set LABKIT_ACP_MODEL to your provider's model ID");
   const models = [
@@ -65,7 +50,9 @@ export function workspaceAgent(
       ? ["off" as const, ...capability.values.filter((value) => value !== "none")]
       : capability.mode === "off"
         ? ["off" as const]
-        : ["off" as const, "adaptive" as const];
+        : capability.mode === "budget"
+          ? ["off" as const, "budget" as const]
+          : ["off" as const, "adaptive" as const];
   const anthropic = id.startsWith("anthropic");
   const google = id.startsWith("google");
   const keyName = anthropic ? "ANTHROPIC_API_KEY" : google ? "GOOGLE_API_KEY" : "OPENAI_API_KEY";
@@ -160,10 +147,10 @@ export function workspaceAgent(
               value === "off"
                 ? "Off"
                 : value === "adaptive"
-                  ? id === anthropicMessagesV4.id
-                    ? "Adaptive"
-                    : "Provider budget (1024 tokens)"
-                  : value,
+                  ? "Adaptive"
+                  : value === "budget"
+                    ? "Budget (1024 tokens)"
+                    : value,
             patch: { thinking: value },
           })),
         },
@@ -212,7 +199,7 @@ export function workspaceAgent(
           ]),
           steps: 12,
           policy: {
-            provider: profile.id,
+            provider: id,
             model,
             permissions: "ask",
             stream: true,
@@ -222,12 +209,16 @@ export function workspaceAgent(
         },
         bindings: {
           tools,
-          providers: new Map(
-            compatibleProfiles.map((profile) => [
-              profile.id,
-              { profile, transport: { baseUrl, headers } },
-            ]),
-          ),
+          providers: new Map([
+            [
+              id,
+              {
+                profile,
+                models: new Map(models.map((model) => [model, { wireModel: model, profile }])),
+                transport: { baseUrl, headers },
+              },
+            ],
+          ]),
         },
       };
     },
@@ -235,7 +226,9 @@ export function workspaceAgent(
 }
 // Resolve environment only when the host opens a session; importing this example performs no I/O.
 let options: AcpOptions | undefined;
+
 let directory: ReturnType<typeof workspaceDirectory> | undefined;
+
 function discovery() {
   directory ??= workspaceDirectory();
   return directory;

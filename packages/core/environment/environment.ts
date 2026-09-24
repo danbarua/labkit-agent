@@ -2,9 +2,9 @@ import type { EnvEvent } from "../session/events.ts";
 import type { SessionState } from "../session/session-fsm.ts";
 import {
   createSession,
-  type BoundSessionOptions,
   type EnvReceipt,
   type EnvSettlement,
+  type SessionOptions,
   type SessionRuntime,
 } from "../session/session-runtime.ts";
 
@@ -12,6 +12,7 @@ export type EnvironmentUpdate =
   | Readonly<{ kind: "snapshot"; snapshot: SessionState }>
   | Readonly<{ kind: "receipt"; event: EnvEvent; receipt: EnvReceipt }>
   | Readonly<{ kind: "settled"; event: EnvEvent; outcome: EnvSettlement }>;
+
 export type Environment = Readonly<{
   events: AsyncIterable<EnvEvent>;
   render: (update: EnvironmentUpdate) => void | Promise<void>;
@@ -49,7 +50,7 @@ export async function runEnvironment(session: SessionRuntime, environment: Envir
   if (settlementError) throw settlementError;
 }
 /** Bind before construction so initial commits are observable too. No phase decisions live here. */
-export async function startEnvironment(options: BoundSessionOptions, environment: Environment) {
+export async function startEnvironment(options: SessionOptions, environment: Environment) {
   let observing = Promise.resolve();
   const originalObserve = options.bindings.observe;
   const originalRender = environment.render;

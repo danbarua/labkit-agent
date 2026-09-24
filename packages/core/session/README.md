@@ -1,361 +1,180 @@
-# Session runtime
+# Integrating a session
 
-An immutable, actor-driven session with an append-only journal and an injected persistence port.
-There is no default store, database dependency, or durable backend. The testing adapter is explicitly
-process-local. Both the session and nonjournaled agent runtime use the shared execution host.
+Use a session when your application needs to explain what happened after a disconnect, crash, or
+storage failure. The session records accepted work before starting it and records results before
+using them. This gives you a durable account of execution; it cannot make a remote API call or file
+write transactional with the journal.
 
-## Public API
+The caller supplies configuration, executable bindings, and persistence separately. Configuration
+expresses what the session may do. Bindings supply how it does it: tools, provider credentials,
+permission UI, and observers. Keeping bindings out of saved state lets you reopen a session without
+serializing credentials or resurrecting old network connections.
+
+## Submit work and interpret the result
 
 ```ts
-import { completionTransport } from "../host/ports.ts";
-import { createSession, defineTool, restoreSession } from "./index.ts";
-import { createMemoryPersistence } from "./testing/memory-persistence.ts";
+import { createSession } from "@labkit-agent/core";
+import { createMemoryPersistence } from "@labkit-agent/core/testing";
 
-const persistence = createMemoryPersistence(); // tests / process-local experiments only
-const options = {
-  persistence,
+const session = await createSession({
+  persistence: createMemoryPersistence(), // Process-local demonstration, not durable storage.
   configuration: {
-    agent: "researcher",
-    agents: new Map([["researcher", { model: "your-model", systemPrompt: "Be precise." }]]),
-    steps: 8,
-    systemInputs: ["Use SI units."],
-    policy: { id: "default@1" },
+    agent: "reviewer",
+    agents: new Map([["reviewer", { model: "scripted" }]]),
+    steps: 4,
   },
   bindings: {
-    complete: completionTransport({ baseUrl: "https://your-provider.example/v1" }),
+    complete: () => ({ completion: { kind: "answer", text: "Review complete" } }),
   },
-};
-const session = await createSession(options);
-const turn = session.input("Describe the experiment.");
-const receipt = await turn.accepted; // accepted only after the input batch commits
-const outcome = await turn.settled; // correlated terminal record, storage failure, or close
-
-const child = await session.fork();
-const compacted = await child.compact([{ role: "user", text: "Validated replacement context" }]);
-await compacted.updateSystem(["Use SI units.", "Keep answers short."]);
-const sessionId = session.snapshot.durable.conversation.sessionId;
+});
+const command = session.input("Review this result.");
+const receipt = await command.accepted;
+const result = await command.settled;
+if (result.kind === "terminal") {
+  const outcome = result.record.outcome;
+  if (outcome.kind === "failed") console.error(outcome.error);
+} else {
+  console.error(result.kind, result.message); // Storage/admission failure or session close.
+}
 await session.close();
-const reopened = await restoreSession(options, sessionId);
 ```
 
-`fire({type: "user", text})` and `fire({type: "abort"})` return typed command receipts.
-`input(text)` additionally exposes terminal settlement. Barge-in inputs join the active turn and
-settle with that turn's terminal record. Input during tool execution returns a failed receipt; abort
-first. Validation errors at public schema boundaries throw before admission. Child messages have no
-public entry point.
+There are three different observations; choose the one that answers your application's question:
 
-`updateSystem` replaces the ordered session inputs and appends the next system version. It returns
-`busy` at an active boundary or while durable accepted inputs are waiting to start. Even between
-turns, those queued inputs keep their accepted configuration; drain or close the session before
-changing it. Every accepted event captures the version at its serialized boundary,
-including inputs queued behind an idle system update. Prompt order is configured agent system text,
-ordered session system inputs, then the existing context/history/current-turn or handoff projection.
+| Observation                        | What you can conclude                | What to do with it                                                                         |
+| ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Successful `accepted` receipt      | The input was committed.             | Show it as accepted; keep listening for cancellation and output.                           |
+| Tool/stream notification           | Execution has made visible progress. | Update the UI. Do not start dependent work from it.                                        |
+| `settled`, with `kind: "terminal"` | The turn's outcome was committed.    | Inspect `record.outcome`; a settled turn may have failed, aborted, or exhausted its steps. |
 
-Snapshots expose `durable` separately from `pending.next` while `committing` or `reconciling`.
-Controllers, adapters, functions, and registries are outside snapshots. A command receipt is distinct
-from terminal settlement. `close()` stops admission, signals owned operations and settles callers;
-it does not close the caller's store or assert that a pending append was rolled back. A store may
-finish that append after the runtime closes, so reopen through `restoreSession` to learn its outcome.
+Inspect the receipt's discriminant: a resolved promise alone does not mean admission succeeded.
+Malformed public input can throw before admission. A storage failure or close can settle a command
+without a terminal record. `snapshot.durable` is committed state; `pending.next` is only a proposal
+waiting for storage. Do not persist pending state as a successful result.
 
-## Persistence contract
-
-Implement `SessionPersistence` in `persistence.ts` and inject it. Its journal and blob operations accept an
-`AbortSignal`. Loads return a consistent committed stream and revision, not mutable domain objects.
-Appends accept serialized record strings, an expected revision, a session ID, and a stable append ID.
-
-- Revision zero creates an absent stream. Revisions count records, independently of turn sequence.
-- A batch commits atomically, with exactly the expected previous revision.
-- Identical append retries return the original receipt, even after later writes. Reusing an append ID
-  with different metadata or bytes is rejected. The adapter retains append IDs for its storage lifetime.
-- `conflict` and `rejected` certify that this request did not commit. `indeterminate` does not.
-  Thrown append errors, including cancellation errors, are conservatively indeterminate.
-- After an indeterminate operation settles, a consistent load must permit reconciliation. An adapter
-  cannot later commit an outstanding request after returning a load that reports it absent.
-- Values crossing the port are immutable serialized data. Retaining caller array aliases is invalid.
-
-The runtime dispatches dependent work only after validating a matching receipt. On an indeterminate
-outcome, it loads and checks the stable append ID and identical payload. If absent at the expected
-revision it retries once with the same ID and bytes; repeated uncertainty, changed content, competing
-writers, and load failures stop the session. Restore is explicit after storage failure. There is no
-claim of multi-writer progress or automatic merging.
-
-`testing/persistence-contract.ts` exports `persistenceContract(name, factory)`. The factory supplies a
-writer and an independent-reader factory sharing the same test storage. Implement the interface, run
-this suite, and inject the adapter; session decisions, codec and replay need no changes. Add real
-process-crash/disk-durability tests for a durable adapter. The memory implementation and fault wrappers
-prove protocol behavior only, not crash durability.
-
-## Journal and recovery
-
-Version-one and version-two records have session, append and entry identities, contiguous journal revisions, and
-strict Zod payload schemas. The codec validates session/append/entry continuity, turn/child identities,
-system versions, terminal records, actual projected messages, and individual/batched tool correlation.
-Replay calls pure conversation decisions and freezes reconstructed state; it executes no commands.
-Terminal records summarize the same accepted interactions and are validated against reduction; they
-are not applied as additional messages.
-
-Creation stores a self-contained idle seed, configuration manifest, lineage, history, context,
-allowance, active agent, next turn sequence, and system version. Supplied agent definitions and tool
-parameter schemas must match the saved manifest, including registry order. Code, tool implementations,
-credentials, provider URL and fetch adapters are supplied anew. Their behavioral compatibility is the
-caller's responsibility; the journal does not serialize executable code.
-
-Restoring idle sessions performs no completion/tool work. Restoring interrupted sessions appends one
-explicit recovery record and a failed terminal record in one atomic batch. Durable successful tool
-results are preserved in arrival order; unfinished intents remain evidence of uncertain external
-effects. Outstanding completions/tools are never automatically replayed. Lost recovery receipts use
-the stable recovery append ID. Controllers, pending branch callbacks, and live operations are not
-restored.
-
-Ordinary forks use the exact conversation-provided boundary, inheriting history/context/sequence.
-Compaction substitutes validated context only in the child, clears inherited history and starts at
-sequence one. Empty context explicitly resets the child. Neither operation edits ancestor records.
-Each child commits its self-contained creation before publication. Parent request records retain the
-child session identity; creation uses `initialize/<child session ID>`. If publication is interrupted,
-inspect that request and restore the same persisted child ID rather than requesting another branch.
-No cross-stream transaction or atomic parent/child publication is claimed. A branch requested during
-an active turn waits for its terminal boundary; queued next input is excluded from that capture.
-
-## Executable examples and inspection reports
-
-Start with [the public-API usage examples](fixtures/usage.ts): configure a session, wait for
-admission and settlement, restore history, and approve or deny a typed tool. The session API
-calls are in the scenario body. Helpers capture evidence and supply deterministic dependencies;
-they do not interpret a second operation language. See [the example guide](fixtures/README.md)
-for the remaining scenarios, simulated boundaries, and assertion conventions.
+The host owns the completion/tool loop. Your completion binding returns an answer, tool calls, or a
+handoff; it must not execute the returned tool calls itself. Run the
+[completion binding example](examples/completion-binding.ts) to see the exact messages, argument
+strings, tool results, and response envelope at this boundary:
 
 ```sh
-bun test packages/core/session/session-fixtures.test.ts -t usage-
+bun packages/core/session/examples/completion-binding.ts
+```
+
+## Change the next turn, not an operation in flight
+
+Call `updatePolicy(patch)` to change model, thinking, streaming, allowed tools, permission mode, or
+limits. Call `updateSystem(inputs)` to replace session instructions. Both require an idle boundary
+with no accepted queued inputs; check for a `busy` receipt. Wait for the current work to settle,
+then commit the change before submitting the next input. ACP performs that sequencing for its
+configuration controls.
+
+This prevents a single turn from starting under one permission/model configuration and finishing
+under another. Mutating the original options map does not reconfigure an open session: bindings
+are captured at construction. `session.model` exposes the resolved selection and capabilities;
+[provider bindings](../providers/README.md) explain how to declare them.
+
+The default input policy allows replacement during model preparation/completion/handoff and rejects
+input during tools or permission waiting. Replacement joins the active turn; both callers receive
+that turn's eventual terminal record. Choose a [queue policy](../policy/README.md) if every accepted
+input must become a separate turn. Abort does not discard already accepted queued successors.
+
+## Permission requests
+
+Set `permissions: "ask"` and supply `bindings.requestPermission`. Every call in a batch must receive
+once-only approval before any call runs. A refusal therefore blocks the entire batch, including
+calls approved earlier. The failure identifies the refused call; no tool result is invented for it.
+A cancelled dialog aborts the turn. Without the binding, this policy is rejected before execution.
+
+Use `bindings.toolUpdate` for display only. A pending card is not a permission request, and a completed
+card is not a durable result. The authoritative permission response and journal receipt both precede
+execution. See the [host port contract](../host/README.md#permission-and-display-ports).
+
+## Decide what to do after work stops
+
+A failed operation carries a serializable `error`: classification, message, operation identity,
+phase, and available original cause details. Tool name/call ID and provider status/request ID survive
+when known. Use these fields to explain the failure; do not parse English messages or search the
+journal to decide whether a user refused permission.
+
+| Outcome                             | Meaning for the caller                                                                                         |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Failed, `permission_refused`        | No tool in that batch ran. Ask for a new explicit action if appropriate.                                       |
+| Failed, `timeout`                   | The configured completion/tool deadline expired. The signal was aborted; an external effect may already exist. |
+| Aborted, with reason                | Cancellation ended the turn. Inspect the reason for its initiating operation.                                  |
+| Failed, `interrupted` after restore | Work was active when the saved execution stopped. Its external result may be unknown.                          |
+| Exhausted                           | The turn used its allowed model steps. This is a limit, not a provider failure.                                |
+
+`completionTimeoutMs` and `toolTimeoutMs` are optional policy limits in positive integer milliseconds
+(maximum 2,147,483,647); null or omission disables them. Permission waiting is untimed. Deadlines
+are captured when an operation starts. Timeout does not become a tolerant tool-error message and
+never causes an automatic retry. Cancellation rejects late results locally; it cannot undo a write
+or force an uncooperative tool to stop. Tool implementations should honor their AbortSignal.
+
+## Reopen without repeating effects
+
+Save the session ID and call `restoreSession(options, sessionId)`. Supply the original compatible
+agent/tool-schema manifest and the required current bindings. Code is not journaled: replacing a
+tool implementation under the same schema is your responsibility.
+
+Restore invokes no completion, tool, or permission callback. An interrupted turn is closed with an
+explicit recovery failure; committed partial tool results survive. Accepted queued inputs are
+cancelled rather than started. This deliberate stopping rule avoids repeating an external write
+whose acknowledgement was lost. To repeat an action, submit a new input explicitly after inspecting
+the outcome. Tools do not need to be idempotent for recovery to be safe from automatic replay.
+
+`close()` cancels owned work and settles callers, but leaves the caller's persistence store open.
+A dispatched append may still commit after close. Restore to discover its result; do not treat close
+as rollback. See [receipt and recovery diagrams](../../../docs/session-runtime.md).
+
+## Supply persistence with the required guarantees
+
+Implement `SessionPersistence` and run its
+[contract suite](testing/persistence-contract.ts). An append must atomically accept the complete
+batch at its expected revision. Its stable append ID must recognize identical retries and reject
+changed bytes. A lost acknowledgement is `indeterminate`, not proof of failure.
+
+The session reconciles uncertainty with a consistent load before releasing work. If the append is
+absent at the expected revision, it may retry the _same storage append_ once. This never retries the
+completion or tool. A store that can commit an old append after reporting it absent violates the
+contract and can cause execution to proceed from false evidence. Add crash tests for your real
+storage engine; the memory adapter only tests the protocol.
+
+All new records use one current format (`version: 1`), independently of configuration revisions or
+features. Historical formats are not supported. See [journal and blob storage](../../../docs/session-persistence.md)
+for bytes, hashing, limits, and persistence lifetime.
+
+## Branches and attachments
+
+`fork()` waits for the active turn's terminal boundary and creates an independent session with its
+history. `compact(messages)` creates a child whose context is your replacement and whose prior turn
+log is empty. It does not ask a model to summarize. Neither changes the parent or carries live work
+into the child. Await publication before using the child: its seed and referenced blobs must exist.
+Parent and child writes are separate transactions; interrupted publication can leave a saved child.
+Use the child ID recorded in the parent request to restore it instead of creating another branch.
+
+Store attachment bytes with `persistence.putBlob` before submitting their refs via
+`input({ text, attachments })`. A successful restore proves the journal is valid, not that all blobs
+are still available: bytes are checked when needed for a new completion. Unsupported media or
+missing bytes fail before HTTP. Forks copy referenced blobs; compaction copies only replacement
+context refs. Continuation payloads are provider-owned context, retained for matching assistant
+messages; compaction drops them. Applications should not manufacture or edit their contents.
+
+## Diagnose and verify an integration
+
+Configure [environment logging](../logging/README.md) before creating sessions. Follow a terminal
+failure's session/turn/operation IDs to `child.failed` and provider records for stack and transport
+details. For exact request/response bodies, bind [provider capture](../environment/README.md#retained-provider-traffic);
+ordinary lifecycle logs do not contain complete prompts. Core owns neither sink nor retention.
+
+```sh
+LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/session/consumer-contract.test.ts
 bun run packages/core/session/fixture-runner.ts
 bun run packages/core/session/fixture-runner.ts --v2
-cat .session-artifacts/latest-v2/README.md
-cat .session-artifacts/latest-v2/usage-approve-tool/README.md
-cat .session-artifacts/latest-v2/usage-approve-tool/transcript.md
-cat .session-artifacts/latest/interrupted-recovery/evidence/journal-restored.jsonl
 ```
 
-Each run has an index. Each scenario has a `README.md` explaining its purpose, environment,
-actions and executed checks; a conversation `transcript.md`; actual runtime `diagnostics.log`
-and `diagnostics.jsonl`; and an `evidence/` directory explaining its journals, requests,
-receipts, snapshots and assertion values. The report links back to executable source.
-A scenario can pass while deliberately exercising a failed turn: its named assertions explain
-why that outcome is expected. An unexpected failure retains the partial report, error cause,
-stack, journal and cleanup diagnostics before failing the test.
-
-Snapshots and transcripts describe the end of the scenario body, **before cleanup**. Logs also
-include cleanup. Reopened views with identical durable evidence share one transcript; recovery
-and different captured revisions are labeled explicitly. Agent labels explain stable fixture
-IDs (`a` is the primary assistant; `b` is the handoff specialist). The introductory examples use
-`reviewer` directly.
-
-The original 17 v1 and 22 v2 cases retain exact comparisons of requests, receipts/results and
-states, including embedded journal records, against the existing JSON baselines. Historical
-`inputs` in those baselines are no longer executable instructions or compared evidence. Three
-additional v2 usage examples use explicit behavioral assertions. Presentation is covered by
-renderer/report tests, separately from behavioral baselines. Repeated runs must produce identical
-machine evidence and transcripts; run IDs and timestamps appear only in diagnostic/run metadata.
-
-For an intentional behavioral change only, `--update` replaces structured baselines; review the
-diff. Normal runs never update them. The obsolete Markdown baselines are no longer used.
-No ordering, correlation, lineage or outcome fields are normalized away. Transport settings and
-credentials are excluded from captured provider requests; a sentinel-key assertion remains.
-Provider payload fixtures are data, while TypeScript scenarios are the executable specification.
-
-## Shared execution and public events
-
-The formerly copied turn dispatcher now lives once in `../host/host.ts`. It owns children,
-registries, completion/handoff/preparation execution and tool batches. Session owns storage actors,
-receipts, terminal waiters, branch publication and the individual tool-result commit gate. Existing
-agent-runtime APIs and behavior are preserved through the same host. No new wrapper FSM was added.
-
-`fire(event)` admits any validated `EnvEvent`: user, abort, system, policy, fork, compact or close.
-`dispatch(event)` returns `{ accepted, settled }`; awaiting `accepted` never waits for a turn or child
-publication. User settlement contains a correlated terminal, branch settlement contains the published
-child, and configuration operations settle with their receipt. Close returns `close_acknowledged`,
-not a fabricated persistence receipt. Existing convenience methods use this same submission path.
-
-Bindings can include `observe(snapshot)`. Notifications contain frozen pending/durable snapshots and
-run outside decisions. Exceptions or rejected observer promises do not fail the session; reentrant
-submissions enter the mailbox. The environment module provides a reference event-source/render loop.
-
-## Policy and journal compatibility
-
-The explicit `configuration`/`bindings` API creates version-two streams. Legacy flat `SessionOptions`
-remain a compatibility adapter and create version-one streams, preserving their fixture bytes.
-Executable callbacks, credentials and persistence resources are never journaled.
-
-`updatePolicy(patch)` or `fire({type:"policy", patch})` journals an idle-boundary change. The effective
-policy is immutable and versioned; each event captures that version. Capability manifests stay
-immutable while per-agent permitted names may be restricted within those capabilities. Step patches
-apply to subsequent turns; active-agent transitions remain handoffs. See the policy module for packs,
-queue behavior and error continuation.
-
-Updating policy in a version-one stream appends an explicit version-two upgrade record and resolved
-policy record atomically. Historical bytes are never rewritten; version-one replay uses the original
-projection semantics. Raw legacy handoff callbacks must be migrated to named bindings before upgrade.
-A restored session requires compatible capability data and all referenced pure policy implementations.
-Replay executes pure projection validation but no external work.
-
-Restoration also cancels durable pending inputs with explicit records. It never auto-runs a queued
-input, even if the interruption happened at an idle boundary before dequeue. The historical accepted
-input remains evidence. Ordinary forks inherit policy/system versions; compaction affects child
-context/history only and does not inherit the parent's pending input queue.
-
-Version-two fixtures are separate from the unchanged version-one baselines:
-
-```sh
-bun run packages/core/session/fixture-runner.ts --v2
-bun run packages/core/session/fixture-runner.ts --v2 --update
-bun test packages/core/host packages/core/policy packages/core/environment packages/core/session
-```
-
-`--v2` compares behavioral evidence against `fixtures/expected-v2.json`, emitting under
-`.session-artifacts/latest-v2`. Neither command without `--update` changes an approved baseline.
-
-## Journal v4 continuations
-
-Non-off thinking and completion continuation envelopes require v4. An envelope is committed
-with its successful model_settled event and keyed by completion owner `{ turnId, generation }`.
-Replay checks the owner against the active child and validates its provider. Inline payloads
-retain the 65,536 JSON-character cap; larger payloads use v5 blob references. Assistant owner metadata survives prompt projection; prepared envelopes must
-match the stored set for projected owners and the captured provider. Array order is irrelevant.
-Restore reconstructs this state without executing completions. Fork seeds retain envelopes for
-copied assistant messages; compaction seeds drop envelopes. Switching providers preserves stored
-envelopes but removes them from the next request to another provider. Indeterminate appends use
-the existing stable append-ID reconciliation, including the envelope bytes.
-
-## Attachments and journal v5
-
-Store bytes before submitting refs. `input` accepts a string or `{ text?, attachments? }`;
-`dispatch({ type: "user", text?, attachments? })` uses the same validation. Supply nonempty text
-or at least one attachment. A ref contains SHA-256 ID, media type, byte count, and optional name.
-
-```ts
-const sessionId = session.snapshot.durable.conversation.sessionId;
-const ref = await persistence.putBlob(
-  sessionId,
-  new TextEncoder().encode("# DESIGN\nPinned review document"),
-  { media: "text/markdown", name: "DESIGN.md" },
-  new AbortController().signal,
-);
-await session.input({ text: "Review this design", attachments: [ref] }).settled;
-```
-
-The session journals refs as user content parts, including queued/barge-in input. `text` remains
-the concatenation of explicit text parts; the document bytes are never added to journal records.
-Blob-bearing events, prepared prompts, seeds and terminal messages require v5. Streams remain at
-v5 after upgrading. A legacy v1 stream first commits its existing v2 policy upgrade at an idle
-boundary before admitting attachments; an active legacy turn must settle before this upgrade.
-Text-only v1–v4 records and fixtures retain their bytes.
-
-After projection, prepare checks the bound profile's media capabilities and reads/verifies only
-cited refs. Missing bytes or unsupported media fail preparation without HTTP. Completion reloads
-bytes under its own cancellation signal after the prepared append commits; the resolver is an
-operation-local resource, not a snapshot field. Idle restore and journal replay never call getBlob.
-
-Fork publication copies referenced blobs into the child's session scope before its creation is
-published. Compaction copies only refs in its replacement context, so those bytes exist in the
-child before it can prepare. Replacement refs must be available in the parent for this copy.
-Unreferenced blobs are not copied; parent blobs are never deleted. Copy/creation is not a
-cross-session transaction: failed publication may leave unreferenced child blobs, and retrying
-copies is idempotent. See [persistence details](../../../docs/session-persistence.md).
-
-Continuation payloads use exactly one of `payload` or `payloadBlob`. Session storage serializes
-oversized JSON as UTF-8 `text/plain` under the same session before model_settled can be journaled.
-Blob references in settled events, prepared prompts, or seeds require v5. Preparation attaches refs
-using `matchingContinuations` without loading payload bytes. Only the completion operation loads
-and verifies these blobs; missing bytes fail completion before HTTP. Forks copy payload blobs for
-retained owners before child creation; compaction drops continuation refs. Idle restore does no
-blob I/O. Write failure/cancellation prevents settlement and tool release; append failure may leave
-an unreferenced blob. The existing 8 MiB cap also applies to continuation blobs.
-
-## Tool lifecycle display
-
-`bindings.toolUpdate(notification)` receives non-authoritative `tool_call` / `tool_call_update`
-notifications from the shared host. Flat legacy options also accept `toolUpdate`. Tools can declare
-`kind` and pure `locations(parsedArgs)` metadata. Locations arrive before execution; the pending
-notification cannot occur until the admitted tools completion's append receipt releases the
-permission phase or run_tools.
-Completed/failed display notifications do not certify persistence: the existing per-tool result
-receipt still gates batch release. Notifications are not journaled or replayed, cannot decide turn
-state, and callback failures are isolated. Forks inherit the captured sink and report their own
-session/operation IDs. See [host notification contract](../host/README.md#tool-display-notifications).
-
-## Streaming completion display
-
-Set policy stream:true with a streaming profile and optionally bind `streamUpdate(notification)`.
-The callback is captured like toolUpdate, inherited by forks, and never journaled or replayed.
-Prepared stream settings commit before fetch. Text/thinking/usage updates are non-authoritative;
-only an assembled, decoded and admitted completion produces a successful model_settled, whose
-receipt still gates tools. Interrupted streams fail/cancel with no partial assistant message or
-continuation. Idle restore emits no stream updates and performs no HTTP. Barge-in keeps its existing
-same-turn semantics while cancelling the old completion reader. See [provider streaming](../providers/README.md#streaming).
-
-## Permission requests and journal v6
-
-Set `configuration.policy.permissions: "ask"` and bind `bindings.requestPermission`:
-
-```ts
-const requestPermission = async (request, signal) => {
-  // Display request.toolCall and request.options; resolve when the user chooses.
-  const optionId = await promptUser(request, signal);
-  return { outcome: { outcome: "selected", optionId } };
-};
-```
-
-Options are `allow-once` and `reject-once`; `{ outcome: { outcome: "cancelled" } }` cancels the turn.
-All calls must be approved before any call runs. A reject fails the turn without tool results, even
-under tolerant tool-error policy. Omitted/off keeps existing behavior. Legacy flat options must
-migrate to configuration/bindings to enable permissions. See the [host port](../host/README.md#permission-requests).
-
-The successful tools model_settled captures `permissionRequired: true`. Its receipt releases the
-permission child. The correlated permission_settled records ordered call IDs and once-only choices;
-its receipt releases run_tools only after all calls were allowed. Replay checks the captured policy,
-child identity, call order, completeness and refusal boundary. These new policy/event semantics
-require v6; old record versions and fixture bytes remain unchanged. Streams remain v6 after opt-out.
-
-Host-owned parsed inputs and grants are never persisted. Interrupted permission requests, including
-an approval committed before execution, restore through ordinary failed recovery without reasking
-or running tools. Lost approval receipts use normal reconciliation. Forks/compaction inherit policy
-and the captured callback, but each new call needs a fresh choice. Idle restore emits no prompts.
-Remembered approvals remain unimplemented. The separate [ACP stdio adapter](../../acp/README.md)
-translates session and permission operations without changing journal semantics.
-
-## Runtime diagnostics
-
-`session.transition` reports changes to storage status or turn phase, including the prior state,
-revision and the reason for a pending append/reconciliation gate. Repeated observations of the same
-state are suppressed. Append attempts and classified outcomes carry append IDs, expected/actual
-revisions, duration and failure details; an indeterminate result never claims rollback or commit.
-`tool.receipt_committed` joins a batch/call to its append receipt before release. `policy.committed`
-reports the effective policy only after persistence. `turn.settled` includes the committed append,
-step limit and explicit exhaustion/failure reason. Restore failures preserve the original cause;
-recovery identifies the interrupted phase and states that external effects will not be replayed.
-
-These diagnostics are separate from journal authority. Core does not configure logging or own a
-file sink; the launcher supplies durable output. The observability test exercises actual runtime
-logging for permission waits/refusal, cancellation, lost receipts, exhausted allowance and failed
-restore. Run it with debug capture to inspect what an operator will see, not just fixture output.
-
-### Inspect fixture runtime logs beside journals
-
-Both fixture commands print their artifact directory before executing scenarios. The defaults are
-`.session-artifacts/latest` and `.session-artifacts/latest-v2`. Each scenario directory contains
-`diagnostics.jsonl` (structured debug-and-higher runtime records) and `diagnostics.log` (readable
-records), with journals under `evidence/journal-<alias>.jsonl`. `evidence/session-aliases.json` maps each real session ID to the
-journal aliases, including restored sessions. Root `run.json` identifies the run; each diagnostic
-carries that run ID, scenario name and fixture version.
-
-These files capture real host/session/provider/persistence instrumentation, including failure and
-close events. Capture is scoped to the scenario and still forwards records to the configured test
-reporter; it does not replace the journal, reset global logging, or change approved fixture baselines.
-Failures retain their diagnostic files. Re-running the same artifact directory replaces that run's
-logs; use `runFixtures({ artifactDirectory: "..." })` to retain separate runs. Read a failure with
-`cat .session-artifacts/latest/failure/diagnostics.log`, then join its session/turn/append IDs to the
-journal in that directory. The fixture artifacts supplement, rather than replace, launcher logs.
-
-A `turn.settled` diagnostic describes an **agent turn**, with agent ID and triggering child/event.
-Failed turns are Warning with a direct cause; completed, aborted and exhausted turns are Info.
-Permission refusal has its own host Warning (`permission.refused`); its subsequent failed-turn
-summary reports the committed consequence. Tests preserve those production severities even when
-failure is the expected scenario outcome. See [the severity contract](../logging/README.md).
+The inspector prints a unique run directory with linked journals and `diagnostics.log` / `.jsonl`.
+Default runs cover all scenarios; `--v2` selects the policy group, not a different journal format.
+Consumer tests retain actual scripted HTTP traffic under `.session-artifacts/consumer*/<run-id>` and
+`.session-artifacts/peer-review/<run-id>`. Read the [fixture guide](fixtures/README.md) before updating
+baselines. Tests use scripted responses and establish no live-provider or disk-durability guarantee.

@@ -18,7 +18,7 @@ import {
   createSession,
   defineTool,
   restoreSession,
-  type BoundSessionOptions,
+  type SessionOptions,
 } from "./session-runtime.ts";
 import { deferred, deterministicIds, testOptions, until } from "./test-support.ts";
 import { createMemoryPersistence } from "./testing/memory-persistence.ts";
@@ -27,7 +27,7 @@ function setup(profile: CompletionProfile = openaiChat) {
   const bodies: any[] = [];
   const port = createMemoryPersistence();
   let reads = 0;
-  const opts: BoundSessionOptions = {
+  const opts: SessionOptions = {
     persistence: {
       ...port,
       getBlob: async (...args) => {
@@ -41,7 +41,7 @@ function setup(profile: CompletionProfile = openaiChat) {
       steps: 3,
       policy: {
         provider: profile.id,
-        ...(profile === anthropicMessagesV2 ? { thinking: "adaptive", maxOutputTokens: 2048 } : {}),
+        ...(profile === anthropicMessagesV2 ? { thinking: "budget", maxOutputTokens: 2048 } : {}),
       },
     },
     bindings: {
@@ -76,7 +76,9 @@ function setup(profile: CompletionProfile = openaiChat) {
   };
   return { opts, bodies, reads: () => reads };
 }
+
 const signal = () => new AbortController().signal;
+
 const bytes = new TextEncoder().encode("# DESIGN\nAttachment bytes stay outside the journal.");
 
 test("markdown refs commit without bytes, restore does not read blobs, fork and compact copy cited refs", async () => {
@@ -106,7 +108,7 @@ test("markdown refs commit without bytes, restore does not read blobs, fork and 
   const v5 = session.snapshot.durable.records.find(
     (r) => r.body.kind === "event" && r.body.event.type === "user",
   )!;
-  expect(v5.version).toBe(5);
+  expect(v5.version).toBe(1);
   expect(() => decodeRecord(JSON.stringify({ ...v5, version: 4 }))).toThrow();
   const before = reads();
   const restored = await restoreSession(opts, id);
@@ -330,7 +332,7 @@ test("abort during a blob read cancels preparation and prevents late HTTP", asyn
   expect(bodies).toHaveLength(0);
 });
 
-test("v5 structural gate covers created, prepared, terminal and compact context refs", async () => {
+test("current format validation covers created, prepared, terminal and compact context refs", async () => {
   const { opts } = setup();
   const session = await createSession(opts);
   const ref = await opts.persistence.putBlob(
@@ -348,7 +350,7 @@ test("v5 structural gate covers created, prepared, terminal and compact context 
   await Promise.all([session.close(), child.close()]);
 });
 
-test("legacy attachment admission upgrades before v5 without rewriting old records", async () => {
+test("attachment admission retains the single format without rewriting prior records", async () => {
   const opts = testOptions();
   const session = await createSession(opts);
   const old = journalJSONL(session.snapshot.durable);
@@ -360,7 +362,7 @@ test("legacy attachment admission upgrades before v5 without rewriting old recor
   );
   await session.input({ attachments: [ref] }).settled;
   expect(journalJSONL(session.snapshot.durable).startsWith(old)).toBe(true);
-  expect(session.snapshot.durable.records.slice(0, 3).map((r) => r.version)).toEqual([1, 2, 5]);
+  expect(session.snapshot.durable.records.slice(0, 3).map((r) => r.version)).toEqual([1, 1, 1]);
   const restored = await restoreSession(opts, session.snapshot.durable.conversation.sessionId);
   expect(restored.snapshot.durable).toEqual(session.snapshot.durable);
   await Promise.all([session.close(), restored.close()]);
@@ -371,7 +373,7 @@ test("attachment queued while aborting tools keeps both records in v5", async ()
   let toolStarted = false;
   let attempts = 0;
   const binding = opts.bindings.providers!.get(anthropicMessagesV2.id)!;
-  const configured: BoundSessionOptions = {
+  const configured: SessionOptions = {
     ...opts,
     configuration: {
       ...opts.configuration,
@@ -435,7 +437,7 @@ test("attachment queued while aborting tools keeps both records in v5", async ()
   const queued = session.snapshot.durable.records.find((r) => r.body.kind === "queued")!;
   const batch = session.snapshot.durable.records.filter((r) => r.appendId === queued.appendId);
   expect(batch).toHaveLength(2);
-  expect(batch.map((r) => r.version)).toEqual([5, 5]);
+  expect(batch.map((r) => r.version)).toEqual([1, 1]);
   const restored = await restoreSession(
     configured,
     session.snapshot.durable.conversation.sessionId,
@@ -452,7 +454,7 @@ test("public user input requires content, accepts empty attachment lists with te
   expect(() => session.dispatch({ type: "user", attachments: [bytes] })).toThrow();
   const result = await session.input({ text: "Text only", attachments: [] }).settled;
   expect(result.kind === "terminal" && result.record.outcome.kind).toBe("completed");
-  expect(session.snapshot.durable.records.every((record) => record.version === 3)).toBe(true);
+  expect(session.snapshot.durable.records.every((record) => record.version === 1)).toBe(true);
   await session.close();
 });
 

@@ -8,25 +8,28 @@ export type OperationState<T> =
   | Readonly<{ status: "validating_output" }>
   | Readonly<{ status: "succeeded"; value: T }>
   | Readonly<{ status: "failed"; error: Failure }>
-  | Readonly<{ status: "cancelled" }>;
+  | Readonly<{ status: "cancelled"; reason?: Failure }>;
 
 type Event<I, O> =
   | { type: "start" }
-  | { type: "cancel" }
+  | { type: "cancel"; reason?: Failure }
   | { type: "input_valid"; value: I }
   | { type: "returned"; value: unknown }
   | { type: "output_valid"; value: O }
   | { type: "failed"; error: Failure };
+
 type Command<I, O> =
   | { type: "observe" }
   | { type: "validate_input" }
   | { type: "run"; input: I }
   | { type: "validate_output"; value: unknown }
-  | { type: "cancel" }
+  | { type: "cancel"; reason?: Failure }
   | { type: "notify"; result: Result<O> };
 
 export type Operation<I, O> = {
   input: unknown;
+  failureContext?: Partial<Failure>;
+  timeoutMs?: number;
   parseInput: (input: unknown) => I | Promise<I>;
   run: (input: I, signal: AbortSignal) => unknown | Promise<unknown>;
   parseOutput: (output: unknown) => O | Promise<O>;
@@ -41,10 +44,25 @@ export function createOperationActor<I, O>(
 ) {
   type State = OperationState<O>;
   type Cmd = Command<I, O>;
-  const cancel = (): Decision<State, Cmd> => ({
-    state: { status: "cancelled" },
-    commands: [{ type: "cancel" }, { type: "notify", result: { kind: "cancelled" } }],
-  });
+  const cancel = (
+    _: State,
+    event: Extract<Event<I, O>, { type: "cancel" }>,
+  ): Decision<State, Cmd> =>
+    event.reason?.classification === "timeout"
+      ? {
+          state: { status: "failed", error: event.reason },
+          commands: [
+            { type: "cancel", reason: event.reason },
+            { type: "notify", result: { kind: "failed", error: event.reason } },
+          ],
+        }
+      : {
+          state: { status: "cancelled", ...(event.reason ? { reason: event.reason } : {}) },
+          commands: [
+            { type: "cancel", reason: event.reason },
+            { type: "notify", result: { kind: "cancelled" } },
+          ],
+        };
   const fail = (
     _: State,
     event: Extract<Event<I, O>, { type: "failed" }>,
@@ -102,7 +120,26 @@ export function createOperationActor<I, O>(
           return work();
         })
         .then((value) => actor.send(done(value)))
-        .catch((error) => actor.send({ type: "failed", error: failure(error) }));
+        .catch((error) =>
+          actor.send({
+            type: "failed",
+            error: failure(error, {
+              classification:
+                command.type === "validate_input"
+                  ? "invalid_input"
+                  : command.type === "validate_output"
+                    ? "invalid_output"
+                    : "execution",
+              ...operation.failureContext,
+              operation: {
+                id: request.id,
+                kind: request.kind,
+                ...operation.failureContext?.operation,
+              },
+              phase: command.type,
+            }),
+          }),
+        );
     };
     switch (command.type) {
       case "observe":
@@ -130,7 +167,7 @@ export function createOperationActor<I, O>(
         );
         break;
       case "cancel":
-        controller.abort();
+        controller.abort(command.reason);
         break;
       case "notify":
         settled(command.result);
@@ -154,6 +191,7 @@ export function createOperationActor<I, O>(
       return actor.snapshot;
     },
     start: () => actor.send({ type: "start" }),
-    cancel: () => actor.send({ type: "cancel" }),
+    cancel: (reason?: Failure) =>
+      actor.send({ type: "cancel", reason: reason ? failure(reason) : undefined }),
   };
 }

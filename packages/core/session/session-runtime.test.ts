@@ -32,8 +32,11 @@ test("answers, immutable snapshots, system updates and idle restoration without 
   const restored = await restoreSession(
     {
       ...options,
-      complete: () => {
-        throw new Error("Unexpected completion");
+      bindings: {
+        ...options.bindings,
+        complete: () => {
+          throw new Error("Unexpected completion");
+        },
       },
     },
     session.snapshot.durable.conversation.sessionId,
@@ -333,8 +336,8 @@ test("abort overtaking a tool outcome does not accept a result into a settled ba
 test("captured registries survive caller mutation; incompatible restored configuration rejects", async () => {
   const options = testOptions();
   const session = await createSession(options);
-  (options.agents as Map<string, unknown>).clear();
-  (options.tools as Map<string, unknown>).clear();
+  (options.configuration.agents as Map<string, unknown>).clear();
+  (options.bindings.tools as Map<string, unknown>).clear();
   expect(await session.input("Go").settled).toMatchObject({
     record: { outcome: { kind: "completed" } },
   });
@@ -436,8 +439,11 @@ for (const boundary of ["input", "prompt", "tool-intent"] as const) {
       {
         ...options,
         persistence: createMemoryPersistence(backing),
-        complete: () => {
-          throw new Error("No replay");
+        bindings: {
+          ...options.bindings,
+          complete: () => {
+            throw new Error("No replay");
+          },
         },
       },
       session.snapshot.durable.conversation.sessionId,

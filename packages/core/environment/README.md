@@ -1,17 +1,54 @@
-# Environment bindings
+# Bind a session to an application
 
-`Environment` supplies an `AsyncIterable<EnvEvent>` and a renderer. `startEnvironment` binds those
-to a session; `runEnvironment` can use an already-created or restored session. Neither function
-calls completion/tools, inspects turn phases or polls for idle.
+The environment owns resources that outlive a single turn: event sources, rendering, credentials,
+storage, and diagnostic sinks. Core owns the execution loop. An application should translate user
+intent into session events and display their outcomes, not poll turn phases to decide when to call
+a model or execute a tool.
 
-The loop awaits admission only. Terminal and branch outcomes are delivered through each command
-handle separately, so an event source can emit abort or barge-in while work is active. Render updates
-include snapshots, receipts and settlements; branch settlements include the published child runtime.
-Snapshot observation is outside domain decisions, with observer failures isolated from execution.
+## Keep the input channel open during work
 
-Source exhaustion or an explicit close event closes the owned session and settles outstanding
-handles. A source intending to wait for an answer must remain open until it receives the corresponding
-settlement. Persistence lifetime remains caller-owned. A UI may switch its binding to a published
-child; it must not construct a second tool loop.
+`startEnvironment(options, environment)` creates a session; `runEnvironment(session, environment)`
+binds an existing or restored one. An `Environment` provides an `AsyncIterable<EnvEvent>` and a
+renderer. The loop waits for admission, not terminal settlement, so it can read abort/replacement
+input while a model or tool is active.
 
-The web package hosts a session console. A fuller session UI is a separate task.
+Render updates distinguish snapshots, receipts, and settlements. Use receipts to show accepted
+input and settlements to show how work ended. A branch settlement carries the published child;
+switch the UI to that session if desired rather than copying its state into another execution loop.
+
+Source exhaustion closes the session and cancels outstanding work. A generator that yields one
+prompt and returns is therefore not “ask and wait for the answer.” Keep the source open until its
+matching settlement arrives. An explicit close event has the same lifetime consequence. Closing a
+session does not close caller-owned persistence or global logging.
+
+## Retained provider traffic
+
+Use full capture when you need to inspect exactly what reached a provider, especially malformed
+JSON or a truncated stream. The journal records admitted runtime data; it cannot substitute for a
+raw response that failed admission. Normal diagnostic logs retain causes and identities but omit
+complete prompt/file bodies.
+
+```ts
+import { createProviderCapture } from "@labkit-agent/core/environment/provider-capture";
+
+const run = await createProviderCapture(".session-artifacts/my-run");
+// Put run.capture in each provider's transport.capture binding.
+// After all owned sessions/requests have settled or closed:
+await run.flush();
+console.log(run.directory); // Open README.md and manifest.json here.
+```
+
+Every call gets linked request/response files and a report of model, counts, byte sizes, and repeated
+message content. Requests are saved before dispatch; response text is retained before JSON parsing,
+and partial SSE text is retained as it arrives. Each run has a unique directory, so a failed run
+cannot inherit an earlier success report. Configured credential values are redacted.
+
+Bind the same capture to model transports used inside tools and pass their `ToolRunContext`
+correlation. This distinguishes a growing coordinator history from independent extraction calls.
+Scripted completion-port invocations are labeled separately: they do not establish HTTP evidence.
+
+This Bun disk sink retains full content until the application removes it. Choose quotas and retention
+for that workload; no implicit pruning is supplied. A capture write failure fails the operation
+instead of claiming evidence was retained. This is intentionally stronger than best-effort diagnostic
+logging. Configure [bounded lifecycle logs](../logging/README.md) separately; those remain necessary
+when capture is disabled.

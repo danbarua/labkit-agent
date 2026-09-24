@@ -15,7 +15,7 @@ import {
   createSession,
   defineTool,
   restoreSession,
-  type BoundSessionOptions,
+  type SessionOptions,
 } from "./session-runtime.ts";
 import { deferred, deterministicIds, until } from "./test-support.ts";
 import { createMemoryPersistence } from "./testing/memory-persistence.ts";
@@ -24,7 +24,7 @@ function setup(profile: CompletionProfile) {
   const updates: HostStreamNotification[] = [];
   const requests: any[] = [];
   let tools = 0;
-  const options: BoundSessionOptions = {
+  const options: SessionOptions = {
     persistence: createMemoryPersistence(),
     configuration: {
       agent: "a",
@@ -34,9 +34,7 @@ function setup(profile: CompletionProfile) {
         provider: profile.id,
         stream: true,
         thinking:
-          profile.id.startsWith("anthropic") || profile.id.startsWith("google")
-            ? "adaptive"
-            : "high",
+          profile.id.startsWith("anthropic") || profile.id.startsWith("google") ? "budget" : "high",
         maxOutputTokens: 2048,
       },
     },

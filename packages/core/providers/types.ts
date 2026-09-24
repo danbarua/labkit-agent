@@ -4,18 +4,21 @@ import { BlobRefSchema, type BlobResolver, type MediaKind } from "../agent/conte
 import { CompletionOwnerSchema, MessagesSchema, ToolNameSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 
-export const ThinkingSchema = z.enum(["off", "low", "medium", "high", "adaptive"]);
+export const ThinkingSchema = z.enum(["off", "low", "medium", "high", "adaptive", "budget"]);
+
 export type ThinkingCapability =
   | Readonly<{ mode: "off" }>
   | Readonly<{ mode: "effort"; values: readonly ("none" | "low" | "medium" | "high")[] }>
   | Readonly<{ mode: "budget"; maxTokens: number }>
   | Readonly<{ mode: "adaptive" }>;
+
 export const ContinuationPayloadSchema = z
   .json()
   .refine((payload) => JSON.stringify(payload).length <= 65536, "Continuation exceeds 64 KiB");
+
 export const ContinuationSchema = z
   .strictObject({
-    provider: z.string().regex(/^.+@\d+$/),
+    provider: z.string().min(1),
     owner: CompletionOwnerSchema,
     payload: ContinuationPayloadSchema.optional(),
     payloadBlob: BlobRefSchema.refine(
@@ -28,8 +31,11 @@ export const ContinuationSchema = z
     "Exactly one continuation payload representation is required",
   )
   .readonly();
+
 export type Continuation = z.infer<typeof ContinuationSchema>;
+
 export type DecodedCompletion = Readonly<{ completion: unknown; continuationPayload?: unknown }>;
+
 export function validateThinking(
   thinking: z.infer<typeof ThinkingSchema> | undefined,
   capability: ThinkingCapability,
@@ -37,12 +43,17 @@ export function validateThinking(
   if (thinking === undefined || thinking === "off") return;
   if (
     thinking === "adaptive"
-      ? capability.mode === "adaptive" || capability.mode === "budget"
-      : capability.mode === "effort" && capability.values.includes(thinking)
+      ? capability.mode === "adaptive"
+      : thinking === "budget"
+        ? capability.mode === "budget"
+        : capability.mode === "effort" && capability.values.includes(thinking)
   )
     return;
-  throw new Error("Unsupported thinking setting");
+  throw new Error(
+    `Unsupported thinking setting ${thinking}; supported: off${capability.mode === "off" ? "" : capability.mode === "effort" ? `, ${capability.values.join(", ")}` : capability.mode === "budget" ? `, budget (${capability.maxTokens} tokens)` : ", adaptive"}`,
+  );
 }
+
 export function matchingContinuations(
   messages: readonly { role: string; owner?: z.infer<typeof CompletionOwnerSchema> }[],
   continuations: readonly Continuation[],
@@ -62,13 +73,15 @@ export function matchingContinuations(
 /** Data only. More thinking modes can be added with a journal/metadata migration. */
 export const ProviderSettingsSchema = z
   .strictObject({
-    provider: z.string().regex(/^.+@\d+$/),
+    provider: z.string().min(1),
     thinking: ThinkingSchema.optional(),
     stream: z.boolean().optional(),
     maxOutputTokens: z.number().int().positive().optional(),
   })
   .readonly();
+
 export type ProviderSettings = z.infer<typeof ProviderSettingsSchema>;
+
 export const ToolAdvertisementSchema = z
   .strictObject({
     name: ToolNameSchema,
@@ -76,6 +89,7 @@ export const ToolAdvertisementSchema = z
     parameters: z.record(z.string(), z.json()),
   })
   .readonly();
+
 export const CompletionRequestSchema = z
   .strictObject({
     provider: ProviderSettingsSchema.unwrap().shape.provider.optional(),
@@ -90,6 +104,7 @@ export const CompletionRequestSchema = z
     successors: z.array(z.string().min(1)).readonly(),
   })
   .readonly();
+
 export type CompletionRequest = z.infer<typeof CompletionRequestSchema>;
 /** Relative endpoint: no origin or credentials are visible to profiles. */
 export type HttpRequest = Readonly<{
@@ -99,7 +114,9 @@ export type HttpRequest = Readonly<{
   headers: Readonly<Record<string, string>>;
   body: unknown;
 }>;
+
 export type HttpResponse = Readonly<{ status: number; headers: Headers; body: unknown }>;
+
 export const StreamDeltaSchema = z
   .strictObject({
     text: z.string().optional(),
@@ -107,14 +124,18 @@ export const StreamDeltaSchema = z
     usage: z.record(z.string(), z.json()).readonly().optional(),
   })
   .readonly();
+
 export type StreamDelta = z.infer<typeof StreamDeltaSchema>;
+
 export type StreamDeltaSink = (delta: StreamDelta) => unknown;
+
 export type StreamEvent = Readonly<{ event?: string; data: string }>;
 /** One assembler per operation; finish rejects incomplete protocol sequences. */
 export type StreamAssembler = {
   push(event: StreamEvent): readonly StreamDelta[];
   finish(): unknown;
 };
+
 export type CompletionProfile = Readonly<{
   id: string;
   capabilities: Readonly<{
@@ -126,6 +147,7 @@ export type CompletionProfile = Readonly<{
   stream?: () => StreamAssembler;
   decode(response: HttpResponse, request?: CompletionRequest): DecodedCompletion;
 }>;
+
 export function parseRequest(
   raw: unknown,
   profileId?: string,

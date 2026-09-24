@@ -31,7 +31,9 @@ const part = z.union([
     thoughtSignature: z.string().min(1).optional(),
   }),
 ]);
+
 const payloadSchema = z.strictObject({ parts: z.array(part).min(1) });
+
 export const googleGenerateV2: CompletionProfile = {
   id: "google-generate@2",
   capabilities: {
@@ -101,7 +103,7 @@ export const googleGenerateV2: CompletionProfile = {
           },
         ],
         generationConfig: {
-          thinkingConfig: { thinkingBudget: request.thinking === "adaptive" ? 1024 : 0 },
+          thinkingConfig: { thinkingBudget: request.thinking === "budget" ? 1024 : 0 },
           ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
           ...(request.maxOutputTokens === undefined
             ? {}
@@ -125,7 +127,7 @@ export const googleGenerateV2: CompletionProfile = {
       .parse(responseBody(res));
     const parts = body.candidates[0]!.content.parts;
     if (
-      request?.thinking === "adaptive" &&
+      request?.thinking === "budget" &&
       parts.some((value) => "functionCall" in value && !value.thoughtSignature)
     )
       throw new Error("Thinking function calls require thoughtSignature");

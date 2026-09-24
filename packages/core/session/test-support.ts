@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-import { defineTool, type LegacySessionOptions as SessionOptions } from "./session-runtime.ts";
+import type { RuntimeOptions } from "../agent/agent-runtime.ts";
+import { completionTransport } from "../host/ports.ts";
+import { defineTool, type SessionOptions } from "./session-runtime.ts";
 import { createMemoryPersistence } from "./testing/memory-persistence.ts";
 
 export { deferred, until } from "../agent/test-support.ts";
@@ -9,8 +11,15 @@ export function deterministicIds() {
   let sequence = 0;
   return () => `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`;
 }
-export function testOptions(overrides: Partial<SessionOptions> = {}): SessionOptions {
-  return {
+
+type TestOptions = Omit<RuntimeOptions, "projectPrompt"> & {
+  persistence: SessionOptions["persistence"];
+  id?: () => string;
+  systemInputs?: readonly string[];
+};
+
+export function testOptions(overrides: Partial<TestOptions> = {}): SessionOptions {
+  const value: TestOptions = {
     agent: "a",
     steps: 4,
     baseUrl: "https://example.invalid",
@@ -27,12 +36,32 @@ export function testOptions(overrides: Partial<SessionOptions> = {}): SessionOpt
     id: deterministicIds(),
     ...overrides,
   };
+  return {
+    persistence: value.persistence,
+    configuration: {
+      agent: value.agent,
+      agents: value.agents,
+      steps: value.steps,
+      systemInputs: value.systemInputs,
+    },
+    bindings: {
+      tools: value.tools,
+      id: value.id,
+      toolUpdate: value.toolUpdate,
+      streamUpdate: value.streamUpdate,
+      complete: value.complete
+        ? (request, signal) =>
+            value.complete!({ ...request, signal, baseUrl: value.baseUrl, apiKey: value.apiKey })
+        : completionTransport(value),
+    },
+  };
 }
+
 export function scriptedCompletion(outcomes: readonly unknown[], requests: unknown[] = []) {
   let index = 0;
   return (
     request: Pick<
-      Parameters<NonNullable<SessionOptions["complete"]>>[0],
+      Parameters<NonNullable<TestOptions["complete"]>>[0],
       "model" | "messages" | "tools"
     >,
   ) => {
@@ -45,6 +74,7 @@ export function scriptedCompletion(outcomes: readonly unknown[], requests: unkno
     return result;
   };
 }
+
 export function lostAcknowledgement(
   port: SessionOptions["persistence"],
   predicate: (records: readonly string[]) => boolean = () => true,

@@ -10,20 +10,16 @@ import {
   createSession,
   defineTool,
   restoreSession,
-  type BoundSessionOptions,
+  type SessionOptions,
 } from "./session-runtime.ts";
-import {
-  deferred,
-  deterministicIds,
-  lostAcknowledgement,
-  testOptions,
-  until,
-} from "./test-support.ts";
+import { deferred, deterministicIds, lostAcknowledgement, until } from "./test-support.ts";
 import { createMemoryBacking, createMemoryPersistence } from "./testing/memory-persistence.ts";
 import { JournalRecordSchema } from "./types.ts";
 
 const allow = { outcome: { outcome: "selected", optionId: "allow-once" } };
+
 const reject = { outcome: { outcome: "selected", optionId: "reject-once" } };
+
 const calls = {
   kind: "tools",
   text: "Read",
@@ -32,6 +28,7 @@ const calls = {
     { id: "two", name: "echo", args: { path: "/tmp/two" } },
   ],
 };
+
 function setup(permission: PermissionPort = () => allow) {
   const backing = createMemoryBacking();
   const updates: HostToolNotification[] = [];
@@ -39,7 +36,7 @@ function setup(permission: PermissionPort = () => allow) {
   const ran: string[] = [];
   let parses = 0;
   let completions = 0;
-  const options: BoundSessionOptions = {
+  const options: SessionOptions = {
     persistence: createMemoryPersistence(backing),
     configuration: {
       agent: "a",
@@ -132,7 +129,7 @@ test("intent and permission receipts gate prompts and the entire batch; parsed i
       "completed",
     ]);
   }
-  expect(session.snapshot.durable.records.every((record) => record.version === 6)).toBe(true);
+  expect(session.snapshot.durable.records.every((record) => record.version === 1)).toBe(true);
   expect(journalJSONL(session.snapshot.durable)).toContain('"decision":"allow_once"');
   expect(journalJSONL(session.snapshot.durable)).not.toContain('"locations"');
   const restored = await restoreSession(options, session.snapshot.durable.conversation.sessionId);
@@ -292,7 +289,12 @@ test("lost approval receipt reconciles once; forks require new approvals", async
 test("nonjournaled runtime uses the same permission phase and port", async () => {
   const pending = deferred<unknown>();
   const { options, requests, ran } = setup(() => pending.promise);
-  const runtime = createAgentRuntime(testOptions({ ...options.bindings, complete: () => calls }));
+  const runtime = createAgentRuntime({
+    ...options.configuration,
+    ...options.bindings,
+    baseUrl: "https://example.invalid",
+    complete: () => calls,
+  });
   await runtime.fire({ type: "user", text: "Read" });
   await until(() => requests.length === 1);
   expect(runtime.snapshot.conversation.turn.status).toBe("awaiting_permission");
@@ -360,11 +362,11 @@ test("permission mode changes only at idle policy boundaries; off keeps existing
   await session.input("Read").settled;
   expect(requests).toHaveLength(0);
   expect(ran).toHaveLength(2);
-  expect(session.snapshot.durable.records[0]?.version).toBe(2);
+  expect(session.snapshot.durable.records[0]?.version).toBe(1);
   await session.updatePolicy({ permissions: "ask" });
   await session.input("Ask").settled;
   expect(requests).toHaveLength(2);
-  expect(session.snapshot.durable.records.at(-1)?.version).toBe(6);
+  expect(session.snapshot.durable.records.at(-1)?.version).toBe(1);
   await session.updatePolicy({ permissions: "off" });
   await session.input("Off").settled;
   expect(requests).toHaveLength(2);

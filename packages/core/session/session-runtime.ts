@@ -1,13 +1,8 @@
-import { z } from "zod";
+import type { z } from "zod";
 
 import type { ConversationCommand, SessionRequest } from "../agent/agent-conversation.ts";
 import type { TurnEvent } from "../agent/agent-fsm.ts";
-import type { AgentDefinition, RuntimeOptions, Tool } from "../agent/agent-runtime.ts";
-import {
-  createChatCompletion,
-  PreparedModelSchema,
-  type ChatCompletionRequest,
-} from "../agent/agent.ts";
+import type { AgentDefinition, Tool } from "../agent/agent-runtime.ts";
 import { blobRefs } from "../agent/content.ts";
 import { parseSessionContext, type PromptInput } from "../agent/prompt.ts";
 import {
@@ -33,7 +28,11 @@ import {
   type PolicyPatch,
   type PolicyResolvers,
 } from "../policy/policy.ts";
-import { bindProviders, type ProviderBindings } from "../providers/transport.ts";
+import {
+  bindProviders,
+  type ProviderBindings,
+  type ResolvedModel,
+} from "../providers/transport.ts";
 import {
   continuationBlobRefs,
   copyBranchBlobs,
@@ -51,7 +50,6 @@ import {
 } from "./session-fsm.ts";
 import { replay, seedConversation, toSeed, wireEvent, type JournalState } from "./session-log.ts";
 import { appendOperation, loadOperation, loadSession } from "./session-operation.ts";
-import { projectSessionPrompt } from "./session-prompt.ts";
 import {
   ConfigurationSchema,
   SeedSchema,
@@ -61,22 +59,18 @@ import {
 } from "./types.ts";
 
 export { defineTool } from "../host/ports.ts";
+
 export type { Tool, AgentDefinition };
+
 export type {
   HostToolNotification,
   ToolUpdateSink,
   HostStreamNotification,
   StreamUpdateSink,
 } from "../host/host.ts";
+
 export type { PermissionPort, PermissionRequest, ToolKind, ToolLocation } from "../host/ports.ts";
-/** Compatibility input: new integrations should supply SessionConfiguration and SessionBindings. */
-export type LegacySessionOptions = Omit<RuntimeOptions, "projectPrompt"> & {
-  persistence: SessionPersistence;
-  sessionId?: string;
-  systemInputs?: readonly string[];
-  /** UUIDs for session identities; arbitrary nonempty strings for append/request IDs. */
-  id?: () => string;
-};
+
 export type SessionConfiguration = Readonly<{
   agent: string;
   agents: ReadonlyMap<string, AgentDefinition>;
@@ -84,6 +78,7 @@ export type SessionConfiguration = Readonly<{
   systemInputs?: readonly string[];
   policy?: PolicyPatch;
 }>;
+
 export type SessionBindings = Readonly<{
   complete?: CompletionPort;
   providers?: ProviderBindings;
@@ -95,26 +90,15 @@ export type SessionBindings = Readonly<{
   streamUpdate?: StreamUpdateSink;
   requestPermission?: PermissionPort;
 }>;
-export type BoundSessionOptions = Readonly<{
+
+export type SessionOptions = Readonly<{
   persistence: SessionPersistence;
   configuration: SessionConfiguration;
   bindings: SessionBindings;
   sessionId?: string;
 }>;
-export type SessionOptions = LegacySessionOptions | BoundSessionOptions;
-function normalizeOptions(options: SessionOptions, restoring = false) {
-  if (!("configuration" in options)) {
-    if (options.requestPermission)
-      throw new Error("Permission requests require configuration.policy.permissions");
-    return {
-      options,
-      resolvers: copyResolvers(),
-      initialPolicy: undefined,
-      observe: undefined,
-      completePort: undefined,
-      providerMedia: undefined,
-    };
-  }
+
+function bindOptions(options: SessionOptions, restoring = false) {
   const { configuration, bindings } = options;
   const capabilities = {
     agents: [...configuration.agents].map(
@@ -127,6 +111,7 @@ function normalizeOptions(options: SessionOptions, restoring = false) {
   const resolvers = copyResolvers({
     ...copyResolvers(bindings.policies),
     providerCapabilities: providers?.capabilities,
+    validateSelection: providers?.validateSelection,
     providerStreams: providers?.streams,
     permissionRequests: !!bindings.requestPermission,
     providerIds: providers ? new Set(providers.ids) : undefined,
@@ -137,21 +122,12 @@ function normalizeOptions(options: SessionOptions, restoring = false) {
   if (!restoring && providers && !initialPolicy?.provider)
     throw new Error("Provider-bound sessions require an explicit provider policy");
   const completePort = providers?.complete ?? bindings.complete!;
-  const normalized: LegacySessionOptions = {
+  const normalized = {
     ...configuration,
     steps: initialPolicy?.steps ?? configuration.steps,
     persistence: options.persistence,
     sessionId: options.sessionId,
-    tools: bindings.tools,
-    toolUpdate: bindings.toolUpdate,
-    streamUpdate: bindings.streamUpdate,
-    requestPermission: bindings.requestPermission,
-    id: bindings.id,
-    baseUrl: "https://journal.invalid",
-    complete: (request) => {
-      const { signal, baseUrl: _baseUrl, apiKey: _apiKey, ...prepared } = request;
-      return completePort(PreparedModelSchema.parse(prepared), signal!);
-    },
+    ...bindings,
   };
   return {
     options: normalized,
@@ -159,23 +135,30 @@ function normalizeOptions(options: SessionOptions, restoring = false) {
     initialPolicy,
     observe: bindings.observe,
     completePort,
-    providerMedia: providers?.media,
+    providerMedia: providers?.mediaFor,
+    describeModel: providers?.describe,
   };
 }
+
 export type TerminalResult =
   | Readonly<{ kind: "terminal"; turnId: ActorId; record: TurnRecord }>
   | Readonly<{ kind: "failed" | "closed"; message: string }>;
+
 export type EnvReceipt = CommandReceipt | Readonly<{ kind: "close_acknowledged" }>;
+
 export type EnvSettlement =
   | TerminalResult
   | Readonly<{ kind: "branch"; session: SessionRuntime }>
   | Readonly<{ kind: "acknowledged"; receipt: EnvReceipt }>;
+
 export type EnvCommandHandle = Readonly<{
   accepted: Promise<EnvReceipt>;
   settled: Promise<EnvSettlement>;
 }>;
+
 export type SessionRuntime = {
   readonly snapshot: SessionState;
+  readonly model?: ResolvedModel;
   fire(event: unknown): Promise<EnvReceipt>;
   dispatch(event: unknown): EnvCommandHandle;
   input(input: string | Omit<Extract<EnvEvent, { type: "user" }>, "type">): {
@@ -227,26 +210,19 @@ function registryDifferences(
 }
 
 function configure(raw: SessionOptions, restoring = false) {
-  const { options, resolvers, initialPolicy, observe, completePort, providerMedia } =
-    normalizeOptions(raw, restoring);
+  const { options, resolvers, initialPolicy, observe, completePort, providerMedia, describeModel } =
+    bindOptions(raw, restoring);
   const toolUpdate = options.toolUpdate;
   const streamUpdate = options.streamUpdate;
   const requestPermission = options.requestPermission;
   const agentId = AgentIdSchema.parse(options.agent);
   const steps = StepsSchema.parse(options.steps);
-  const baseUrl = z.url({ protocol: /^https?$/ }).parse(options.baseUrl);
   const { agents, tools } = copyRegistries(options);
   if (!agents.has(agentId)) throw new Error(`Unknown agent: ${agentId}`);
   const configuration = ConfigurationSchema.parse({
     agents: [...agents],
     tools: [...tools].map(([name, tool]) => [name, tool.parameters]),
   });
-  const apiKey = options.apiKey;
-  const fetcher = options.fetch;
-  const projectHandoff = options.projectHandoff;
-  const complete =
-    options.complete ??
-    ((request: ChatCompletionRequest) => createChatCompletion(request, fetcher));
   const id = options.id ?? (() => crypto.randomUUID());
   const port = options.persistence;
   if (!port) throw new Error("Session persistence is required");
@@ -356,8 +332,7 @@ function configure(raw: SessionOptions, restoring = false) {
         tools,
         sessionId,
         requestPermission,
-        complete:
-          completePort ?? ((request, signal) => complete({ ...request, baseUrl, apiKey, signal })),
+        complete: completePort,
       },
       {
         turn: post,
@@ -416,6 +391,8 @@ function configure(raw: SessionOptions, restoring = false) {
         allowedTools: prompt?.agent.tools,
         toolFailure: policy?.toolFailure,
         permissions: policy?.permissions,
+        completionTimeoutMs: policy?.completionTimeoutMs ?? undefined,
+        toolTimeoutMs: policy?.toolTimeoutMs ?? undefined,
         provider: policy,
         continuations: durable.continuations,
         storeContinuation: (entry, signal) => storeContinuation(port, sessionId, entry, signal),
@@ -424,17 +401,12 @@ function configure(raw: SessionOptions, restoring = false) {
             port,
             sessionId,
             request,
-            providerMedia?.get(request.provider ?? "") ?? [],
+            providerMedia?.(request.provider ?? "", request.model) ?? [],
             signal,
             includeContinuations,
           ),
-        projectPrompt: (value) =>
-          policy
-            ? projectPolicy(value, durable.systemInputs, policy, resolvers)
-            : projectSessionPrompt(value, durable.systemInputs),
-        projectHandoff: policy
-          ? (value) => resolvers.handoffs.get(policy.handoff)!(value)
-          : projectHandoff,
+        projectPrompt: (value) => projectPolicy(value, durable.systemInputs, policy, resolvers),
+        projectHandoff: (value) => resolvers.handoffs.get(policy.handoff)!(value),
       });
       return undefined;
     };
@@ -471,7 +443,13 @@ function configure(raw: SessionOptions, restoring = false) {
       const result: TerminalResult =
         session.snapshot.status === "closed"
           ? { kind: "closed", message: "Session closed" }
-          : { kind: "failed", message: "Session persistence failed" };
+          : {
+              kind: "failed",
+              message:
+                session.snapshot.status === "failed"
+                  ? session.snapshot.message
+                  : "Session persistence failed",
+            };
       for (const settle of admissions.values()) settle(result);
       admissions.clear();
       for (const group of waiters.values()) for (const settle of group) settle(result);
@@ -526,7 +504,7 @@ function configure(raw: SessionOptions, restoring = false) {
               }
             }
           for (const body of newBodies) {
-            if (body.kind === "policy" || body.kind === "upgrade")
+            if (body.kind === "policy")
               diagnostic("session", "info", "policy.committed", {
                 sessionId,
                 appendId: command.submission.appendId,
@@ -657,7 +635,13 @@ function configure(raw: SessionOptions, restoring = false) {
           afterCommit.delete(command.id);
           const settle = admissions.get(command.id);
           if (settle) {
-            settle({ kind: "failed", message: `Input ${command.result.kind}` });
+            settle({
+              kind: "failed",
+              message:
+                command.result.kind === "failed"
+                  ? command.result.message
+                  : `Input ${command.result.kind}`,
+            });
             admissions.delete(command.id);
           }
           break;
@@ -746,16 +730,6 @@ function configure(raw: SessionOptions, restoring = false) {
           settled: accepted.then((receipt) => ({ kind: "acknowledged", receipt })),
         };
       }
-      if (event.type === "policy" && projectHandoff && !session.snapshot.durable.policy) {
-        const accepted = Promise.resolve<CommandReceipt>({
-          kind: "failed",
-          message: "Bind a named handoff policy before upgrading a legacy callback",
-        });
-        return {
-          accepted,
-          settled: accepted.then((receipt) => ({ kind: "acknowledged", receipt })),
-        };
-      }
       const input: SessionInput =
         event.type === "system"
           ? {
@@ -778,6 +752,16 @@ function configure(raw: SessionOptions, restoring = false) {
     const runtime: SessionRuntime = {
       get snapshot() {
         return session.snapshot;
+      },
+      get model() {
+        const { policy, conversation } = session.snapshot.durable;
+        const agent =
+          conversation.turn.status === "idle"
+            ? conversation.turn.agent
+            : conversation.turn.turn.agent;
+        return policy.provider
+          ? describeModel?.(policy.provider, policy.model ?? agents.get(agent)!.model)
+          : undefined;
       },
       dispatch,
       fire: (raw) => dispatch(raw).accepted,
@@ -810,6 +794,7 @@ function configure(raw: SessionOptions, restoring = false) {
     initialPolicy,
   };
 }
+
 export async function createSession(options: SessionOptions): Promise<SessionRuntime> {
   const configured = configure(options);
   const sessionId = SessionIdSchema.parse(configured.options.sessionId ?? configured.id());
@@ -829,6 +814,7 @@ export async function createSession(options: SessionOptions): Promise<SessionRun
     }),
   );
 }
+
 export async function restoreSession(
   options: SessionOptions,
   rawSessionId: string,

@@ -3,6 +3,7 @@ import { expect, test } from "@logtape/testing-bun/autoload";
 import { runFixture, runFixtures, scenarios } from "./fixture-runner.ts";
 
 type DiagnosticRecord = { level: string } & Record<string, unknown>;
+
 async function diagnostics(directory: string, scenario: string): Promise<DiagnosticRecord[]> {
   const text = await Bun.file(`${directory}/${scenario}/diagnostics.jsonl`).text();
   return text
@@ -10,6 +11,7 @@ async function diagnostics(directory: string, scenario: string): Promise<Diagnos
     .split("\n")
     .map((line) => JSON.parse(line));
 }
+
 async function assertDiagnosticArtifacts(directory: string, runId: string) {
   const records = await diagnostics(directory, "plain-conversation");
   const aliases = await Bun.file(
@@ -62,14 +64,14 @@ async function assertDiagnosticArtifacts(directory: string, runId: string) {
 test("behavioral evidence and human transcripts are deterministic across repeated runs", async () => {
   const first = await runFixtures({ artifactDirectory: ".session-artifacts/test-first" });
   const second = await runFixtures({ artifactDirectory: ".session-artifacts/test-second" });
-  expect(first.count).toBe(17);
+  expect(first.count).toBe(42);
   await assertDiagnosticArtifacts(first.artifactDirectory, first.runId);
   expect(second.runId).not.toBe(first.runId);
   expect(second.structured).toBe(first.structured);
   expect(second.markdown).toBe(first.markdown);
 });
 
-test("version-two policy fixtures are independent of the unchanged version-one baseline", async () => {
+test("policy fixture group remains independently runnable", async () => {
   const first = await runFixtures({ version: 2, artifactDirectory: ".session-artifacts/v2-first" });
   const second = await runFixtures({
     version: 2,

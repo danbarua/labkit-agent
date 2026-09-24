@@ -18,13 +18,15 @@ const response = (content: unknown[]) => ({
   headers: new Headers(),
   body: { role: "assistant", stop_reason: "tool_use", content },
 });
+
 const thinking = (signature: string) => ({ type: "thinking", thinking: "private", signature });
+
 const request = CompletionRequestSchema.parse({
   model: "claude-sonnet-4-5",
   messages: [{ role: "user", text: "Go" }],
   tools: [],
   successors: [],
-  thinking: "adaptive",
+  thinking: "budget",
   maxOutputTokens: 2048,
 });
 
@@ -123,7 +125,7 @@ test("capability intersection rejects before HTTP and chat maps effort", async (
           model: "test",
           messages: [],
           provider: profile.id,
-          thinking: "adaptive",
+          thinking: "budget",
         }),
         new AbortController().signal,
       ),

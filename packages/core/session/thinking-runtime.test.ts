@@ -9,7 +9,7 @@ import {
   createSession,
   defineTool,
   restoreSession,
-  type BoundSessionOptions,
+  type SessionOptions,
 } from "./session-runtime.ts";
 import { deterministicIds } from "./test-support.ts";
 import { createMemoryPersistence } from "./testing/memory-persistence.ts";
@@ -19,13 +19,13 @@ function setup(responses?: readonly unknown[]) {
     messages?: { role: string; content: { type: string; signature?: string }[] }[];
   }[] = [];
   let count = 0;
-  const opts: BoundSessionOptions = {
+  const opts: SessionOptions = {
     persistence: createMemoryPersistence(),
     configuration: {
       agent: "a",
       agents: new Map([["a", { model: "claude-sonnet-4-5", tools: ["echo"], successors: [] }]]),
       steps: 4,
-      policy: { provider: anthropicMessagesV2.id, thinking: "adaptive", maxOutputTokens: 2048 },
+      policy: { provider: anthropicMessagesV2.id, thinking: "budget", maxOutputTokens: 2048 },
     },
     bindings: {
       id: deterministicIds(),
@@ -69,6 +69,7 @@ function setup(responses?: readonly unknown[]) {
   };
   return { opts, bodies };
 }
+
 const resolvers = {
   ...builtinResolvers,
   providerIds: new Set([anthropicMessagesV2.id, googleGenerate.id]),

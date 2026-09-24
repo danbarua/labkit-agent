@@ -27,7 +27,8 @@ test("native adaptive thinking has its own wire version, with no manual budget r
       "budget_tokens",
     );
     expect(
-      anthropicMessagesV3.encode({ ...request, maxOutputTokens: 4096, stream }).body,
+      anthropicMessagesV3.encode({ ...request, thinking: "budget", maxOutputTokens: 4096, stream })
+        .body,
     ).toMatchObject({ thinking: { type: "enabled", budget_tokens: 1024 } });
   }
   for (const thinking of [undefined, "off"] as const) {
@@ -35,7 +36,9 @@ test("native adaptive thinking has its own wire version, with no manual budget r
       thinking: { type: "disabled" },
     });
   }
-  expect(() => anthropicMessagesV3.encode(request)).toThrow("maxOutputTokens");
+  expect(() => anthropicMessagesV3.encode({ ...request, thinking: "budget" })).toThrow(
+    "maxOutputTokens",
+  );
 });
 
 test("native adaptive streaming preserves signed tool continuation and exact provider ownership", async () => {

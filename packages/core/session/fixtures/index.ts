@@ -7,9 +7,9 @@ import {
 } from "./branching.ts";
 import {
   bargeInV1,
+  configurationChangeV2,
   exhaustionV1,
   handoffV1,
-  legacyUpgradeV2,
   plainConversationV1,
   policyPermissionsAllowanceV2,
   queueUserV2,
@@ -77,7 +77,7 @@ export const scenarios: readonly Scenario[] = [
   toolErrorContinueV2,
   abortToolsOnUserV2,
   contextPolicyForkV2,
-  legacyUpgradeV2,
+  configurationChangeV2,
   lostAcknowledgementV2,
   thinkingContinuationBranchesSwitchV2,
   markdownAttachmentRestoreForkCompactV2,

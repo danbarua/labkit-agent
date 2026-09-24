@@ -17,7 +17,7 @@ test("persisted CLI trace joins ACP, permission, tool and provider failure acros
     `
     import { workspaceAgent } from ${JSON.stringify(workspace)};
     let calls = 0;
-    const base = workspaceAgent({ LABKIT_ACP_MODEL: "test-model", LABKIT_ACP_PROVIDER: "anthropic-messages@4", ANTHROPIC_API_KEY: ${JSON.stringify(secret)} });
+    const base = workspaceAgent({ LABKIT_ACP_MODEL: "test-model", LABKIT_ACP_PROVIDER: "anthropic", ANTHROPIC_API_KEY: ${JSON.stringify(secret)} });
     export default { ...base, async sessionOptions(context) {
       const options = await base.sessionOptions(context);
       return { ...options, configuration: { ...options.configuration, policy: { ...options.configuration.policy, stream: false } },

@@ -445,13 +445,12 @@ export const queueUserV2: Scenario = {
   },
 };
 
-export const legacyUpgradeV2: Scenario = {
-  name: "legacy-upgrade",
+export const configurationChangeV2: Scenario = {
+  name: "configuration-change",
   version: 2,
   group: "conversation",
-  purpose:
-    "Upgrade a legacy session through a policy update while retaining its existing conversation.",
-  source: "packages/core/session/fixtures/conversation.ts#legacyUpgradeV2",
+  purpose: "Change committed policy while retaining the existing conversation.",
+  source: "packages/core/session/fixtures/conversation.ts#configurationChangeV2",
   dependencies: {
     completions: [
       {

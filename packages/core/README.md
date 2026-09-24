@@ -6,6 +6,17 @@ Zod and LogTape. Attachment hashing uses Bun APIs, so Node/browser execution is 
 this package contract. `private: true` prevents accidental registry publication; local links and
 packed tarballs still work.
 
+## Choose your integration boundary
+
+Start with the [session guide](session/README.md) if your application needs saved history and an
+explanation after interruption. It distinguishes accepted input, displayed progress, and committed
+outcomes; those are different promises. Use `/agent` only when process-local history is sufficient.
+
+Supply [tools/completions](host/README.md), [model bindings](providers/README.md), and persistence;
+core runs the loop. The [environment guide](environment/README.md) explains input/render lifetimes
+and request capture. [Policy](policy/README.md) controls admission and what context reaches a model.
+[Logging](logging/README.md) explains where to find the cause when execution stops.
+
 ## Live local development
 
 Register this checkout once:

@@ -8,7 +8,7 @@ import {
   createSession,
   defineTool,
   restoreSession,
-  type BoundSessionOptions,
+  type SessionOptions,
 } from "./session-runtime.ts";
 import { deferred, deterministicIds, testOptions, until } from "./test-support.ts";
 import { createMemoryPersistence } from "./testing/memory-persistence.ts";
@@ -18,7 +18,9 @@ const calls = {
   text: "Review",
   calls: [{ id: "same-call", name: "echo", args: { path: "/tmp/DESIGN.md" } }],
 };
+
 const answer = { kind: "answer", text: "done" };
+
 const tool = () =>
   defineTool({
     input: z.object({ path: z.string() }),
@@ -35,7 +37,7 @@ test("session tool notifications respect intent receipt but never certify result
   let awaitingResult = false;
   let completions = 0;
   const updates: HostToolNotification[] = [];
-  const opts: BoundSessionOptions = {
+  const opts: SessionOptions = {
     persistence: {
       ...base,
       append: async (request, signal) => {
@@ -114,7 +116,7 @@ test("session tool notifications respect intent receipt but never certify result
   await Promise.all([session.close(), restored.close(), fork.close()]);
 });
 
-test("legacy session and nonjournaled runtime expose the same optional tool sink", async () => {
+test("session and nonjournaled runtime expose the same optional tool sink", async () => {
   for (const journaled of [true, false]) {
     const updates: HostToolNotification[] = [];
     let completions = 0;
@@ -131,7 +133,12 @@ test("legacy session and nonjournaled runtime expose the same optional tool sink
       expect(updates.at(-1)?.status).toBe("completed");
       await session.close();
     } else {
-      const runtime = createAgentRuntime(options);
+      const runtime = createAgentRuntime({
+        ...options.configuration,
+        ...options.bindings,
+        baseUrl: "https://example.invalid",
+        complete: () => (++completions % 2 ? calls : answer),
+      });
       await runtime.fire({ type: "user", text: "Review" });
       await until(() => runtime.snapshot.conversation.log.length === 1);
       expect(updates.at(-1)?.status).toBe("completed");

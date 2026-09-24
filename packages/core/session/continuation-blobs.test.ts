@@ -16,12 +16,13 @@ import {
   createSession,
   defineTool,
   restoreSession,
-  type BoundSessionOptions,
+  type SessionOptions,
 } from "./session-runtime.ts";
 import { deferred, deterministicIds, until } from "./test-support.ts";
 import { createMemoryPersistence } from "./testing/memory-persistence.ts";
 
 const signal = () => new AbortController().signal;
+
 const owner = { turnId: "turn", generation: 1 };
 
 test("continuation representation boundary, operation-only resolution, and exclusive schema", async () => {
@@ -82,7 +83,7 @@ function setup(profile: CompletionProfile) {
   const lifecycle: string[] = [];
   const secret = "X".repeat(70 * 1024);
   let count = 0;
-  const opts: BoundSessionOptions = {
+  const opts: SessionOptions = {
     persistence: {
       ...base,
       putBlob: async (...args) => {
@@ -108,7 +109,7 @@ function setup(profile: CompletionProfile) {
       steps: 4,
       policy: {
         provider: profile.id,
-        thinking: profile === googleGenerateV2 ? "adaptive" : "high",
+        thinking: profile === googleGenerateV2 ? "budget" : "high",
       },
     },
     bindings: {
@@ -223,7 +224,7 @@ for (const profile of [googleGenerateV2, openaiResponsesV2])
         record.body.event.event.type === "model_settled" &&
         record.body.event.event.continuation,
     )!;
-    expect(settled.version).toBe(5);
+    expect(settled.version).toBe(1);
     expect(() => decodeRecord(JSON.stringify({ ...settled, version: 4 }))).toThrow();
     const prepared = durable.records.findLast(
       (record) =>

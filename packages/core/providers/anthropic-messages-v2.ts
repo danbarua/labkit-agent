@@ -27,7 +27,9 @@ const thinkingBlock = z.discriminatedUnion("type", [
   }),
   z.strictObject({ type: z.literal("redacted_thinking"), data: z.string().min(1) }),
 ]);
+
 const payloadSchema = z.strictObject({ blocks: z.array(thinkingBlock).min(1) });
+
 const block = z.discriminatedUnion("type", [
   ...thinkingBlock.options,
   z.object({ type: z.literal("text"), text: z.string() }),
@@ -38,6 +40,7 @@ const block = z.discriminatedUnion("type", [
     input: z.record(z.string(), z.json()),
   }),
 ]);
+
 function messageBlocks(
   message: Exclude<AgentMessage, { role: "tool" }>,
   blobs?: BlobResolver,
@@ -64,11 +67,12 @@ function messageBlocks(
     return { type: "text", text: attachmentText(part.ref, blobs) };
   });
 }
+
 export function anthropicMessagesProfile(id: string, nativeAdaptive = false): CompletionProfile {
   return {
     id,
     capabilities: {
-      thinking: { mode: "adaptive" },
+      thinking: nativeAdaptive ? { mode: "adaptive" } : { mode: "budget", maxTokens: 1024 },
       stream: false,
       media: ["text/plain", "text/markdown", "image/png", "image/jpeg", "application/pdf"],
     },
@@ -77,10 +81,10 @@ export function anthropicMessagesProfile(id: string, nativeAdaptive = false): Co
       validateThinking(request.thinking, this.capabilities.thinking);
       if (
         !nativeAdaptive &&
-        request.thinking === "adaptive" &&
+        (request.thinking === "adaptive" || request.thinking === "budget") &&
         (request.maxOutputTokens === undefined || request.maxOutputTokens <= 1024)
       )
-        throw new Error("Adaptive thinking requires maxOutputTokens > 1024");
+        throw new Error("Budget thinking requires maxOutputTokens > 1024");
       const split = systemAndMessages(request, blobs);
       const messages: { role: string; content: unknown[] }[] = [];
       for (const message of split.messages) {
@@ -127,7 +131,7 @@ export function anthropicMessagesProfile(id: string, nativeAdaptive = false): Co
             input_schema: parameters,
           })),
           thinking:
-            request.thinking === "adaptive"
+            request.thinking === "adaptive" || request.thinking === "budget"
               ? nativeAdaptive
                 ? { type: "adaptive" }
                 : { type: "enabled", budget_tokens: 1024 }
@@ -165,4 +169,5 @@ export function anthropicMessagesProfile(id: string, nativeAdaptive = false): Co
     },
   };
 }
+
 export const anthropicMessagesV2 = anthropicMessagesProfile("anthropic-messages@2");

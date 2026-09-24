@@ -15,11 +15,14 @@ import {
 } from "../providers/types.ts";
 
 export const PolicyVersionSchema = z.number().int().nonnegative().brand<"PolicyVersion">();
+
 const PolicyObjectSchema = z.strictObject({
   id: z.string().regex(/^.+@\d+$/),
   version: PolicyVersionSchema,
   ...ProviderSettingsSchema.unwrap().partial().shape,
   model: z.string().min(1).optional(),
+  completionTimeoutMs: z.number().int().positive().max(2147483647).nullable().optional(),
+  toolTimeoutMs: z.number().int().positive().max(2147483647).nullable().optional(),
   steps: StepsSchema,
   admission: z.enum(["reject-during-tools", "abort-tools-on-user", "queue-user"]),
   bargeIn: z.boolean(),
@@ -29,11 +32,14 @@ const PolicyObjectSchema = z.strictObject({
   handoff: z.string().regex(/^.+@\d+$/),
   tools: z.record(z.string().min(1), z.array(ToolNameSchema).readonly()).readonly(),
 });
+
 export const PolicySchema = PolicyObjectSchema.refine(
   (policy) => policy.admission !== "queue-user" || !policy.bargeIn,
   "queue-user requires bargeIn=false",
 ).readonly();
+
 export type Policy = z.infer<typeof PolicySchema>;
+
 export const PolicyPatchSchema = PolicyObjectSchema.omit({ version: true })
   .partial()
   .strict()
@@ -41,20 +47,32 @@ export const PolicyPatchSchema = PolicyObjectSchema.omit({ version: true })
     (patch) => Object.values(patch).every((value) => value !== undefined),
     "Omit undefined policy fields",
   );
+
 export type PolicyPatch = z.input<typeof PolicyPatchSchema>;
+
 export type Capabilities = Readonly<{
   agents: readonly (readonly [string, Readonly<{ tools: readonly string[] }>])[];
 }>;
+
 export type Projection = (input: PromptInput) => readonly ChatMessage[];
+
 export type HandoffProjection = (
   input: PromptInput & { from: string; to: string },
 ) => readonly AgentMessage[];
+
 export type PolicyPack = Readonly<
   Pick<Policy, "admission" | "bargeIn" | "toolFailure" | "project" | "handoff"> &
     Partial<Pick<Policy, "thinking">>
 >;
+
 export type PolicyResolvers = Readonly<{
   permissionRequests?: boolean;
+  validateSelection?: (
+    provider: string,
+    model: string | undefined,
+    thinking: Policy["thinking"],
+    stream?: boolean,
+  ) => void;
   providerStreams?: ReadonlyMap<string, boolean>;
   providerCapabilities?: ReadonlyMap<string, ThinkingCapability>;
   providerIds?: ReadonlySet<string>;
@@ -62,8 +80,10 @@ export type PolicyResolvers = Readonly<{
   projections: ReadonlyMap<string, Projection>;
   handoffs: ReadonlyMap<string, HandoffProjection>;
 }>;
+
 const history: Projection = (input) =>
   projectConversationPrompt({ ...input, agent: { ...input.agent, systemPrompt: undefined } });
+
 const defaultPack: PolicyPack = {
   admission: "reject-during-tools",
   bargeIn: true,
@@ -71,12 +91,14 @@ const defaultPack: PolicyPack = {
   project: "history@1",
   handoff: "handoff-slim@1",
 };
+
 const packs = new Map<string, PolicyPack>([
   ["default@1", defaultPack],
   ["queued@1", { ...defaultPack, admission: "queue-user", bargeIn: false }],
   ["strict@1", { ...defaultPack, bargeIn: false }],
   ["tolerant@1", { ...defaultPack, toolFailure: "return-error-and-continue" }],
 ]);
+
 export const builtinResolvers: PolicyResolvers = {
   packs,
   projections: new Map([
@@ -105,9 +127,11 @@ export const builtinResolvers: PolicyResolvers = {
     ],
   ]),
 };
+
 export function copyResolvers(resolvers: PolicyResolvers = builtinResolvers): PolicyResolvers {
   return {
     permissionRequests: resolvers.permissionRequests,
+    validateSelection: resolvers.validateSelection,
     providerStreams: resolvers.providerStreams ? new Map(resolvers.providerStreams) : undefined,
     providerCapabilities: resolvers.providerCapabilities
       ? new Map(
@@ -125,6 +149,7 @@ export function copyResolvers(resolvers: PolicyResolvers = builtinResolvers): Po
     ),
   };
 }
+
 export function defaultPolicy(capabilities: Capabilities, steps: number): Policy {
   return PolicySchema.parse({
     id: "default@1",
@@ -138,6 +163,7 @@ export function defaultPolicy(capabilities: Capabilities, steps: number): Policy
     tools: Object.fromEntries(capabilities.agents.map(([id, agent]) => [id, agent.tools])),
   });
 }
+
 export function validatePolicy(
   raw: unknown,
   capabilities: Capabilities,
@@ -162,12 +188,18 @@ export function validatePolicy(
     capabilities.agents.some(([, agent]) => agent.tools.includes("handoff_to"))
   )
     throw new Error("Reserved handoff tool name");
-  if (policy.provider && resolvers.providerCapabilities) {
+  if (policy.provider && resolvers.validateSelection)
+    resolvers.validateSelection(policy.provider, policy.model, policy.thinking, policy.stream);
+  if (policy.provider && !resolvers.validateSelection && resolvers.providerCapabilities) {
     const capability = resolvers.providerCapabilities.get(policy.provider);
     if (!capability) throw new Error("Missing provider capabilities");
     validateThinking(policy.thinking, capability);
   }
-  if (policy.stream && (!policy.provider || !resolvers.providerStreams?.get(policy.provider)))
+  if (
+    !resolvers.validateSelection &&
+    policy.stream &&
+    (!policy.provider || !resolvers.providerStreams?.get(policy.provider))
+  )
     throw new Error("Unsupported streaming setting");
   const agents = new Map(capabilities.agents);
   if (
@@ -185,6 +217,7 @@ export function validatePolicy(
     throw new Error("Missing versioned policy resolver");
   return freeze(policy);
 }
+
 export function patchPolicy(
   current: Policy,
   raw: PolicyPatch,
@@ -206,6 +239,7 @@ export function patchPolicy(
     resolvers,
   );
 }
+
 export function projectPolicy(
   input: PromptInput,
   systemInputs: readonly string[],
@@ -254,7 +288,9 @@ export function effectiveToolResult(
   result: Result<string>,
   policy?: Pick<Policy, "toolFailure">,
 ): Result<string> {
-  return result.kind === "failed" && policy?.toolFailure === "return-error-and-continue"
+  return result.kind === "failed" &&
+    result.error.classification !== "timeout" &&
+    policy?.toolFailure === "return-error-and-continue"
     ? { kind: "succeeded", value: JSON.stringify({ error: result.error.message }) }
     : result;
 }

@@ -15,7 +15,7 @@ import {
   createSession,
   defineTool,
   restoreSession,
-  type BoundSessionOptions,
+  type SessionOptions,
 } from "./session-runtime.ts";
 import { deferred, deterministicIds, testOptions, until } from "./test-support.ts";
 import { createMemoryPersistence } from "./testing/memory-persistence.ts";
@@ -37,7 +37,8 @@ function answer(profile: CompletionProfile, text = "done") {
       };
   }
 }
-function options(profile = openaiChat, calls: unknown[] = []): BoundSessionOptions {
+
+function options(profile = openaiChat, calls: unknown[] = []): SessionOptions {
   return {
     configuration: {
       agent: "a",
@@ -80,7 +81,7 @@ for (const profile of [openaiChat, openaiResponses, anthropicMessages, googleGen
     const session = await createSession(opts);
     const result = await session.input("hello").settled;
     expect(result.kind === "terminal" && result.record.outcome.kind).toBe("completed");
-    expect(session.snapshot.durable.records.every((record) => record.version === 3)).toBe(true);
+    expect(session.snapshot.durable.records.every((record) => record.version === 1)).toBe(true);
     const before = calls.length;
     const restored = await restoreSession(opts, session.snapshot.durable.conversation.sessionId);
     expect(calls).toHaveLength(before);
@@ -164,7 +165,7 @@ test("rejected policy append never starts dependent work or changes durable sele
   expect(session.snapshot.durable.policy?.provider).toBe(openaiChat.id);
   await session.close();
 });
-test("legacy journals upgrade to v3 at the provider policy boundary and reject downgrade/tampering", async () => {
+test("provider configuration changes retain format and reject tampering", async () => {
   const legacy = testOptions();
   const old = await createSession(legacy);
   await old.input("old history").settled;
@@ -175,8 +176,8 @@ test("legacy journals upgrade to v3 at the provider policy boundary and reject d
     {
       ...opts,
       persistence: legacy.persistence,
-      configuration: { ...opts.configuration, agents: legacy.agents },
-      bindings: { ...opts.bindings, tools: legacy.tools, id: legacy.id },
+      configuration: { ...opts.configuration, agents: legacy.configuration.agents },
+      bindings: { ...opts.bindings, tools: legacy.bindings.tools, id: legacy.bindings.id },
     },
     old.snapshot.durable.conversation.sessionId,
   );
@@ -186,8 +187,8 @@ test("legacy journals upgrade to v3 at the provider policy boundary and reject d
   const terminal = await restored.input("new turn").settled;
   expect(terminal.kind === "terminal" && terminal.record.outcome.kind).toBe("completed");
   expect(restored.snapshot.durable.records.map((record) => record.version)).toContain(1);
-  expect(restored.snapshot.durable.records.map((record) => record.version)).toContain(2);
-  expect(restored.snapshot.durable.records.at(-1)?.version).toBe(3);
+  expect(restored.snapshot.durable.records.map((record) => record.version)).toContain(1);
+  expect(restored.snapshot.durable.records.at(-1)?.version).toBe(1);
   const loaded = await legacy.persistence.load(
     restored.snapshot.durable.conversation.sessionId,
     new AbortController().signal,
@@ -195,13 +196,13 @@ test("legacy journals upgrade to v3 at the provider policy boundary and reject d
   if (loaded.kind !== "loaded") throw new Error("missing journal");
   const resolvers = { ...builtinResolvers, providerIds: new Set(opts.bindings.providers?.keys()) };
   expect(replay(loaded.batches, resolvers)).toEqual(restored.snapshot.durable);
-  const record = restored.snapshot.durable.records.find((r) => r.version === 3)!;
+  const record = restored.snapshot.durable.records.find((r) => r.version === 1)!;
   expect(() => decodeRecord(JSON.stringify({ ...record, version: 2 }))).toThrow();
   const altered = loaded.batches.map((batch) => ({
     ...batch,
     records: batch.records.map((serialized) => {
       const entry = JSON.parse(serialized);
-      if (entry.body.event?.event?.type === "prepared" && entry.version === 3)
+      if (entry.body.event?.event?.type === "prepared")
         entry.body.event.event.result.value.model = "tampered";
       return JSON.stringify(entry);
     }),

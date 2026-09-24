@@ -1,5 +1,5 @@
 import { ndJsonStream, type SessionNotification } from "@agentclientprotocol/sdk";
-import { defineTool, type BoundSessionOptions } from "@labkit-agent/core";
+import { defineTool, type SessionOptions } from "@labkit-agent/core";
 import { createMemoryPersistence } from "@labkit-agent/core/testing";
 import { getLogger } from "@logtape/logtape";
 import { expect, spyOn, test } from "@logtape/testing-bun/autoload";
@@ -22,6 +22,7 @@ type Message = {
   result?: any;
   error?: { code: number; message: string };
 };
+
 function harness(options: AcpOptions) {
   const input = new TransformStream<Uint8Array, Uint8Array>();
   const writer = input.writable.getWriter();
@@ -67,7 +68,8 @@ function harness(options: AcpOptions) {
     close: () => server.close(),
   };
 }
-function setup(overrides: Partial<BoundSessionOptions["bindings"]> = {}) {
+
+function setup(overrides: Partial<SessionOptions["bindings"]> = {}) {
   const persistence = createMemoryPersistence();
   const options: AcpOptions = {
     loadSession: true,
@@ -89,12 +91,15 @@ function setup(overrides: Partial<BoundSessionOptions["bindings"]> = {}) {
   };
   return { options, persistence };
 }
+
 const tools = {
   kind: "tools",
   text: "Reading",
   calls: [{ id: "one", name: "echo", args: { text: "contents" } }],
 };
+
 const answer = { kind: "answer", text: "Done" };
+
 const prompt = (sessionId: string) => ({ sessionId, prompt: [{ type: "text", text: "Go" }] });
 
 test("JSON-RPC initialization, framing, validation and baseline text/resource-link prompts", async () => {
@@ -431,7 +436,7 @@ for (const profile of streamingProfiles)
               stream: true,
               thinking:
                 profile.id.startsWith("anthropic") || profile.id.startsWith("google")
-                  ? "adaptive"
+                  ? "budget"
                   : "high",
               maxOutputTokens: 2048,
             },
@@ -612,7 +617,7 @@ test("incomplete stream reports an RPC failure, never successful end_turn", asyn
 });
 
 test("disconnect does not wait for an unresolved options factory and late resolution starts no session", async () => {
-  const pending = deferred<BoundSessionOptions>();
+  const pending = deferred<SessionOptions>();
   let signal: AbortSignal | undefined;
   let appends = 0;
   const { options, persistence } = setup();

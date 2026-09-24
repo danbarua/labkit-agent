@@ -24,6 +24,7 @@ import {
   ToolNameSchema,
   type ActorId,
   type ChildRef,
+  type Failure,
   type Result,
   type ToolCall,
 } from "../agent/types.ts";
@@ -78,6 +79,7 @@ export type HostToolNotification = Readonly<
       }
   )
 >;
+
 export type ToolUpdateSink = (notification: HostToolNotification) => unknown;
 
 export type HostStreamNotification = Readonly<
@@ -91,10 +93,13 @@ export type HostStreamNotification = Readonly<
     error?: string;
   } & StreamDelta
 >;
+
 export type StreamUpdateSink = (notification: HostStreamNotification) => unknown;
 
 export type ExecutionContext = Readonly<{
   permissions?: "off" | "ask";
+  completionTimeoutMs?: number;
+  toolTimeoutMs?: number;
   prompt?: PromptInput;
   loadBlobs?: (
     request: PreparedModel,
@@ -115,9 +120,10 @@ export type ExecutionContext = Readonly<{
     signal: AbortSignal,
   ) => unknown | Promise<unknown>;
 }>;
+
 type Child = {
   readonly snapshot: OperationState<unknown> | BatchState;
-  cancel(): Promise<unknown>;
+  cancel(reason?: Failure): Promise<unknown>;
 };
 /** An execution adapter, not another state machine or persistence gate. */
 export function createHost(
@@ -181,6 +187,7 @@ export function createHost(
     observe?: (state: OperationState<O>) => unknown,
   ) {
     const startedAt = performance.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const attempt = async <T>(
       phase: string,
       run: () => T | Promise<T>,
@@ -208,12 +215,14 @@ export function createHost(
     const actor = createOperationActor(
       child,
       {
+        ...operation,
         input: operation.input,
         parseInput: (input) => attempt("validate_input", () => operation.parseInput(input)),
         run: (input, signal) => attempt("run", () => operation.run(input, signal), signal),
         parseOutput: (output) => attempt("validate_output", () => operation.parseOutput(output)),
       },
       (result) => {
+        if (timer !== undefined) clearTimeout(timer);
         children.delete(child.id);
         diagnostic(
           child.kind === "completion" ? "provider" : "host",
@@ -238,16 +247,42 @@ export function createHost(
       operation: child.kind,
     });
     children.set(child.id, { ref: child, actor });
+    if (operation.timeoutMs !== undefined) {
+      const timeoutMs = operation.timeoutMs;
+      timer = setTimeout(() => {
+        const reason: Failure = {
+          message: `${child.kind} operation ${child.id} exceeded its ${timeoutMs} ms deadline`,
+          classification: "timeout",
+          timeoutMs,
+          phase: actor.snapshot.status,
+          operation: {
+            id: child.id,
+            kind: child.kind,
+            sessionId: bindings.sessionId,
+            ...operation.failureContext?.operation,
+          },
+        };
+        diagnostic("host", "warning", "child.timed_out", {
+          ...reason,
+          sessionId: bindings.sessionId,
+          childId: child.id,
+        });
+        void actor.cancel(reason);
+      }, timeoutMs);
+    }
     void actor.start();
   }
-  const cancel = (child: ChildRef) => {
+  const cancel = (child: ChildRef, reason?: Failure) => {
     revoke(child.id);
     diagnostic("host", "debug", "child.cancellation_requested", {
       sessionId: bindings.sessionId,
       childId: child.id,
       operation: child.kind,
+      reason,
     });
-    void children.get(child.id)?.actor.cancel();
+    void children
+      .get(child.id)
+      ?.actor.cancel(reason ? { ...reason, classification: "cancelled" } : undefined);
   };
   const dispatch = (
     effect: Extract<ConversationCommand, { type: "turn" }>,
@@ -285,6 +320,14 @@ export function createHost(
         spawn(
           command.child,
           {
+            failureContext: {
+              operation: {
+                id: command.child.id,
+                kind: command.child.kind,
+                sessionId: bindings.sessionId,
+                turnId,
+              },
+            },
             input: null,
             parseInput: z.null().parse,
             run: async (_, signal) => {
@@ -354,6 +397,15 @@ export function createHost(
           command.child,
           {
             input: command.request,
+            timeoutMs: context.completionTimeoutMs,
+            failureContext: {
+              operation: {
+                id: command.child.id,
+                kind: "completion",
+                sessionId: bindings.sessionId,
+                turnId,
+              },
+            },
             parseInput: PreparedModelSchema.parseAsync,
             run: async (request, signal) => {
               const blobs = await context.loadBlobs?.(request, signal, true);
@@ -453,6 +505,14 @@ export function createHost(
         spawn(
           command.child,
           {
+            failureContext: {
+              operation: {
+                id: command.child.id,
+                kind: command.child.kind,
+                sessionId: bindings.sessionId,
+                turnId,
+              },
+            },
             input: null,
             parseInput: z.null().parse,
             run: (_, signal) =>
@@ -482,118 +542,143 @@ export function createHost(
         spawn(
           command.child,
           {
+            failureContext: {
+              operation: {
+                id: command.child.id,
+                kind: command.child.kind,
+                sessionId: bindings.sessionId,
+                turnId,
+              },
+            },
             input: null,
             parseInput: z.null().parse,
             run: async (_, signal) => {
               if (!requestPermission) throw new Error("Missing permission request binding");
               const decisions: PermissionDecisions[number][] = [];
               for (const call of command.completion.calls) {
-                signal.throwIfAborted();
-                const tool = tools.get(call.name)!;
-                const identity = {
-                  ...(bindings.sessionId ? { sessionId: bindings.sessionId } : {}),
-                  turnId,
-                  batchId: command.batch.id,
-                  callId: call.id,
-                  toolCallId: ref("tool", `${command.batch.id}/${call.id}`).id,
-                };
-                const display = {
-                  ...identity,
-                  sessionUpdate: "tool_call" as const,
-                  title: call.name,
-                  name: call.name,
-                  kind: tool.kind ?? "other",
-                  status: "pending" as const,
-                  rawInput: call.args,
-                };
-                grant.pending.push(display);
-                notifyTool(display);
-                signal.throwIfAborted();
-                const input = await tool.parseInput(call.args);
-                signal.throwIfAborted();
-                grant.inputs.set(call.id, input);
-                let locations: readonly ToolLocation[] | undefined;
-                if (tool.locations) {
-                  try {
-                    locations = z
-                      .array(ToolLocationSchema)
-                      .parse(tool.locations(structuredClone(input)));
-                  } catch (error) {
-                    diagnostic("host", "warning", "tool.locations_failed", {
-                      ...identity,
-                      toolName: call.name,
-                      error: diagnosticError(error),
-                      childId: identity.toolCallId,
-                    });
-                  }
-                }
-                if (locations)
-                  notifyTool({ ...identity, sessionUpdate: "tool_call_update", locations });
-                signal.throwIfAborted();
-                const permissionStartedAt = performance.now();
-                const permissionContext = {
-                  ...identity,
-                  childId: command.child.id,
-                  requestId: `${command.child.id}/${call.id}`,
-                  toolName: call.name,
-                  locations,
-                };
-                diagnostic("host", "info", "permission.waiting", {
-                  ...permissionContext,
-                  reason: "Tool execution requires user approval; batch execution is blocked",
-                });
-                const response = PermissionResponseSchema.parse(
-                  await requestPermission(
-                    freeze({
-                      ...(bindings.sessionId ? { sessionId: bindings.sessionId } : {}),
-                      turnId,
-                      requestId: `${command.child.id}/${call.id}`,
-                      toolCall: {
-                        toolCallId: identity.toolCallId,
-                        title: call.name,
-                        name: call.name,
-                        kind: tool.kind ?? "other",
-                        status: "pending",
-                        rawInput: structuredClone(call.args),
-                        ...(locations ? { locations } : {}),
-                      },
-                      options: [
-                        { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
-                        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
-                      ],
-                    }),
-                    signal,
-                  ),
-                );
-                signal.throwIfAborted();
-                const decision =
-                  response.outcome.outcome === "cancelled"
-                    ? "cancelled"
-                    : response.outcome.optionId === "allow-once"
-                      ? "allow_once"
-                      : "reject_once";
-                diagnostic("host", "info", "permission.decided", {
-                  ...permissionContext,
-                  decision,
-                  durationMs: Math.round(performance.now() - permissionStartedAt),
-                });
-                if (decision === "reject_once") {
-                  diagnostic("host", "warning", "permission.refused", {
-                    ...permissionContext,
-                    operation: "tool_execution",
-                    outcome: "blocked",
-                    decision,
-                    reasonCode: "permission_refused",
-                    reason:
-                      "User refused permission for a model-requested tool; no tools in this batch will run",
-                    toolKind: tool.kind ?? "other",
+                let phase = "validate_input";
+                try {
+                  signal.throwIfAborted();
+                  const tool = tools.get(call.name)!;
+                  const identity = {
+                    ...(bindings.sessionId ? { sessionId: bindings.sessionId } : {}),
+                    turnId,
+                    batchId: command.batch.id,
+                    callId: call.id,
+                    toolCallId: ref("tool", `${command.batch.id}/${call.id}`).id,
+                  };
+                  const display = {
+                    ...identity,
+                    sessionUpdate: "tool_call" as const,
+                    title: call.name,
+                    name: call.name,
+                    kind: tool.kind ?? "other",
+                    status: "pending" as const,
                     rawInput: call.args,
-                    blockedCallCount: command.completion.calls.length,
+                  };
+                  grant.pending.push(display);
+                  notifyTool(display);
+                  signal.throwIfAborted();
+                  const input = await tool.parseInput(call.args);
+                  signal.throwIfAborted();
+                  grant.inputs.set(call.id, input);
+                  let locations: readonly ToolLocation[] | undefined;
+                  if (tool.locations) {
+                    try {
+                      locations = z
+                        .array(ToolLocationSchema)
+                        .parse(tool.locations(structuredClone(input)));
+                    } catch (error) {
+                      diagnostic("host", "warning", "tool.locations_failed", {
+                        ...identity,
+                        toolName: call.name,
+                        error: diagnosticError(error),
+                        childId: identity.toolCallId,
+                      });
+                    }
+                  }
+                  if (locations)
+                    notifyTool({ ...identity, sessionUpdate: "tool_call_update", locations });
+                  signal.throwIfAborted();
+                  const permissionStartedAt = performance.now();
+                  const permissionContext = {
+                    ...identity,
+                    childId: command.child.id,
+                    requestId: `${command.child.id}/${call.id}`,
+                    toolName: call.name,
+                    locations,
+                  };
+                  diagnostic("host", "info", "permission.waiting", {
+                    ...permissionContext,
+                    reason: "Tool execution requires user approval; batch execution is blocked",
+                  });
+                  phase = "await_permission";
+                  const response = PermissionResponseSchema.parse(
+                    await requestPermission(
+                      freeze({
+                        ...(bindings.sessionId ? { sessionId: bindings.sessionId } : {}),
+                        turnId,
+                        requestId: `${command.child.id}/${call.id}`,
+                        toolCall: {
+                          toolCallId: identity.toolCallId,
+                          title: call.name,
+                          name: call.name,
+                          kind: tool.kind ?? "other",
+                          status: "pending",
+                          rawInput: structuredClone(call.args),
+                          ...(locations ? { locations } : {}),
+                        },
+                        options: [
+                          { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+                          { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+                        ],
+                      }),
+                      signal,
+                    ),
+                  );
+                  signal.throwIfAborted();
+                  const decision =
+                    response.outcome.outcome === "cancelled"
+                      ? "cancelled"
+                      : response.outcome.optionId === "allow-once"
+                        ? "allow_once"
+                        : "reject_once";
+                  diagnostic("host", "info", "permission.decided", {
+                    ...permissionContext,
+                    decision,
                     durationMs: Math.round(performance.now() - permissionStartedAt),
                   });
+                  if (decision === "reject_once") {
+                    diagnostic("host", "warning", "permission.refused", {
+                      ...permissionContext,
+                      operation: "tool_execution",
+                      outcome: "blocked",
+                      decision,
+                      reasonCode: "permission_refused",
+                      reason:
+                        "User refused permission for a model-requested tool; no tools in this batch will run",
+                      toolKind: tool.kind ?? "other",
+                      rawInput: call.args,
+                      blockedCallCount: command.completion.calls.length,
+                      durationMs: Math.round(performance.now() - permissionStartedAt),
+                    });
+                  }
+                  decisions.push({ callId: call.id, decision });
+                  if (decision !== "allow_once") break;
+                } catch (error) {
+                  throw failure(error, {
+                    classification: phase === "validate_input" ? "invalid_input" : "execution",
+                    phase,
+                    operation: {
+                      id: command.child.id,
+                      kind: "permission",
+                      sessionId: bindings.sessionId,
+                      turnId,
+                      callId: call.id,
+                      toolName: call.name,
+                    },
+                  });
                 }
-                decisions.push({ callId: call.id, decision });
-                if (decision !== "allow_once") break;
               }
               return decisions;
             },
@@ -656,6 +741,17 @@ export function createHost(
                 batchCommand.child,
                 {
                   input: batchCommand.call.args,
+                  timeoutMs: context.toolTimeoutMs,
+                  failureContext: {
+                    operation: {
+                      id: batchCommand.child.id,
+                      kind: "tool",
+                      sessionId: bindings.sessionId,
+                      turnId,
+                      toolName: batchCommand.call.name,
+                      callId: batchCommand.call.id,
+                    },
+                  },
                   parseInput: async (raw) => {
                     if (grant) return grant.inputs.get(batchCommand.call.id);
                     const input = await tool.parseInput(raw);
@@ -681,8 +777,7 @@ export function createHost(
                     }
                     return input;
                   },
-                  run: (input, signal) =>
-                    tool.run(input, signal, Object.freeze({ toolCallId: identity.toolCallId })),
+                  run: (input, signal) => tool.run(input, signal, Object.freeze(identity)),
                   parseOutput: (value) => {
                     const parsed = z.json().safeParse(value);
                     if (!parsed.success)
@@ -727,7 +822,7 @@ export function createHost(
                   if (next === status) return;
                   diagnostic(
                     "host",
-                    next === "failed" ? "warning" : "debug",
+                    state.status === "failed" ? "warning" : "debug",
                     "tool.status_changed",
                     {
                       ...identity,
@@ -755,7 +850,7 @@ export function createHost(
               break;
             }
             case "cancel_tool":
-              cancel(batchCommand.child);
+              cancel(batchCommand.child, batchCommand.reason);
               break;
             case "notify":
               children.delete(command.child.id);

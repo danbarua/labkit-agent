@@ -11,6 +11,7 @@ import { projectConversationPrompt } from "../agent/prompt.ts";
 import { completeResults } from "../agent/tool-batch.ts";
 import {
   ActorIdSchema,
+  failure,
   MessagesSchema,
   type AgentMessage,
   type TurnData,
@@ -19,7 +20,6 @@ import {
 import { freeze } from "../fsm/fsm.ts";
 import {
   builtinResolvers,
-  defaultPolicy,
   effectiveToolResult,
   patchPolicy,
   PolicyPatchSchema,
@@ -40,10 +40,7 @@ import {
   type CommittedBatch,
   type Revision,
 } from "./persistence.ts";
-import { projectSessionPrompt } from "./session-prompt.ts";
 import {
-  bodyHasBlobs,
-  bodyHasPermissions,
   JournalRecordSchema,
   SeedSchema,
   WireEventSchema,
@@ -57,10 +54,11 @@ import {
 } from "./types.ts";
 
 export type ToolEntry = Extract<JournalBody, { kind: "tool" }>;
+
 export type JournalState = Readonly<{
   conversation: ConversationState;
   continuations?: readonly Continuation[];
-  policy?: Policy;
+  policy: Policy;
   pendingInputs?: readonly Readonly<{
     inputId: ReturnType<typeof ActorIdSchema.parse>;
     text: string;
@@ -73,6 +71,7 @@ export type JournalState = Readonly<{
   revision: Revision;
   records: readonly JournalRecord[];
 }>;
+
 export function seedConversation(
   raw: Seed,
   resolvers: PolicyResolvers = builtinResolvers,
@@ -143,7 +142,8 @@ export function seedConversation(
     conversation,
     ...(seed.continuations?.length ? { continuations: seed.continuations } : {}),
     configuration: seed.configuration,
-    ...(seed.policy ? { policy: seed.policy, pendingInputs: [] } : {}),
+    policy: seed.policy,
+    pendingInputs: [],
     systemInputs: seed.systemInputs,
     systemVersion: seed.systemVersion,
     partial: [],
@@ -151,6 +151,7 @@ export function seedConversation(
     records: [],
   });
 }
+
 export function toSeed(state: JournalState, conversation = state.conversation): Seed {
   if (conversation.turn.status !== "idle")
     throw new Error("Initialization requires an idle boundary");
@@ -165,7 +166,7 @@ export function toSeed(state: JournalState, conversation = state.conversation): 
     systemInputs: state.systemInputs,
     systemVersion: state.systemVersion,
     configuration: state.configuration,
-    ...(state.policy ? { policy: state.policy } : {}),
+    policy: state.policy,
     ...(state.continuations?.length && conversation.origin.kind !== "compaction"
       ? {
           continuations: state.continuations.filter((entry) =>
@@ -230,6 +231,7 @@ export function wireEvent(event: ConversationEvent): WireEvent {
   }
   return WireEventSchema.parse(event);
 }
+
 export function accepts(state: JournalState, input: SessionInput): boolean {
   const c = state.conversation;
   if (input.kind === "event" && input.event.type === "child") {
@@ -257,6 +259,7 @@ export function accepts(state: JournalState, input: SessionInput): boolean {
   }
   return true;
 }
+
 function domainEvent(
   state: JournalState,
   event: WireEvent,
@@ -298,9 +301,7 @@ function domainEvent(
       )
         throw new Error("Prompt provider selection mismatch");
       const projectionInput = { context: c.context, log: c.log, turn: c.turn.turn, agent };
-      const expected = state.policy
-        ? projectPolicy(projectionInput, state.systemInputs, state.policy, resolvers)
-        : projectSessionPrompt(projectionInput, state.systemInputs);
+      const expected = projectPolicy(projectionInput, state.systemInputs, state.policy, resolvers);
       const expectedContinuations = matchingContinuations(
         expected,
         state.continuations ?? [],
@@ -411,6 +412,7 @@ function domainEvent(
     },
   };
 }
+
 function replaceLastMessage(
   decision: ReturnType<typeof decideConversation>,
   update: (message: AgentMessage) => AgentMessage,
@@ -459,6 +461,7 @@ function replaceLastMessage(
     ),
   };
 }
+
 function withUserParts(
   decision: ReturnType<typeof decideConversation>,
   text: string,
@@ -474,24 +477,19 @@ function withUserParts(
     return { ...message, parts };
   });
 }
+
 function reduce(
   state: JournalState,
   input: Exclude<JournalBody, { kind: "created" | "terminal" }>,
   resolvers: PolicyResolvers,
 ): { state: JournalState; commands: readonly ConversationCommand[] } {
   if (!accepts(state, input)) throw new Error("Stale or uncorrelated journal input");
-  if (input.kind === "upgrade" || input.kind === "policy") {
+  if (input.kind === "policy") {
     const c = state.conversation;
     if (c.turn.status !== "idle" || state.pendingInputs?.length)
       throw new Error("Policy changes require an idle boundary");
     const policy = validatePolicy(input.policy, state.configuration, resolvers);
-    if (input.kind === "upgrade") {
-      if (
-        state.policy ||
-        JSON.stringify(policy) !== JSON.stringify(defaultPolicy(state.configuration, c.allowance))
-      )
-        throw new Error("Invalid upgrade boundary");
-    } else if (
+    if (
       !state.policy ||
       JSON.stringify(policy) !==
         JSON.stringify(patchPolicy(state.policy, input.patch, state.configuration, resolvers))
@@ -613,7 +611,15 @@ function reduce(
       {
         type: "child",
         turnId: c.turnId,
-        event: { type: "failed", child: c.turn.child, error: { message: input.reason } },
+        event: {
+          type: "failed",
+          child: c.turn.child,
+          error: failure(input.reason, {
+            classification: "interrupted",
+            phase: c.turn.status,
+            operation: { ...c.turn.child, sessionId: c.sessionId, turnId: c.turnId },
+          }),
+        },
       },
     );
     return { state: { ...state, conversation: recovered.state, partial: [] }, commands: [] };
@@ -672,12 +678,15 @@ function reduce(
     commands: decision.commands,
   };
 }
+
 export function encodeRecord(record: JournalRecord): string {
   return JSON.stringify(JournalRecordSchema.parse(record));
 }
+
 export function decodeRecord(serialized: string): JournalRecord {
   return freeze(JournalRecordSchema.parse(JSON.parse(serialized)));
 }
+
 export function stage(
   state: JournalState,
   input: SessionInput,
@@ -710,17 +719,7 @@ export function stage(
         record: next.conversation.log.at(-1)!,
       });
   };
-  if (input.kind !== "policy" && bodyHasBlobs(input) && !next.policy)
-    apply({
-      kind: "upgrade",
-      policy: defaultPolicy(next.configuration, next.conversation.allowance),
-    });
   if (input.kind === "policy") {
-    if (!next.policy)
-      apply({
-        kind: "upgrade",
-        policy: defaultPolicy(next.configuration, next.conversation.allowance),
-      });
     apply({
       kind: "policy",
       patch: PolicyPatchSchema.parse(input.patch),
@@ -766,12 +765,14 @@ export function stage(
       apply({ kind: "input_cancelled", inputId: pending.inputId, reason: input.reason });
   return packageRecords(state, next, bodies, appendId, commands);
 }
+
 function partialResults(state: JournalState) {
   return state.partial.flatMap((entry) => {
     const result = effectiveToolResult(entry.result, state.policy);
     return result.kind === "succeeded" ? [{ callId: entry.callId, text: result.value }] : [];
   });
 }
+
 function packageRecords(
   previous: JournalState,
   next: JournalState,
@@ -779,30 +780,9 @@ function packageRecords(
   appendId: AppendId,
   commands: readonly ConversationCommand[] = [],
 ) {
-  let version = previous.policy?.provider ? 3 : previous.policy ? 2 : 1;
   const records = bodies.map((body, index) => {
-    const precedingVersion = version;
-    if (body.kind === "upgrade") version = 2;
-    if (body.kind === "policy" && body.policy.provider) version = 3;
-    if (body.kind === "created")
-      version = body.seed.policy?.provider ? 3 : body.seed.policy ? 2 : 1;
-    const policy =
-      body.kind === "created" ? body.seed.policy : body.kind === "policy" ? body.policy : undefined;
-    if (
-      (policy?.thinking !== undefined && policy.thinking !== "off") ||
-      (body.kind === "created" && body.seed.continuations !== undefined) ||
-      (body.kind === "event" &&
-        body.event.type === "child" &&
-        body.event.event.type === "model_settled" &&
-        body.event.event.continuation) ||
-      previous.records.at(-1)?.version === 4
-    )
-      version = 4;
-    if (bodyHasBlobs(body) || previous.records.at(-1)?.version === 5) version = 5;
-    if (bodyHasPermissions(body)) version = 6;
-    version = Math.max(version, precedingVersion, previous.records.at(-1)?.version ?? 1);
     return JournalRecordSchema.parse({
-      version,
+      version: 1,
       sessionId: previous.conversation.sessionId,
       revision: previous.revision + index + 1,
       entryId: `${appendId}/${index}`,
@@ -817,6 +797,7 @@ function packageRecords(
     commands,
   });
 }
+
 export function stageCreation(
   seed: Seed,
   appendId: AppendId,
@@ -825,6 +806,7 @@ export function stageCreation(
   const state = seedConversation(seed, resolvers);
   return packageRecords(state, state, [{ kind: "created", seed }], appendId);
 }
+
 export function replay(
   batches: readonly CommittedBatch[],
   resolvers: PolicyResolvers = builtinResolvers,
@@ -857,48 +839,10 @@ export function replay(
       if (!state) {
         if (body.kind !== "created" || body.seed.sessionId !== record.sessionId)
           throw new Error("Missing creation record");
-        if (
-          record.version !==
-          (bodyHasPermissions(body)
-            ? 6
-            : bodyHasBlobs(body)
-              ? 5
-              : body.seed.continuations !== undefined ||
-                  (body.seed.policy?.thinking !== undefined && body.seed.policy.thinking !== "off")
-                ? 4
-                : body.seed.policy?.provider
-                  ? 3
-                  : body.seed.policy
-                    ? 2
-                    : 1)
-        )
-          throw new Error("Creation version does not match policy");
         state = seedConversation(body.seed, resolvers);
       } else {
         if (record.sessionId !== state.conversation.sessionId || body.kind === "created")
           throw new Error("Invalid session identity");
-        if (
-          record.version !==
-          (state.records.at(-1)?.version === 6 || bodyHasPermissions(body)
-            ? 6
-            : state.records.at(-1)?.version === 5 || bodyHasBlobs(body)
-              ? 5
-              : state.records.at(-1)?.version === 4 ||
-                  (body.kind === "policy" &&
-                    body.policy.thinking !== undefined &&
-                    body.policy.thinking !== "off") ||
-                  (body.kind === "event" &&
-                    body.event.type === "child" &&
-                    body.event.event.type === "model_settled" &&
-                    body.event.event.continuation)
-                ? 4
-                : state.policy?.provider || (body.kind === "policy" && body.policy.provider)
-                  ? 3
-                  : state.policy || body.kind === "upgrade"
-                    ? 2
-                    : 1)
-        )
-          throw new Error("Invalid journal upgrade boundary");
         if (expectedTerminal) {
           if (
             body.kind !== "terminal" ||
@@ -922,6 +866,7 @@ export function replay(
   if (!state) throw new Error("Empty journal");
   return freeze(state);
 }
+
 export function journalJSONL(state: JournalState): string {
   return `${state.records.map(encodeRecord).join("\n")}\n`;
 }

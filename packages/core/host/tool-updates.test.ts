@@ -63,6 +63,7 @@ function setup(tool: Tool, sink?: ToolUpdateSink) {
   }
   return { host, updates, outcomes, turns, start, cancel };
 }
+
 const statuses = (updates: HostToolNotification[]) =>
   updates.flatMap((update) => (update.status ? [update.status] : []));
 
@@ -81,7 +82,7 @@ test("tool locations use parsed input and arrive before run; display completion 
       return [{ path, line: args.line }];
     },
     run: (args, _signal, context) => {
-      expect(context).toEqual({ toolCallId: updates[0]!.toolCallId });
+      expect(context).toMatchObject({ toolCallId: updates[0]!.toolCallId });
       expect(Object.isFrozen(context)).toBe(true);
       order.push("run");
       expect(args).toEqual({ path: "/tmp/DESIGN.md", line: 4 });

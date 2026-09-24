@@ -20,7 +20,8 @@ bun run packages/core/session/fixture-runner.ts
 bun run packages/core/session/fixture-runner.ts --v2
 ```
 
-Start with `.session-artifacts/latest/README.md` or `.session-artifacts/latest-v2/README.md`.
+The inspector prints a unique run directory under `.session-artifacts/latest/`. Open its README.md.
+The default runs both scenario groups; --v2 selects the policy group.
 The runner fails if any scenario or assertion fails, after writing its evidence. A **PASS** for a
 refusal or failed-append example means the expected refusal/failure was observed; it does not
 claim the user turn completed successfully.
@@ -64,9 +65,8 @@ their own descriptive agent and tool names without those controls.
 - `evidence/`: exact requests, outputs, snapshots, journals, assertion values, and ID mappings.
   Its README defines every file and the pre-cleanup capture boundary.
 
-The original JSON baselines remain migration/regression evidence. The runner compares requests,
-results and durable states (which include journal records); it ignores their old `inputs`
-metadata. New introductory examples use named assertions. Human formatting has focused tests
+The JSON baselines describe the current schema. The runner compares requests,
+results and durable states (including journal records). Obsolete input-interpreter metadata was removed. New introductory examples use named assertions. Human formatting has focused tests
 rather than a second copy of every scenario as approved Markdown.
 
 When adding a scenario, explain the guarantee, show the public calls, assert the meaningful
