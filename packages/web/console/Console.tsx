@@ -182,6 +182,7 @@ export function Console() {
     return [...settled, ...live];
   }, [view]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll triggers, not reads
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
   }, [draft.text, draft.thinking, messages.length, view?.phase, permission?.requestId]);
