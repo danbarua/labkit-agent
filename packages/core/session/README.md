@@ -116,35 +116,50 @@ inspect that request and restore the same persisted child ID rather than request
 No cross-stream transaction or atomic parent/child publication is claimed. A branch requested during
 an active turn waits for its terminal boundary; queued next input is excluded from that capture.
 
-## Inspection artifacts
+## Executable examples and inspection reports
+
+Start with [the public-API usage examples](fixtures/usage.ts): configure a session, wait for
+admission and settlement, restore history, and approve or deny a typed tool. The session API
+calls are in the scenario body. Helpers capture evidence and supply deterministic dependencies;
+they do not interpret a second operation language. See [the example guide](fixtures/README.md)
+for the remaining scenarios, simulated boundaries, and assertion conventions.
 
 ```sh
+bun test packages/core/session/session-fixtures.test.ts -t usage-
 bun run packages/core/session/fixture-runner.ts
-bun run packages/core/session/fixture-runner.ts --update # explicitly replace approved baselines
-bun test packages/core/session
-bun test packages/core
-bunx tsc --noEmit
-
-diff -u packages/core/session/fixtures/expected.json .session-artifacts/latest/actual.json
-diff -u packages/core/session/fixtures/expected.md .session-artifacts/latest/actual.md
-cat .session-artifacts/latest/interrupted-recovery/journal-restored.jsonl
-cat .session-artifacts/latest/successive-compaction-empty-reset/transcript.md
+bun run packages/core/session/fixture-runner.ts --v2
+cat .session-artifacts/latest-v2/README.md
+cat .session-artifacts/latest-v2/usage-approve-tool/README.md
+cat .session-artifacts/latest-v2/usage-approve-tool/transcript.md
+cat .session-artifacts/latest/interrupted-recovery/evidence/journal-restored.jsonl
 ```
 
-The runner reads declarative scenarios, injects deterministic identities, and controls deferred work.
-Each scenario emits its inputs, codec-produced journal JSONL for each branch, actual projected requests,
-command/terminal outcomes, durable states, and readable transcripts. Failed scenarios retain partial
-traces and an error file. A mismatch also leaves actual aggregate outputs for diffing. Normal commands
-never update expectations. The initial checked-in baselines are generated implementation evidence for
-review; intentional behavior changes require the explicit update command and review of both diffs.
+Each run has an index. Each scenario has a `README.md` explaining its purpose, environment,
+actions and executed checks; a conversation `transcript.md`; actual runtime `diagnostics.log`
+and `diagnostics.jsonl`; and an `evidence/` directory explaining its journals, requests,
+receipts, snapshots and assertion values. The report links back to executable source.
+A scenario can pass while deliberately exercising a failed turn: its named assertions explain
+why that outcome is expected. An unexpected failure retains the partial report, error cause,
+stack, journal and cleanup diagnostics before failing the test.
 
-No ordering, tool correlation, lineage, or outcome fields are normalized away. Advertised tool
-order is part of the captured provider request and must match the ordered policy tool list on
-replay; transports must not rewrite persisted request records. Tests compare repeated
-runs byte-for-byte. Transport settings and credentials are excluded through explicit DTO projection;
-the fixture suite checks a sentinel API key is absent. As with any transcript, caller-supplied message
-and tool-result content is recorded verbatim and should not contain secrets intended to stay private.
-Generated artifacts are ignored; approved scenario/baseline files stay tracked.
+Snapshots and transcripts describe the end of the scenario body, **before cleanup**. Logs also
+include cleanup. Reopened views with identical durable evidence share one transcript; recovery
+and different captured revisions are labeled explicitly. Agent labels explain stable fixture
+IDs (`a` is the primary assistant; `b` is the handoff specialist). The introductory examples use
+`reviewer` directly.
+
+The original 17 v1 and 22 v2 cases retain exact comparisons of requests, receipts/results and
+states, including embedded journal records, against the existing JSON baselines. Historical
+`inputs` in those baselines are no longer executable instructions or compared evidence. Three
+additional v2 usage examples use explicit behavioral assertions. Presentation is covered by
+renderer/report tests, separately from behavioral baselines. Repeated runs must produce identical
+machine evidence and transcripts; run IDs and timestamps appear only in diagnostic/run metadata.
+
+For an intentional behavioral change only, `--update` replaces structured baselines; review the
+diff. Normal runs never update them. The obsolete Markdown baselines are no longer used.
+No ordering, correlation, lineage or outcome fields are normalized away. Transport settings and
+credentials are excluded from captured provider requests; a sentinel-key assertion remains.
+Provider payload fixtures are data, while TypeScript scenarios are the executable specification.
 
 ## Shared execution and public events
 
@@ -194,7 +209,7 @@ bun run packages/core/session/fixture-runner.ts --v2 --update
 bun test packages/core/host packages/core/policy packages/core/environment packages/core/session
 ```
 
-`--v2` compares `fixtures/expected-v2.json` and `fixtures/expected-v2.md`, emitting under
+`--v2` compares behavioral evidence against `fixtures/expected-v2.json`, emitting under
 `.session-artifacts/latest-v2`. Neither command without `--update` changes an approved baseline.
 
 ## Journal v4 continuations
@@ -327,7 +342,7 @@ restore. Run it with debug capture to inspect what an operator will see, not jus
 Both fixture commands print their artifact directory before executing scenarios. The defaults are
 `.session-artifacts/latest` and `.session-artifacts/latest-v2`. Each scenario directory contains
 `diagnostics.jsonl` (structured debug-and-higher runtime records) and `diagnostics.log` (readable
-records), beside `journal-<alias>.jsonl`. `session-aliases.json` maps each real session ID to the
+records), with journals under `evidence/journal-<alias>.jsonl`. `evidence/session-aliases.json` maps each real session ID to the
 journal aliases, including restored sessions. Root `run.json` identifies the run; each diagnostic
 carries that run ID, scenario name and fixture version.
 

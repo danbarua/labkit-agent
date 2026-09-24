@@ -1,487 +1,340 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { resolve } from "node:path";
+import { rm } from "node:fs/promises";
+import { relative, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { configure, getConfig } from "@logtape/logtape";
-import { format } from "prettier";
 import { z } from "zod";
 
-import { BlobInputMetaSchema, type BlobRef } from "../agent/content.ts";
 import { withFixtureDiagnostics } from "../logging/fixture-capture.ts";
 import { diagnostic, diagnosticError } from "../logging/index.ts";
-import { PolicyPatchSchema } from "../policy/policy.ts";
-import {
-  anthropicMessagesV2,
-  anthropicMessagesV3,
-  googleGenerate,
-  googleGenerateV2,
-  googleGenerateV3,
-  openaiChat,
-  openaiChatV2,
-  openaiResponsesV2,
-  openaiResponsesV3,
-} from "../providers/index.ts";
-import { journalJSONL, journalMarkdown } from "./session-log.ts";
-import type { LegacySessionOptions, SessionOptions } from "./session-runtime.ts";
-import {
-  createSession,
-  defineTool,
-  restoreSession,
-  type SessionRuntime,
-  type TerminalResult,
-} from "./session-runtime.ts";
-import {
-  deferred,
-  deterministicIds,
-  lostAcknowledgement,
-  testOptions,
-  until,
-} from "./test-support.ts";
-import { createMemoryBacking, createMemoryPersistence } from "./testing/memory-persistence.ts";
-import { BodySchema } from "./types.ts";
+import { scenarios } from "./fixtures/index.ts";
+import { fixtureEnvironment, type Scenario } from "./fixtures/support.ts";
+import { journalJSONL, journalMarkdown, type JournalState } from "./session-log.ts";
 
-const StepSchema = z.object({
-  op: z.enum([
-    "input",
-    "system",
-    "policy",
-    "fork",
-    "compact",
-    "invalid-context",
-    "restore",
-    "close",
-    "abort",
-    "release",
-    "requests",
-    "permissions",
-    "partial",
-    "settle",
-    "join",
-  ]),
-  session: z.string().default("root"),
-  target: z.string().optional(),
-  text: z.string().optional(),
-  attachments: z.array(z.string()).optional(),
-  inputs: z.array(z.string()).optional(),
-  context: z.unknown().optional(),
-  patch: PolicyPatchSchema.optional(),
-  wait: z.boolean().default(true),
-  count: z.number().int().nonnegative().optional(),
-  name: z.string().optional(),
-  value: z.unknown().optional(),
-  expected: z.string().optional(),
-});
-const ScenarioSchema = z.object({
-  format: z.literal(2).optional(),
-  providerResponses: z.literal(true).optional(),
-  permissions: z.array(z.unknown()).optional(),
-  blobs: z.record(z.string(), BlobInputMetaSchema.extend({ text: z.string() })).optional(),
-  policy: PolicyPatchSchema.optional(),
-  name: z.string().regex(/^[a-z0-9-]+$/),
-  allowance: z.number().int().nonnegative().default(4),
-  fault: z.enum(["reject-input", "lose-input", "lose-recovery"]).optional(),
-  completions: z.array(z.unknown()),
-  steps: z.array(StepSchema),
-});
-type Scenario = z.infer<typeof ScenarioSchema>;
+export { scenarios } from "./fixtures/index.ts";
 const fixtureRoot = new URL("./fixtures/", import.meta.url);
 const defaultArtifacts = new URL("../../../.session-artifacts/latest/", import.meta.url).pathname;
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
+const baselineSchema = z.array(
+  z
+    .object({
+      name: z.string(),
+      requests: z.array(z.unknown()),
+      results: z.array(z.unknown()),
+      states: z.record(z.string(), z.unknown()),
+    })
+    .passthrough(),
+);
+const labels = { a: "Primary assistant", b: "Handoff specialist" };
 
-async function runScenario(scenario: Scenario, directory: string) {
-  const backing = createMemoryBacking();
-  const base = createMemoryPersistence(backing);
-  const matches = (records: readonly string[], kind: "input" | "recovery") =>
-    records.some((serialized) => {
-      const body = BodySchema.parse(JSON.parse(serialized).body);
-      return kind === "recovery"
-        ? body.kind === "recovery"
-        : body.kind === "event" && body.event.type === "user";
-    });
-  const port =
-    scenario.fault === "lose-input" || scenario.fault === "lose-recovery"
-      ? lostAcknowledgement(base, (records) =>
-          matches(records, scenario.fault === "lose-recovery" ? "recovery" : "input"),
-        )
-      : scenario.fault === "reject-input"
-        ? {
-            ...base,
-            append: (request: Parameters<typeof base.append>[0], signal: AbortSignal) =>
-              matches(request.records, "input")
-                ? Promise.resolve({
-                    kind: "rejected" as const,
-                    message: "Scripted rejected append",
-                  })
-                : base.append(request, signal),
-          }
-        : base;
-  const requests: unknown[] = [];
-  const results: unknown[] = [];
-  const sessions = new Map<string, SessionRuntime>();
-  const branches = new Map<string, Promise<SessionRuntime>>();
-  const active = new Map<string, Promise<TerminalResult>>();
-  const deferredWork = new Map<
-    string,
-    { promise: Promise<unknown>; resolve: (value: unknown) => void; value?: unknown }
-  >();
-  let completionIndex = 0;
-  let permissionIndex = 0;
-  const options = testOptions({
-    persistence: port,
-    id: deterministicIds(),
-    steps: scenario.allowance,
-    tools: new Map([
-      [
-        "echo",
-        defineTool({
-          input: z.object({ text: z.string() }),
-          run: ({ text }) => {
-            if (text.startsWith("error:")) throw new Error(text.slice(6));
-            if (!text.startsWith("defer:")) return text;
-            const work = deferred<unknown>();
-            deferredWork.set(text.slice(6), work);
-            return work.promise;
-          },
-        }),
-      ],
-    ]),
-    complete(request) {
-      requests.push({ model: request.model, messages: request.messages, tools: request.tools });
-      const outcome = scenario.completions[completionIndex++];
-      if (outcome === undefined) throw new Error("Fixture completion script exhausted");
-      if (typeof outcome === "object" && outcome !== null && "error" in outcome)
-        throw new Error(String(outcome.error));
-      if (typeof outcome === "object" && outcome !== null && "defer" in outcome) {
-        const work = deferred<unknown>();
-        deferredWork.set(String(outcome.defer), {
-          ...work,
-          value: "value" in outcome ? outcome.value : undefined,
-        });
-        return work.promise;
-      }
-      return outcome;
-    },
-  });
-  const bind = (legacy: LegacySessionOptions): SessionOptions =>
-    scenario.format === 2
-      ? {
-          persistence: legacy.persistence,
-          configuration: {
-            agent: legacy.agent,
-            agents: legacy.agents,
-            steps: legacy.steps,
-            policy: scenario.policy,
-          },
-          bindings: {
-            tools: legacy.tools,
-            id: legacy.id,
-            ...(scenario.permissions
-              ? {
-                  requestPermission: (request: import("../host/ports.ts").PermissionRequest) => {
-                    results.push({ permission: request });
-                    const response = scenario.permissions![permissionIndex++];
-                    if (response === undefined)
-                      throw new Error("Fixture permission script exhausted");
-                    if (typeof response === "object" && response !== null && "defer" in response) {
-                      const work = deferred<unknown>();
-                      deferredWork.set(String(response.defer), work);
-                      return work.promise;
-                    }
-                    return response;
-                  },
-                }
-              : {}),
-            ...(scenario.providerResponses
-              ? {
-                  providers: new Map(
-                    [
-                      anthropicMessagesV2,
-                      anthropicMessagesV3,
-                      googleGenerate,
-                      googleGenerateV2,
-                      googleGenerateV3,
-                      openaiChat,
-                      openaiChatV2,
-                      openaiResponsesV2,
-                      openaiResponsesV3,
-                    ].map((profile) => [
-                      profile.id,
-                      {
-                        profile,
-                        transport: {
-                          baseUrl: "https://example.invalid",
-                          fetch: (async (_url, init) => {
-                            requests.push(JSON.parse(String(init?.body)));
-                            const response = scenario.completions[completionIndex++];
-                            if (response === undefined)
-                              throw new Error("Fixture provider script exhausted");
-                            if (
-                              typeof response === "object" &&
-                              response !== null &&
-                              "sse" in response
-                            )
-                              return new Response(z.string().parse(response.sse), {
-                                headers: { "content-type": "text/event-stream" },
-                              });
-                            return Response.json(response);
-                          }) as typeof fetch,
-                        },
-                      },
-                    ]),
-                  ),
-                }
-              : {
-                  complete: (request, signal) =>
-                    legacy.complete!({
-                      ...request,
-                      baseUrl: legacy.baseUrl,
-                      apiKey: legacy.apiKey,
-                      signal,
-                    }),
-                }),
-          },
-        }
-      : legacy;
-  let error: string | undefined;
-  try {
-    sessions.set("root", await createSession(bind(options)));
-    const attachments = new Map<string, BlobRef>();
-    for (const [name, blob] of Object.entries(scenario.blobs ?? {})) {
-      const { text, ...meta } = blob;
-      attachments.set(
-        name,
-        await port.putBlob(
-          sessions.get("root")!.snapshot.durable.conversation.sessionId,
-          new TextEncoder().encode(text),
-          meta,
-          new AbortController().signal,
-        ),
-      );
-    }
-    for (const step of scenario.steps) {
-      const session = sessions.get(step.session);
-      if (!session && step.op !== "join") throw new Error(`Unknown session ${step.session}`);
-      switch (step.op) {
-        case "input": {
-          const turn = session!.input(
-            step.attachments
-              ? {
-                  text: step.text ?? "",
-                  attachments: step.attachments.map((name) => {
-                    const ref = attachments.get(name);
-                    if (!ref) throw new Error(`Unknown fixture attachment ${name}`);
-                    return ref;
-                  }),
-                }
-              : (step.text ?? ""),
-          );
-          active.set(step.session, turn.settled);
-          results.push({ op: step.op, session: step.session, accepted: await turn.accepted });
-          if (step.wait) results.push({ session: step.session, terminal: await turn.settled });
-          break;
-        }
-        case "policy":
-        case "system": {
-          const receipt =
-            step.op === "policy"
-              ? await session!.updatePolicy(step.patch ?? {})
-              : await session!.updateSystem(step.inputs ?? []);
-          if (receipt.kind !== (step.expected ?? "accepted"))
-            throw new Error(`Unexpected system receipt: ${receipt.kind}`);
-          results.push({ op: step.op, session: step.session, receipt });
-          break;
-        }
-        case "fork":
-        case "compact": {
-          if (!step.target) throw new Error("Branch needs target alias");
-          const branch = step.op === "fork" ? session!.fork() : session!.compact(step.context);
-          branches.set(step.target, branch);
-          if (step.wait) sessions.set(step.target, await branch);
-          else {
-            // Wait for durable admission of the fork request, without waiting for the turn.
-            await until(() => session!.snapshot.durable.conversation.pending.length > 0);
-          }
-          break;
-        }
-        case "join": {
-          const branch = branches.get(step.session);
-          if (!branch) throw new Error("No queued branch");
-          sessions.set(step.session, await branch);
-          break;
-        }
-        case "invalid-context": {
-          let rejected = false;
-          try {
-            await session!.compact(step.context);
-          } catch {
-            rejected = true;
-          }
-          if (!rejected) throw new Error("Invalid context was accepted");
-          results.push({ op: step.op, rejected });
-          break;
-        }
-        case "restore": {
-          if (!step.target) throw new Error("Restore needs target alias");
-          const restored = await restoreSession(
-            bind({
-              ...options,
-              persistence:
-                scenario.fault === "lose-recovery" ? port : createMemoryPersistence(backing),
-              complete: () => {
-                throw new Error("Restoration invoked completion");
-              },
-            }),
-            session!.snapshot.durable.conversation.sessionId,
-          );
-          sessions.set(step.target, restored);
-          break;
-        }
-        case "close":
-          await session!.close();
-          break;
-        case "abort":
-          await session!.fire({ type: "abort" });
-          results.push({ session: step.session, terminal: await active.get(step.session) });
-          break;
-        case "settle":
-          results.push({ session: step.session, terminal: await active.get(step.session) });
-          break;
-        case "permissions":
-          await until(() => permissionIndex === step.count);
-          break;
-        case "requests":
-          await until(() => requests.length === step.count);
-          break;
-        case "partial":
-          await until(() => session!.snapshot.durable.partial.length === step.count);
-          break;
-        case "release": {
-          const work = deferredWork.get(step.name ?? "");
-          if (!work) throw new Error("Deferred work not started");
-          work.resolve(step.value ?? work.value);
-          await work.promise;
-          break;
-        }
-      }
-    }
-  } catch (caught) {
-    diagnostic("fixture", "error", "scenario.failed", {
-      scenario: scenario.name,
-      error: diagnosticError(caught),
-    });
-    error = caught instanceof Error ? caught.message : String(caught);
-  }
-  const states = Object.fromEntries(
-    [...sessions].map(([alias, session]) => [alias, session.snapshot.durable]),
-  );
-  const transcript = [...sessions]
-    .map(
-      ([alias, session]) =>
-        `# ${scenario.name}: ${alias}\n\n${journalMarkdown(session.snapshot.durable)}`,
-    )
-    .join("\n");
-  // Emit partial evidence even if scenario execution or the subsequent baseline comparison fails.
-  await Bun.write(`${directory}/inputs.json`, json(scenario));
-  await Bun.write(`${directory}/requests.json`, json(requests));
-  await Bun.write(`${directory}/states.json`, json(states));
-  await Bun.write(`${directory}/outputs.json`, json(results));
-  await Bun.write(`${directory}/transcript.md`, transcript);
-  const aliases: Record<string, string[]> = {};
-  for (const [alias, session] of sessions) {
-    const sessionId = session.snapshot.durable.conversation.sessionId;
-    aliases[sessionId] ??= [];
-    aliases[sessionId].push(alias);
-  }
-  await Bun.write(`${directory}/session-aliases.json`, json(aliases));
-  for (const [alias, session] of sessions)
-    await Bun.write(`${directory}/journal-${alias}.jsonl`, journalJSONL(session.snapshot.durable));
-  if (error) await Bun.write(`${directory}/error.json`, json({ error }));
-  const output = {
-    name: scenario.name,
-    inputs: scenario,
-    requests,
-    results,
-    states,
-    ...(error ? { error } : {}),
-  };
-  for (const session of sessions.values()) await session.close();
-  return { output, transcript, error };
-}
-export async function runFixtures(
-  options: { update?: boolean; artifactDirectory?: string; version?: 1 | 2 } = {},
-) {
-  // Standalone fixture runs need an async-local logging boundary. Test autoload already owns one.
+async function logging() {
   if (!getConfig())
     await configure({
       contextLocalStorage: new AsyncLocalStorage(),
       sinks: {},
       loggers: [{ category: ["logtape", "meta"], lowestLevel: "warning", sinks: [] }],
     });
+}
+
+/** JSON evidence deliberately has no undefined properties, exactly like the frozen baselines. */
+function evidence(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function difference(actual: unknown, expected: unknown, path = "$"): unknown {
+  if (isDeepStrictEqual(actual, expected)) return null;
+  if (
+    actual !== null &&
+    expected !== null &&
+    typeof actual === "object" &&
+    typeof expected === "object"
+  ) {
+    const a = actual as Record<string, unknown>;
+    const b = expected as Record<string, unknown>;
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      const mismatch = difference(a[key], b[key], `${path}.${key}`);
+      if (mismatch !== null) return mismatch;
+    }
+  }
+  return { path, expected, actual };
+}
+function display(value: unknown): string {
+  if (Array.isArray(value)) {
+    if (value.every((item) => typeof item === "string"))
+      return value.length ? value.join(", ") : "none";
+    return `${value.length} structured entries (values in assertions.json)`;
+  }
+  if (value !== null && typeof value === "object")
+    return "structured value (details in assertions.json)";
+  return value === null ? "no difference" : String(value);
+}
+function transcript(states: Record<string, JournalState>) {
+  const seen = new Map<string, { alias: string; state: JournalState }>();
+  return Object.entries(states)
+    .map(([alias, state]) => {
+      const id = state.conversation.sessionId;
+      const previous = seen.get(id);
+      if (previous && isDeepStrictEqual(evidence(state), evidence(previous.state)))
+        return `# Restored view: ${alias}\n\nSame session ID and durable state as **${previous.alias}**. The conversation is shown once above. Restore assertions in [the scenario report](README.md) check whether provider work occurred.\n`;
+      seen.set(id, { alias, state });
+      return `# View: ${alias}\n\n${previous ? `Another captured view of **${previous.alias}** (revision ${previous.state.revision} → ${state.revision}). Differences are shown below; recovery is identified only when a recovery record exists.\n\n` : ""}${journalMarkdown(state, { agentLabels: labels })}`;
+    })
+    .join("\n---\n\n");
+}
+
+async function executeScenario(
+  scenario: Scenario,
+  directory: string,
+  runId: string,
+  compare: boolean,
+) {
+  // Remove only this generated scenario directory; never leave an old error file after a passing run.
+  await rm(directory, { recursive: true, force: true });
+  return withFixtureDiagnostics(
+    directory,
+    { runId, scenario: scenario.name, fixtureVersion: scenario.version },
+    async () => {
+      const f = fixtureEnvironment(scenario.dependencies);
+      let failure: ReturnType<typeof diagnosticError> | undefined;
+      let states: Record<string, JournalState> = {};
+      try {
+        await scenario.run(f);
+        states = Object.fromEntries(
+          [...f.sessions].map(([alias, session]) => [alias, session.snapshot.durable]),
+        );
+        if (compare && scenario.baseline !== "assertions") {
+          const suffix = scenario.version === 2 ? "-v2" : "";
+          const baseline = baselineSchema
+            .parse(await Bun.file(new URL(`expected${suffix}.json`, fixtureRoot)).json())
+            .find((item) => item.name === scenario.name);
+          if (!baseline) throw new Error(`Missing behavioral baseline for ${scenario.name}`);
+          for (const [name, actual] of Object.entries({
+            requests: f.requests,
+            results: f.results,
+            states,
+          })) {
+            // States contain the journal records, so record ordering and bytes are included in this check.
+            f.check(
+              `Exact ${name} match the approved behavioral evidence (see evidence/${name === "results" ? "outputs" : name}.json)`,
+              difference(evidence(actual), baseline[name]),
+              null,
+            );
+          }
+          const expectedJournals = Object.fromEntries(
+            Object.entries(baseline.states).map(([alias, state]) => {
+              const { records } = z.object({ records: z.array(z.unknown()) }).parse(state);
+              return [alias, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`];
+            }),
+          );
+          f.check(
+            "Encoded journal bytes match the approved records",
+            difference(
+              Object.fromEntries(
+                Object.entries(states).map(([alias, state]) => [alias, journalJSONL(state)]),
+              ),
+              expectedJournals,
+            ),
+            null,
+          );
+        }
+        f.check(
+          "Captured evidence excludes the fixture API key",
+          json({ requests: f.requests, results: f.results, states }).includes("SECRET_SENTINEL"),
+          false,
+        );
+      } catch (error) {
+        failure = diagnosticError(error);
+        diagnostic("fixture", "error", "scenario.failed", { error: failure });
+      } finally {
+        // Capture the state under test before cleanup; logs deliberately include cleanup as well.
+        states = Object.fromEntries(
+          [...f.sessions].map(([alias, session]) => [alias, session.snapshot.durable]),
+        );
+        for (const [alias, session] of f.sessions) {
+          try {
+            await session.close();
+          } catch (error) {
+            const cleanupError = diagnosticError(error);
+            diagnostic("fixture", "error", "scenario.cleanup.failed", {
+              alias,
+              error: cleanupError,
+            });
+            failure = failure
+              ? diagnosticError(
+                  new AggregateError([failure, cleanupError], "Scenario and cleanup failed"),
+                )
+              : cleanupError;
+          }
+        }
+      }
+      const output = { name: scenario.name, requests: f.requests, results: f.results, states };
+      const aliases: Record<string, string[]> = {};
+      for (const [alias, state] of Object.entries(states)) {
+        aliases[state.conversation.sessionId] ??= [];
+        aliases[state.conversation.sessionId]!.push(alias);
+        await Bun.write(`${directory}/evidence/journal-${alias}.jsonl`, journalJSONL(state));
+      }
+      await Bun.write(`${directory}/evidence/requests.json`, json(f.requests));
+      await Bun.write(`${directory}/evidence/outputs.json`, json(f.results));
+      await Bun.write(`${directory}/evidence/states.json`, json(states));
+      await Bun.write(`${directory}/evidence/session-aliases.json`, json(aliases));
+      await Bun.write(
+        `${directory}/evidence/assertions.json`,
+        json(f.observations.filter((o) => o.kind === "assertion")),
+      );
+      if (failure) await Bun.write(`${directory}/evidence/error.json`, json(failure));
+      await Bun.write(
+        `${directory}/evidence/README.md`,
+        `# Exact execution evidence\n\nThese files support assertions and detailed investigation. Start with [the scenario report](../README.md) for the story.\n\n- journal-*.jsonl: authoritative committed records, one captured view per session alias.\n- requests.json: actual requests sent to the simulated provider, in order.\n- outputs.json: actual admission receipts, permission requests and terminal results.\n- states.json: durable snapshots **before cleanup**, including embedded journal records.\n- session-aliases.json: joins readable aliases to session IDs in diagnostics.\n- assertions.json: executed checks with expected and observed values.\n- error.json: failure details, when this run failed.\n\nSnapshots describe the end of the scenario body. Diagnostics also include subsequent cleanup. Restore aliases can refer to the same session ID. No blob bytes are placed in the journal.\n`,
+      );
+      const rendered = transcript(states);
+      await Bun.write(`${directory}/transcript.md`, rendered);
+      const source = scenario.source.split("#")[0]!;
+      const sourceLink = relative(resolve(directory), resolve(source))
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/");
+      const report = [
+        `# ${scenario.name}`,
+        "",
+        `**${failure ? "FAIL" : "PASS"}** · suite v${scenario.version} · ${scenario.group}`,
+        "",
+        scenario.purpose,
+        "",
+        "PASS means the scenario satisfied its assertions. A deliberately refused, cancelled, or failed user turn can be the expected result.",
+        "",
+        `Executable example: [${scenario.source}](${sourceLink}).`,
+        "",
+        "## Test environment",
+        "",
+        scenario.environment ??
+          "The real session runtime runs against process-local memory persistence and scripted provider responses. IDs are deterministic. No live provider or disk crash durability is tested. Primary assistant = agent `a`; handoff specialist = agent `b`. The echo tool returns its input; scripted deferred/error inputs exercise cancellation and failure.",
+        "",
+        `Storage fault: ${scenario.dependencies.fault ?? "none"}. Provider: ${scenario.dependencies.policy?.provider ?? "injected completion port"}.`,
+        "",
+        "## Execution and checks",
+        "",
+        ...f.observations.flatMap((o, index) => [
+          `${index + 1}. ${o.kind === "action" ? o.description : `**${o.passed ? "PASS" : "FAIL"}** — ${o.description}. Expected: ${display(o.expected)}; observed: ${display(o.actual)}. [Values](evidence/assertions.json).`}`,
+          "",
+        ]),
+        ...(failure
+          ? [
+              "## Failure",
+              "",
+              "The scenario did not satisfy its checks. Full cause and stack: [error.json](evidence/error.json).",
+              "",
+              "```json",
+              json(failure).trimEnd(),
+              "```",
+              "",
+            ]
+          : []),
+        "## Read next",
+        "",
+        "- [Conversation transcript](transcript.md)",
+        "- [Runtime diagnostics](diagnostics.log) / [structured diagnostics](diagnostics.jsonl)",
+        "- [Exact evidence and file meanings](evidence/README.md)",
+        "",
+        "Snapshots and transcripts were captured before cleanup. Diagnostics include cleanup of every tracked runtime; closure after a completed scenario is not an additional user turn.",
+        "",
+      ].join("\n");
+      await Bun.write(`${directory}/README.md`, report);
+      return { output, transcript: rendered, report, failure };
+    },
+  );
+}
+
+/** Run one named example, retaining evidence before reporting an assertion failure. */
+export async function runFixture(
+  scenario: Scenario,
+  options: { artifactDirectory: string; compareBaseline?: boolean },
+) {
+  await logging();
+  const result = await executeScenario(
+    scenario,
+    options.artifactDirectory,
+    crypto.randomUUID(),
+    options.compareBaseline ?? true,
+  );
+  if (result.failure)
+    throw new Error(
+      `Scenario ${scenario.name} failed. Report: ${resolve(options.artifactDirectory)}/README.md\n${JSON.stringify(result.failure)}`,
+    );
+  return result;
+}
+
+export async function runFixtures(
+  options: { update?: boolean; artifactDirectory?: string; version?: 1 | 2 } = {},
+) {
+  await logging();
+  const version = options.version ?? 1;
+  const selected = scenarios.filter((scenario) => scenario.version === version);
   const runId = crypto.randomUUID();
-  const suffix = options.version === 2 ? "-v2" : "";
-  const scenarios = z
-    .array(ScenarioSchema)
-    .parse(await Bun.file(new URL(`scenarios${suffix}.json`, fixtureRoot)).json());
-  const outputs = [];
-  const transcripts = [];
-  const failures = [];
   const directory =
     options.artifactDirectory ??
-    (options.version === 2 ? `${defaultArtifacts.replace(/\/$/, "")}-v2` : defaultArtifacts);
+    (version === 2 ? `${defaultArtifacts.replace(/\/$/, "")}-v2` : defaultArtifacts);
   await Bun.write(
     `${directory}/run.json`,
     json({
       runId,
-      fixtureVersion: options.version ?? 1,
+      fixtureVersion: version,
       directory: resolve(directory),
       startedAt: new Date().toISOString(),
     }),
   );
   if (import.meta.main)
-    console.log(
-      `Session fixture journals and runtime diagnostics: ${resolve(directory)} (each scenario: diagnostics.log, diagnostics.jsonl, session-aliases.json)`,
+    console.log(`Session examples and diagnostics: ${resolve(directory)}/README.md`);
+  const results: Awaited<ReturnType<typeof executeScenario>>[] = [];
+  for (const scenario of selected)
+    results.push(
+      await executeScenario(scenario, `${directory}/${scenario.name}`, runId, !options.update),
     );
-  for (const scenario of scenarios) {
-    const scenarioDirectory = `${directory}/${scenario.name}`;
-    const result = await withFixtureDiagnostics(
-      scenarioDirectory,
-      {
-        runId,
-        scenario: scenario.name,
-        fixtureVersion: options.version ?? 1,
-      },
-      () => runScenario(scenario, scenarioDirectory),
-    );
-    outputs.push(result.output);
-    transcripts.push(result.transcript);
-    if (result.error) failures.push(`${scenario.name}: ${result.error}`);
-  }
-  // Match the repository formatter without changing approved content or ordering.
-  const structured = await format(json(outputs), { parser: "json", printWidth: 100, tabWidth: 2 });
-  const markdown = await format(transcripts.join("\n---\n\n"), {
-    parser: "markdown",
-    printWidth: 100,
-    tabWidth: 2,
-  });
+  const structured = json(results.map((result) => result.output));
+  const markdown = results.map((result) => result.transcript).join("\n---\n\n");
   await Bun.write(`${directory}/actual.json`, structured);
   await Bun.write(`${directory}/actual.md`, markdown);
-  if (failures.length) throw new Error(failures.join("\n"));
-  if (structured.includes("SECRET_SENTINEL"))
-    throw new Error("Credential leaked into fixture output");
+  await Bun.write(
+    `${directory}/README.md`,
+    [
+      `# Session examples — v${version}`,
+      "",
+      "Start with conversation and tools for ordinary usage; persistence and branching explain failure and recovery guarantees. Each report links to executable TypeScript, checks, the transcript, and exact evidence. Providers are simulated; the runtime is real.",
+      "",
+      ...selected.map(
+        (scenario, index) =>
+          `- **${results[index]!.failure ? "FAIL" : "PASS"}** [${scenario.name}](${scenario.name}/README.md) — ${scenario.purpose}`,
+      ),
+      "",
+      "Aggregate actual.json is machine evidence; actual.md combines transcripts. run.json supplies the nondeterministic run ID used in diagnostics. Per-scenario evidence is captured before cleanup; logs include cleanup.",
+      "",
+    ].join("\n"),
+  );
+  const failures = results.filter((result) => result.failure);
+  if (failures.length)
+    throw new Error(
+      `Session examples failed: ${failures.map((result) => `${result.output.name}: ${result.failure?.message ?? "Unknown failure"}`).join("\n")}. Read ${resolve(directory)}/README.md`,
+    );
   if (options.update) {
-    await Bun.write(new URL(`expected${suffix}.json`, fixtureRoot), structured);
-    await Bun.write(new URL(`expected${suffix}.md`, fixtureRoot), markdown);
-  } else {
-    const expected = await Bun.file(new URL(`expected${suffix}.json`, fixtureRoot)).text();
-    const readable = await Bun.file(new URL(`expected${suffix}.md`, fixtureRoot)).text();
-    if (structured !== expected || markdown !== readable)
-      throw new Error(
-        `Session fixture mismatch; inspect ${directory}/actual.json and actual.md. Baselines require explicit --update.`,
-      );
+    const suffix = version === 2 ? "-v2" : "";
+    const path = new URL(`expected${suffix}.json`, fixtureRoot);
+    const old = baselineSchema.parse(await Bun.file(path).json());
+    // Preserve legacy input metadata, but it is no longer interpreted or compared.
+    await Bun.write(
+      path,
+      json(
+        results.map((result) => ({
+          ...old.find((entry) => entry.name === result.output.name),
+          ...result.output,
+        })),
+      ),
+    );
   }
   return {
     structured,
     markdown,
-    count: scenarios.length,
+    count: selected.length,
     artifactDirectory: resolve(directory),
     runId,
   };
@@ -495,6 +348,6 @@ if (import.meta.main) {
     version: args.includes("--v2") ? 2 : 1,
   });
   console.log(
-    `${result.count} session fixtures ${args.includes("--update") ? "updated" : "matched"}.`,
+    `${result.count} session examples ${args.includes("--update") ? "updated" : "passed"}.`,
   );
 }

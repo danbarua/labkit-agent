@@ -1,6 +1,6 @@
 import { expect, test } from "@logtape/testing-bun/autoload";
 
-import { runFixtures } from "./fixture-runner.ts";
+import { runFixture, runFixtures, scenarios } from "./fixture-runner.ts";
 
 type DiagnosticRecord = { level: string } & Record<string, unknown>;
 async function diagnostics(directory: string, scenario: string): Promise<DiagnosticRecord[]> {
@@ -12,8 +12,12 @@ async function diagnostics(directory: string, scenario: string): Promise<Diagnos
 }
 async function assertDiagnosticArtifacts(directory: string, runId: string) {
   const records = await diagnostics(directory, "plain-conversation");
-  const aliases = await Bun.file(`${directory}/plain-conversation/session-aliases.json`).json();
-  const journal = (await Bun.file(`${directory}/plain-conversation/journal-root.jsonl`).text())
+  const aliases = await Bun.file(
+    `${directory}/plain-conversation/evidence/session-aliases.json`,
+  ).json();
+  const journal = (
+    await Bun.file(`${directory}/plain-conversation/evidence/journal-root.jsonl`).text()
+  )
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line));
@@ -55,7 +59,7 @@ async function assertDiagnosticArtifacts(directory: string, runId: string) {
   ).toBe(true);
 }
 
-test("approved structured and readable fixtures match across repeated deterministic runs", async () => {
+test("behavioral evidence and human transcripts are deterministic across repeated runs", async () => {
   const first = await runFixtures({ artifactDirectory: ".session-artifacts/test-first" });
   const second = await runFixtures({ artifactDirectory: ".session-artifacts/test-second" });
   expect(first.count).toBe(17);
@@ -71,7 +75,7 @@ test("version-two policy fixtures are independent of the unchanged version-one b
     version: 2,
     artifactDirectory: ".session-artifacts/v2-second",
   });
-  expect(first.count).toBe(22);
+  expect(first.count).toBe(25);
   const records = await diagnostics(first.artifactDirectory, "permission-reject-batch");
   expect(
     records.some(
@@ -81,3 +85,12 @@ test("version-two policy fixtures are independent of the unchanged version-one b
   expect(second.structured).toBe(first.structured);
   expect(second.markdown).toBe(first.markdown);
 });
+
+// Each example is discoverable and runnable by its own name with bun test -t.
+for (const scenario of scenarios) {
+  test(`session example v${scenario.version}: ${scenario.name} — ${scenario.purpose}`, async () => {
+    await runFixture(scenario, {
+      artifactDirectory: `.session-artifacts/examples/v${scenario.version}/${scenario.name}`,
+    });
+  });
+}
