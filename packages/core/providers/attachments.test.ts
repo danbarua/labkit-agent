@@ -95,7 +95,7 @@ test("large text uses a named hash stub; invalid bytes and unsupported media fai
     ).toThrow("media");
 });
 
-for (const media of ["image/png", "image/jpeg"] as const)
+for (const media of ["image/png", "image/jpeg", "application/pdf"] as const)
   test(`Anthropic v2 encodes ${media} by BlobId`, () => {
     const bytes = new Uint8Array([1, 2, 3]);
     const image = { id: hashBlob(bytes), bytes: bytes.length, media, name: "image" };
@@ -112,7 +112,12 @@ for (const media of ["image/png", "image/jpeg"] as const)
       messages: [
         {
           role: "user",
-          content: [{ type: "image", source: { type: "base64", media_type: media, data: "AQID" } }],
+          content: [
+            {
+              type: media === "application/pdf" ? "document" : "image",
+              source: { type: "base64", media_type: media, data: "AQID" },
+            },
+          ],
         },
       ],
     });

@@ -30,3 +30,9 @@ passes the resulting BlobId-keyed resolver as the optional third argument to `Co
 Each call receives its operation's AbortSignal. Bytes and resolver functions never enter prepared
 snapshots, child outcomes, or journal events. The session binding owns persistence and media checks;
 the host continues to own operation lifetime and cancellation.
+
+For completion, `loadBlobs` receives `includeContinuations: true`; preparation omits it and reads
+only attachment refs. After admitting completion, the host stamps continuation owner/provider and
+awaits the session-supplied `storeContinuation` binding inside the completion operation. This binding
+keeps small payloads inline or writes large payloads as blobs. It receives the same AbortSignal;
+only a validated envelope can enter the child outcome. The host itself owns no persistence handle.

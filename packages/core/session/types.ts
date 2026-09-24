@@ -212,7 +212,11 @@ export function bodyHasBlobs(body: JournalBody): boolean {
   const messages = (items: readonly { role: string; parts?: readonly { type: string }[] }[]) =>
     items.some((message) => message.parts?.some((part) => part.type === "blob"));
   if (body.kind === "created")
-    return messages(body.seed.context) || body.seed.log.some((record) => messages(record.messages));
+    return (
+      messages(body.seed.context) ||
+      body.seed.log.some((record) => messages(record.messages)) ||
+      !!body.seed.continuations?.some((entry) => entry.payloadBlob)
+    );
   if (body.kind === "queued") return body.attachments !== undefined;
   if (body.kind === "terminal") return messages(body.record.messages);
   if (body.kind !== "event") return false;
@@ -223,7 +227,11 @@ export function bodyHasBlobs(body: JournalBody): boolean {
   if (event.type !== "child") return false;
   const child = event.event;
   if (child.type === "prepared" && child.result.kind === "succeeded")
-    return messages(child.result.value.messages);
+    return (
+      messages(child.result.value.messages) ||
+      !!child.result.value.continuations?.some((entry) => entry.payloadBlob)
+    );
+  if (child.type === "model_settled") return !!child.continuation?.payloadBlob;
   if (child.type === "handoff_prepared" && child.result.kind === "succeeded")
     return messages(child.result.value);
   return false;

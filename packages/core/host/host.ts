@@ -43,7 +43,15 @@ export type HostToolOutcome = Readonly<{
 }>;
 export type ExecutionContext = Readonly<{
   prompt?: PromptInput;
-  loadBlobs?: (request: PreparedModel, signal: AbortSignal) => Promise<BlobResolver>;
+  loadBlobs?: (
+    request: PreparedModel,
+    signal: AbortSignal,
+    includeContinuations?: boolean,
+  ) => Promise<BlobResolver>;
+  storeContinuation?: (
+    entry: { provider: string; owner: Continuation["owner"]; payload: unknown },
+    signal: AbortSignal,
+  ) => Promise<Continuation>;
   continuations?: readonly Continuation[];
   allowedTools?: readonly string[];
   toolFailure?: Policy["toolFailure"];
@@ -203,11 +211,10 @@ export function createHost(
             input: command.request,
             parseInput: PreparedModelSchema.parseAsync,
             run: async (request, signal) => {
-              const blobs = await context.loadBlobs?.(request, signal);
+              const blobs = await context.loadBlobs?.(request, signal, true);
               signal.throwIfAborted();
-              return bindings.complete(request, signal, blobs);
-            },
-            parseOutput: async (raw) => {
+              const raw = await bindings.complete(request, signal, blobs);
+              signal.throwIfAborted();
               const wrapped = raw !== null && typeof raw === "object" && "completion" in raw;
               const output = wrapped
                 ? z
@@ -221,13 +228,23 @@ export function createHost(
               const continuation =
                 output.continuationPayload === undefined
                   ? undefined
-                  : ContinuationSchema.parse({
-                      provider: command.request.provider,
-                      owner: { turnId, generation: command.turn.generation },
-                      payload: output.continuationPayload,
-                    });
+                  : await (
+                      context.storeContinuation ?? ((entry) => ContinuationSchema.parse(entry))
+                    )(
+                      {
+                        provider: z.string().parse(command.request.provider),
+                        owner: { turnId, generation: command.turn.generation },
+                        payload: output.continuationPayload,
+                      },
+                      signal,
+                    );
+              signal.throwIfAborted();
               return { completion, continuation };
             },
+            parseOutput: z.strictObject({
+              completion: admitted,
+              continuation: ContinuationSchema.optional(),
+            }).parseAsync,
           },
           (result) =>
             post(turnId, {

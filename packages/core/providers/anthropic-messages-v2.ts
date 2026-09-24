@@ -7,11 +7,11 @@ import {
   attachmentBytes,
   attachmentText,
   completion,
+  continuationPayload,
   responseBody,
   systemAndMessages,
 } from "./shared.ts";
 import {
-  ContinuationPayloadSchema,
   matchingContinuations,
   parseRequest,
   validateThinking,
@@ -44,11 +44,15 @@ function messageBlocks(
   if (!message.parts) return message.text ? [{ type: "text", text: message.text }] : [];
   return message.parts.map((part) => {
     if (part.type === "text") return { type: "text", text: part.text };
-    if (part.ref.media === "image/png" || part.ref.media === "image/jpeg") {
+    if (
+      part.ref.media === "image/png" ||
+      part.ref.media === "image/jpeg" ||
+      part.ref.media === "application/pdf"
+    ) {
       if (message.role !== "user")
-        throw new Error("Anthropic image attachments require a user message");
+        throw new Error("Anthropic image/document attachments require a user message");
       return {
-        type: "image",
+        type: part.ref.media === "application/pdf" ? "document" : "image",
         source: {
           type: "base64",
           media_type: part.ref.media,
@@ -64,7 +68,7 @@ export const anthropicMessagesV2: CompletionProfile = {
   capabilities: {
     thinking: { mode: "adaptive" },
     stream: false,
-    media: ["text/plain", "text/markdown", "image/png", "image/jpeg"],
+    media: ["text/plain", "text/markdown", "image/png", "image/jpeg", "application/pdf"],
   },
   encode(raw, blobs) {
     const request = parseRequest(raw, "anthropic-messages@2");
@@ -86,7 +90,7 @@ export const anthropicMessagesV2: CompletionProfile = {
                 [message],
                 request.continuations ?? [],
                 "anthropic-messages@2",
-              ).flatMap((entry) => payloadSchema.parse(entry.payload).blocks),
+              ).flatMap((entry) => payloadSchema.parse(continuationPayload(entry, blobs)).blocks),
               ...messageBlocks(message, blobs),
               ...(message.role === "assistant"
                 ? (message.calls ?? []).map((call) => ({
@@ -151,9 +155,7 @@ export const anthropicMessagesV2: CompletionProfile = {
     );
     return {
       ...decoded,
-      ...(blocks.length
-        ? { continuationPayload: ContinuationPayloadSchema.parse({ blocks }) }
-        : {}),
+      ...(blocks.length ? { continuationPayload: payloadSchema.parse({ blocks }) } : {}),
     };
   },
 };

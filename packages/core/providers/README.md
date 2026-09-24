@@ -88,14 +88,15 @@ canonicalRequest converts it into CompletionRequest: domain messages with text, 
 JSON tool arguments, correlated call IDs, advertisements, and successor names. Profiles
 never see the journal or connection settings. AbortSignal is a separate port argument.
 
-Each profile has pure encode(request) and decode(response) methods. Encoding returns a
+Each profile has pure encode(request, blobs?) and decode(response, request?) methods.
+The transport passes the captured request to decode for request-dependent validation. Encoding returns a
 relative POST path, non-secret protocol headers, and a body. The transport attaches the
 origin and credentials and makes one HTTP attempt. There are no retries or SDK dependencies.
 Decode rejects malformed, truncated, refused, built-in-tool, and unsupported continuation
 data where exposed by the dialect. The host validates completion shape and permissions.
 
 The built-in IDs are openai-chat@1, openai-responses@1, anthropic-messages@1,
-anthropic-messages@2, and google-generate@1. Responses sends the complete projected input with store:false and
+anthropic-messages@2, google-generate@1, google-generate@2, and openai-responses@2. Responses sends the complete projected input with store:false and
 never sends previous_response_id or a server conversation reference. Anthropic combines
 tool results into user content blocks. Google emits function declarations using
 parametersJsonSchema and pairs function responses with call IDs and names. When Google
@@ -131,11 +132,37 @@ fields exist only at the callback adapter boundary, not in prepared snapshots.
 
 ## Thinking and continuation envelopes
 
-Profiles declare `capabilities.thinking` and `capabilities.stream`. Policy validation and
-transport both reject unsupported thinking before HTTP. OpenAI Chat accepts low, medium,
-and high effort; explicit off maps to none and omission leaves the parameter absent.
-Responses supports off only and still rejects reasoning items. Google and Anthropic @1
-remain off-only. Streaming remains unsupported.
+Profiles declare `capabilities.thinking`, `capabilities.stream`, and `capabilities.media`.
+Policy validation and transport reject unsupported thinking before HTTP. All profiles accept
+plain text and markdown attachments; additional media and replay support are versioned:
+
+| Profile                | Enabled thinking policy      | Continuation replay         | Additional user media |
+| ---------------------- | ---------------------------- | --------------------------- | --------------------- |
+| `openai-chat@1`        | low, medium, high            | None                        | None                  |
+| `openai-responses@1`   | None                         | Rejects reasoning items     | None                  |
+| `openai-responses@2`   | low, medium, high            | Encrypted reasoning items   | None                  |
+| `google-generate@1`    | None                         | Rejects thoughts/signatures | None                  |
+| `google-generate@2`    | adaptive → 1024-token budget | Signed model parts          | None                  |
+| `anthropic-messages@1` | None                         | Rejects thinking blocks     | None                  |
+| `anthropic-messages@2` | adaptive → 1024-token budget | Signed/redacted thinking    | PNG, JPEG, PDF        |
+
+Streaming and ACP are **not done**. No profile starts a server conversation or uses a Files API.
+OpenAI Chat remains unchanged: off maps to none; omission leaves effort absent.
+
+`google-generate@2` declares `{ mode: "budget", maxTokens: 1024 }`. Policy adaptive enables the
+versioned 1024-token default; off/omitted sends `thinkingBudget: 0`. Decode excludes thought text
+from the domain completion and preserves the model parts list, including text/function-call
+signatures. With thinking enabled, every function call must have a nonempty `thoughtSignature`.
+Encode replays each owner's parts without concatenating signed parts or adjacent model messages.
+Function responses still use the domain call IDs/names. No Interactions API or stored conversation
+is used.
+
+`openai-responses@2` maps low/medium/high to `reasoning.effort`, off to none, and omission to no
+effort field. It always sends `store: false`; unless explicitly off it requests
+`include: ["reasoning.encrypted_content"]`. Decode preserves encrypted reasoning and its item ID;
+an ID without encrypted content fails closed. Encode inserts these reasoning input items
+immediately before that owner's message/function calls, never as `previous_response_id`.
+See [OpenAI stateless reasoning](https://developers.openai.com/api/docs/guides/reasoning).
 
 `anthropic-messages@2` accepts policy `thinking:"adaptive"`. Its frozen wire behavior targets
 models supporting manual extended thinking (for example Claude Sonnet 4.5):
@@ -144,28 +171,33 @@ The off/omitted path sends disabled thinking and defaults max_tokens to 1024. Mo
 native adaptive thinking need a separate versioned profile; this profile never switches wire
 shapes based on model names. See [Anthropic extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking).
 
-Decode returns `{ completion, continuationPayload? }`; transport freezes and validates it.
-The host admits only completion and stamps the opaque payload with the profile ID and the
-active completion child's `{ turnId, generation }`. Signed thinking and redacted blocks are
-preserved, limited to 65,536 JSON characters, and inserted before text/tool-use blocks on
-that owner's assistant message. Unsigned or oversized payloads fail the completion.
-Request parsing rejects envelopes without a matching assistant owner or with another provider ID.
-Adjacent assistant messages with any thinking continuation cannot be merged and fail
-encoding; thinking blocks are never lifted across another assistant's content.
+Decode returns `{ completion, continuationPayload? }`; transport validates JSON and freezes it.
+Profiles stay owner-blind. The host admits completion and stamps the payload with the profile ID
+and the active completion child's `{ turnId, generation }`. Session storage keeps serialized
+payloads of at most 65,536 JSON characters inline as `{ provider, owner, payload }`. Larger payloads
+are UTF-8 JSON blobs stored under the same session before settlement, with an envelope
+`{ provider, owner, payloadBlob }` and no inline payload. The 8 MiB raw blob cap still applies.
+Blob-backed envelopes require journal v5; inline continuations require at least v4.
 
-One model_settled event commits the completion and envelope in the same append. No sidecar,
-extra turn phase, server conversation ID, Responses replay, or Google signatures are involved.
-Session replay retains envelopes; preparation joins by owner and exact provider ID, filtering
-out messages removed by projection. Provider switches retain stored envelopes without injecting
-them into another profile. Forks copy envelopes for inherited messages; compaction drops them.
-Journal v4 is required for continuations and non-off thinking. Existing v1/v2/v3 bytes remain
-compatible. Prepared replay compares envelopes as a keyed set, independent of array order.
+Prepare uses `matchingContinuations` to join by owner and exact provider, retaining references
+only. Completion resolves payload blobs through its operation-local resolver after the prepared
+append commits. Replay and idle restore never load payload bytes. Missing/corrupt bytes fail
+completion before HTTP. Request parsing rejects orphan or foreign-provider envelopes.
+Anthropic inserts thinking before the owner's text/tool-use blocks and refuses adjacent assistant
+merges involving thinking, so blocks never move across another assistant's content.
+
+One model_settled event commits the completion and envelope in the same append. Dependent tools
+wait for that receipt. A failed/cancelled blob write cannot publish the envelope; a failed journal
+append can leave an unreferenced blob. Provider switches retain stored envelopes without injecting
+them into another profile. Forks copy envelopes and payload blobs for inherited assistant owners;
+compaction drops them. Prepared replay compares envelopes as a keyed set, independent of array order.
+Existing v1/v2/v3 bytes remain compatible.
 
 ## Verification and sources
 
 The reusable profileContract runs exact encode vectors, decode vectors, malformed-output,
 unsupported-settings, correlation, and handoff cases. Transport tests cover credentials,
-single attempts, late cancellation, and binding isolation. Session tests cover all four
+single attempts, late cancellation, and binding isolation. Session tests cover provider
 profiles through tools/handoff, policy changes, restore, fork/compaction, recovery,
 uncertain/rejected appends, and journal tampering.
 
@@ -183,13 +215,17 @@ Wire references checked during implementation:
 - [OpenAI Responses migration and stateless input](https://developers.openai.com/api/docs/guides/migrate-to-responses)
 - [Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create)
 - [Google GenerateContent](https://ai.google.dev/api/generate-content)
+- [Google thinking budgets](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
 - [Google thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)
 
 ## Attachment media and operation-local bytes
 
 Every profile declares `capabilities.media`. All built-ins accept `text/plain` and `text/markdown`.
-Anthropic `@2` additionally accepts user-message PNG/JPEG refs and emits base64 image blocks.
-Images on other profiles, PDFs on every profile, and tool-result blob parts are unsupported.
+Anthropic `@2` additionally accepts user-message PNG/JPEG refs as base64 image blocks and PDF refs
+as `{ type: "document", source: { type: "base64", media_type: "application/pdf", data } }`.
+PDF/image refs on other profiles and tool-result blob parts are unsupported. PDFs are never decoded
+as text or sent using URL/file_id sources. The 8 MiB raw blob cap remains unchanged; byte count
+cannot establish PDF page count or token/context fit, which the caller must consider.
 
 Domain and prepared messages contain optional text/blob parts. When parts are present, their text
 parts concatenate to the legacy text field. Default history and slim handoff projections retain
@@ -197,7 +233,7 @@ parts on the messages they keep. The canonical request keeps refs even when enco
 `encode(request, blobs?)` receives a synchronous BlobId-keyed resolver supplied by the host's
 completion operation; neither profiles nor projection policies read persistence themselves.
 
-Inline text shape is versioned wire behavior. OpenAI Chat/Responses `@1`, Google `@1`, and
+Inline text shape is versioned wire behavior. OpenAI Chat `@1`, Responses/Google `@1` and `@2`, and
 Anthropic `@1` combine explicit text and attachment text into one string, separated by a newline.
 Anthropic `@2` preserves separate text blocks: `Review` plus a small DESIGN.md produces two blocks.
 The encode vectors intentionally lock this difference; do not normalize `@2` to match `@1`.
@@ -205,7 +241,7 @@ The encode vectors intentionally lock this difference; do not normalize `@2` to 
 Text blobs of at most 65,536 bytes are decoded as UTF-8 and inlined. Larger text uses
 `[attached: NAME sha256:FULL_HASH]`; the ref remains on the request. This includes markdown on
 Anthropic `@2`: a 70 KiB DESIGN.md sends only the hash stub, not its contents or a document block.
-The model cannot review those omitted contents. Raising the inline cap or adding document encoding
+The model cannot review those omitted contents. Raising the inline cap or adding markdown document encoding
 requires an explicit versioned profile change (for example Anthropic `@3`); current profiles never
 silently decode text beyond 64 KiB. No summarization, filesystem path reads, model calls, or implicit
 PDF conversion occur. Invalid UTF-8 or mismatched bytes fail encoding before HTTP. Existing

@@ -34,7 +34,12 @@ import {
   type PolicyResolvers,
 } from "../policy/policy.ts";
 import { bindProviders, type ProviderBindings } from "../providers/transport.ts";
-import { copyBranchBlobs, resolveRequestBlobs } from "./blobs.ts";
+import {
+  continuationBlobRefs,
+  copyBranchBlobs,
+  resolveRequestBlobs,
+  storeContinuation,
+} from "./blobs.ts";
 import { EnvEventSchema, type EnvEvent } from "./events.ts";
 import { AppendIdSchema, type AppendId, type SessionPersistence } from "./persistence.ts";
 import {
@@ -282,7 +287,10 @@ function configure(raw: SessionOptions, restoring = false) {
           port,
           sessionId,
           seed.sessionId,
-          blobRefs([...seed.context, ...seed.log.flatMap((record) => record.messages)]),
+          [
+            ...blobRefs([...seed.context, ...seed.log.flatMap((record) => record.messages)]),
+            ...continuationBlobRefs(seed.continuations ?? []),
+          ],
           controller.signal,
         );
         controller.signal.throwIfAborted();
@@ -319,13 +327,15 @@ function configure(raw: SessionOptions, restoring = false) {
         toolFailure: policy?.toolFailure,
         provider: policy,
         continuations: durable.continuations,
-        loadBlobs: (request, signal) =>
+        storeContinuation: (entry, signal) => storeContinuation(port, sessionId, entry, signal),
+        loadBlobs: (request, signal, includeContinuations) =>
           resolveRequestBlobs(
             port,
             sessionId,
             request,
             providerMedia?.get(request.provider ?? "") ?? [],
             signal,
+            includeContinuations,
           ),
         projectPrompt: (value) =>
           policy

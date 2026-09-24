@@ -2,7 +2,12 @@ import { z } from "zod";
 
 import { hashBlob, type BlobRef, type BlobResolver } from "../agent/content.ts";
 import { CompletionSchema, type AgentMessage, type ToolCall } from "../agent/types.ts";
-import { CompletionRequestSchema, type CompletionRequest, type HttpResponse } from "./types.ts";
+import {
+  CompletionRequestSchema,
+  type CompletionRequest,
+  type Continuation,
+  type HttpResponse,
+} from "./types.ts";
 
 export const HANDOFF_TOOL = "handoff_to";
 export function advertisements(request: CompletionRequest) {
@@ -87,4 +92,16 @@ export function messageText(message: AgentMessage, blobs?: BlobResolver): string
     previousWasText = part.type === "text";
   }
   return segments.join("\n");
+}
+
+/** Resolve opaque JSON only while encoding inside the completion operation. */
+export function continuationPayload(entry: Continuation, blobs?: BlobResolver): unknown {
+  if (!entry.payloadBlob) return entry.payload;
+  return z
+    .json()
+    .parse(
+      JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(attachmentBytes(entry.payloadBlob, blobs)),
+      ),
+    );
 }

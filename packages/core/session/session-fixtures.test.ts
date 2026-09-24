@@ -16,7 +16,7 @@ test("version-two policy fixtures are independent of the unchanged version-one b
     version: 2,
     artifactDirectory: ".session-artifacts/v2-second",
   });
-  expect(first.count).toBe(10);
+  expect(first.count).toBe(13);
   expect(second.structured).toBe(first.structured);
   expect(second.markdown).toBe(first.markdown);
 });

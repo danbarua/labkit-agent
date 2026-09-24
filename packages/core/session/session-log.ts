@@ -317,7 +317,13 @@ function domainEvent(
             : value;
       const keyed = (entries: readonly Continuation[]) =>
         entries
-          .map((entry) => [JSON.stringify(entry.owner), entry.provider, canonical(entry.payload)])
+          .map((entry) => [
+            JSON.stringify(entry.owner),
+            entry.provider,
+            canonical(
+              entry.payloadBlob ? { payloadBlob: entry.payloadBlob } : { payload: entry.payload },
+            ),
+          ])
           .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
       if (
         JSON.stringify(keyed(expectedContinuations)) !==

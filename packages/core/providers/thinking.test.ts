@@ -84,13 +84,17 @@ test("two owners replay their own blocks even when envelopes arrive reversed", (
     ]);
 });
 
-test("decode preserves signed/redacted bytes and rejects unsigned or oversized payloads", () => {
+test("decode preserves signed/redacted bytes and rejects unsigned payloads; large payloads reach session storage", () => {
   const blocks = [thinking("sig"), { type: "redacted_thinking", data: "opaque" }];
   expect(anthropicMessagesV2.decode(response([...blocks, { type: "text", text: "done" }]))).toEqual(
     { completion: { kind: "answer", text: "done" }, continuationPayload: { blocks } },
   );
-  for (const block of [{ type: "thinking", thinking: "unsigned" }, thinking("x".repeat(65536))])
-    expect(() => anthropicMessagesV2.decode(response([block]))).toThrow();
+  expect(() =>
+    anthropicMessagesV2.decode(response([{ type: "thinking", thinking: "unsigned" }])),
+  ).toThrow();
+  expect(
+    anthropicMessagesV2.decode(response([thinking("x".repeat(70000))])).continuationPayload,
+  ).toEqual({ blocks: [thinking("x".repeat(70000))] });
 });
 
 test("capability intersection rejects before HTTP and chat maps effort", async () => {

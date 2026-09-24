@@ -3,7 +3,13 @@ import { z } from "zod";
 
 import { BlobInputMetaSchema, type BlobRef } from "../agent/content.ts";
 import { PolicyPatchSchema } from "../policy/policy.ts";
-import { anthropicMessagesV2, googleGenerate, openaiChat } from "../providers/index.ts";
+import {
+  anthropicMessagesV2,
+  googleGenerate,
+  googleGenerateV2,
+  openaiChat,
+  openaiResponsesV2,
+} from "../providers/index.ts";
 import { journalJSONL, journalMarkdown } from "./session-log.ts";
 import type { LegacySessionOptions, SessionOptions } from "./session-runtime.ts";
 import {
@@ -158,7 +164,13 @@ async function runScenario(scenario: Scenario, directory: string) {
             ...(scenario.providerResponses
               ? {
                   providers: new Map(
-                    [anthropicMessagesV2, googleGenerate, openaiChat].map((profile) => [
+                    [
+                      anthropicMessagesV2,
+                      googleGenerate,
+                      googleGenerateV2,
+                      openaiChat,
+                      openaiResponsesV2,
+                    ].map((profile) => [
                       profile.id,
                       {
                         profile,

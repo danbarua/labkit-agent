@@ -201,8 +201,8 @@ bun test packages/core/host packages/core/policy packages/core/environment packa
 
 Non-off thinking and completion continuation envelopes require v4. An envelope is committed
 with its successful model_settled event and keyed by completion owner `{ turnId, generation }`.
-Replay checks the owner against the active child and validates its provider and 64 KiB JSON
-character limit. Assistant owner metadata survives prompt projection; prepared envelopes must
+Replay checks the owner against the active child and validates its provider. Inline payloads
+retain the 65,536 JSON-character cap; larger payloads use v5 blob references. Assistant owner metadata survives prompt projection; prepared envelopes must
 match the stored set for projected owners and the captured provider. Array order is irrelevant.
 Restore reconstructs this state without executing completions. Fork seeds retain envelopes for
 copied assistant messages; compaction seeds drop envelopes. Switching providers preserves stored
@@ -244,3 +244,12 @@ child before it can prepare. Replacement refs must be available in the parent fo
 Unreferenced blobs are not copied; parent blobs are never deleted. Copy/creation is not a
 cross-session transaction: failed publication may leave unreferenced child blobs, and retrying
 copies is idempotent. See [persistence details](../../../docs/session-persistence.md).
+
+Continuation payloads use exactly one of `payload` or `payloadBlob`. Session storage serializes
+oversized JSON as UTF-8 `text/plain` under the same session before model_settled can be journaled.
+Blob references in settled events, prepared prompts, or seeds require v5. Preparation attaches refs
+using `matchingContinuations` without loading payload bytes. Only the completion operation loads
+and verifies these blobs; missing bytes fail completion before HTTP. Forks copy payload blobs for
+retained owners before child creation; compaction drops continuation refs. Idle restore does no
+blob I/O. Write failure/cancellation prevents settlement and tool release; append failure may leave
+an unreferenced blob. The existing 8 MiB cap also applies to continuation blobs.

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { BlobResolver, MediaKind } from "../agent/content.ts";
+import { BlobRefSchema, type BlobResolver, type MediaKind } from "../agent/content.ts";
 import { CompletionOwnerSchema, MessagesSchema, ToolNameSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 
@@ -17,8 +17,16 @@ export const ContinuationSchema = z
   .strictObject({
     provider: z.string().regex(/^.+@\d+$/),
     owner: CompletionOwnerSchema,
-    payload: ContinuationPayloadSchema,
+    payload: ContinuationPayloadSchema.optional(),
+    payloadBlob: BlobRefSchema.refine(
+      (ref) => ref.media === "text/plain",
+      "Continuation blobs must be JSON text",
+    ).optional(),
   })
+  .refine(
+    (entry) => (entry.payload !== undefined) !== (entry.payloadBlob !== undefined),
+    "Exactly one continuation payload representation is required",
+  )
   .readonly();
 export type Continuation = z.infer<typeof ContinuationSchema>;
 export type DecodedCompletion = Readonly<{ completion: unknown; continuationPayload?: unknown }>;
@@ -29,7 +37,7 @@ export function validateThinking(
   if (thinking === undefined || thinking === "off") return;
   if (
     thinking === "adaptive"
-      ? capability.mode === "adaptive"
+      ? capability.mode === "adaptive" || capability.mode === "budget"
       : capability.mode === "effort" && capability.values.includes(thinking)
   )
     return;
@@ -99,7 +107,7 @@ export type CompletionProfile = Readonly<{
     media: readonly MediaKind[];
   }>;
   encode(request: CompletionRequest, blobs?: BlobResolver): HttpRequest;
-  decode(response: HttpResponse): DecodedCompletion;
+  decode(response: HttpResponse, request?: CompletionRequest): DecodedCompletion;
 }>;
 export function parseRequest(raw: unknown, profileId?: string): CompletionRequest {
   const request = freeze(CompletionRequestSchema.parse(raw));

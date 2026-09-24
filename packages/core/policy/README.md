@@ -37,8 +37,8 @@ operations, including their output-validation failures.
 
 Provider bindings supply `providerCapabilities` to policy validation. Thinking may be omitted,
 `off`, `low`, `medium`, `high`, or `adaptive`. Off/omitted is always legal; effort values require
-an effort capability listing that value, and adaptive requires an adaptive capability. Budget
-capabilities have no enabled policy value yet. Unsupported settings fail closed during policy
+an effort capability listing that value, and adaptive requires an adaptive or budget capability. For budget
+profiles, adaptive selects the versioned default budget; there is no numeric policy value. Unsupported settings fail closed during policy
 validation and again before transport fetch. Policy packs may supply the same thinking field.
 Provider switches must explicitly patch thinking to a supported value when necessary.
 

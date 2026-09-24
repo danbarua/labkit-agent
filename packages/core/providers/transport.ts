@@ -6,7 +6,6 @@ import { CompletionSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import { HANDOFF_TOOL } from "./shared.ts";
 import {
-  ContinuationPayloadSchema,
   parseRequest,
   ProviderSettingsSchema,
   validateThinking,
@@ -151,7 +150,7 @@ export function bindProviders(bindings: ProviderBindings) {
         if (!binding.profile.capabilities.media.includes(ref.media))
           throw new Error(`Provider does not support attachment media: ${ref.media}`);
       const response = await binding.http(binding.profile.encode(input, blobs), signal);
-      const decoded = binding.profile.decode(response);
+      const decoded = binding.profile.decode(response, input);
       const result = CompletionSchema.parse(decoded.completion);
       if (result.kind === "handoff" && !input.successors.includes(result.agent))
         throw new Error("Unpermitted handoff target");
@@ -161,7 +160,7 @@ export function bindProviders(bindings: ProviderBindings) {
         completion: result,
         ...(decoded.continuationPayload === undefined
           ? {}
-          : { continuationPayload: ContinuationPayloadSchema.parse(decoded.continuationPayload) }),
+          : { continuationPayload: z.json().parse(decoded.continuationPayload) }),
       });
     },
   });

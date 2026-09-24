@@ -12,15 +12,21 @@ already-stored bytes is rejected. Zero-byte blobs are valid. Metadata is immutab
 an independent byte buffer. A cancelled call rejects; an absent get returns `{ kind: "not_found" }`.
 
 Supported ref media types are text/plain, text/markdown, image/png, image/jpeg and application/pdf.
-The ref schema admitting a media type does not imply a profile can encode it. Current provider
-capabilities intentionally exclude PDF. Session preparation checks media and verifies stored size,
+The ref schema admitting a media type does not imply a profile can encode it. Only Anthropic `@2` declares PDF document support. Session preparation checks media and verifies stored size,
 media and hash against the ref before completion can start. Ref names are display labels, not paths.
 
 The environment puts bytes before admitting a user ref. Journal v5 stores refs and content parts,
 never the raw bytes. Replay validates refs structurally and does not read the object store. Idle
 restoration therefore succeeds without blob access; missing bytes fail the next preparation.
 
-Branch publication copies only blobs cited by inherited history/context, using get/put through the
+Large continuation payloads are serialized as UTF-8 JSON blobs before model_settled is journaled.
+Their envelopes carry `payloadBlob` instead of `payload`, requiring v5. The inline cap stays at
+65,536 JSON characters and the blob cap at 8 MiB raw. Preparation attaches these refs without
+reading them; missing/corrupt payload bytes fail the completion operation before HTTP. Restore
+and replay never resolve them. A failed append may leave an unreferenced payload blob.
+
+Branch publication copies only blobs cited by inherited history/context and retained continuation
+owners, using get/put through the
 same port. Compaction copies the replacement-context subset. Copies finish before child creation
 is published; no parent objects are removed. Content-addressing makes copying retryable, but there
 is no atomic transaction spanning child blob writes and journal creation, nor garbage collection.

@@ -559,3 +559,165 @@ Outcome: {"kind":"completed"}
 
 - user: {"role":"user","text":"Review replacement context"}
 - assistant: {"role":"assistant","text":"Compact review"}
+
+---
+
+# google-thinking-parallel-tools: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"google-generate@2","thinking":"adaptive","steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Think and use tools twice"}
+- assistant: {"role":"assistant","text":"work-0","calls":[{"id":"c0-0","name":"echo","args":{"text":"result-0-0"}},{"id":"c0-1","name":"echo","args":{"text":"result-0-1"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"result-0-0","callId":"c0-0"}
+- tool: {"role":"tool","text":"result-0-1","callId":"c0-1"}
+- assistant: {"role":"assistant","text":"work-1","calls":[{"id":"c1-0","name":"echo","args":{"text":"result-1-0"}},{"id":"c1-1","name":"echo","args":{"text":"result-1-1"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+- tool: {"role":"tool","text":"result-1-0","callId":"c1-0"}
+- tool: {"role":"tool","text":"result-1-1","callId":"c1-1"}
+- assistant: {"role":"assistant","text":"Done","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":8}}
+
+# google-thinking-parallel-tools: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"google-generate@2","thinking":"adaptive","steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Think and use tools twice"}
+- assistant: {"role":"assistant","text":"work-0","calls":[{"id":"c0-0","name":"echo","args":{"text":"result-0-0"}},{"id":"c0-1","name":"echo","args":{"text":"result-0-1"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"result-0-0","callId":"c0-0"}
+- tool: {"role":"tool","text":"result-0-1","callId":"c0-1"}
+- assistant: {"role":"assistant","text":"work-1","calls":[{"id":"c1-0","name":"echo","args":{"text":"result-1-0"}},{"id":"c1-1","name":"echo","args":{"text":"result-1-1"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+- tool: {"role":"tool","text":"result-1-0","callId":"c1-0"}
+- tool: {"role":"tool","text":"result-1-1","callId":"c1-1"}
+- assistant: {"role":"assistant","text":"Done","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":8}}
+
+---
+
+# responses-thinking-tools: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"openai-responses@2","thinking":"high","steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Think and use tools twice"}
+- assistant: {"role":"assistant","text":"","calls":[{"id":"c0","name":"echo","args":{"text":"result-0"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"result-0","callId":"c0"}
+- assistant: {"role":"assistant","text":"","calls":[{"id":"c1","name":"echo","args":{"text":"result-1"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+- tool: {"role":"tool","text":"result-1","callId":"c1"}
+- assistant: {"role":"assistant","text":"Done","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":8}}
+
+# responses-thinking-tools: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"openai-responses@2","thinking":"high","steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Think and use tools twice"}
+- assistant: {"role":"assistant","text":"","calls":[{"id":"c0","name":"echo","args":{"text":"result-0"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+- tool: {"role":"tool","text":"result-0","callId":"c0"}
+- assistant: {"role":"assistant","text":"","calls":[{"id":"c1","name":"echo","args":{"text":"result-1"}}],"owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":5}}
+- tool: {"role":"tool","text":"result-1","callId":"c1"}
+- assistant: {"role":"assistant","text":"Done","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":8}}
+
+---
+
+# thinking-parity-provider-switch: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":2,"provider":"google-generate@2","thinking":"adaptive","steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"First"}
+- assistant: {"role":"assistant","text":"Google answer","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+
+## Turn 2: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Switch to Responses"}
+- assistant: {"role":"assistant","text":"Responses answer","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/2","generation":2}}
+
+## Turn 3: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Switch back to Google"}
+- assistant: {"role":"assistant","text":"Google again","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/3","generation":2}}
+
+# thinking-parity-provider-switch: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":2,"provider":"google-generate@2","thinking":"adaptive","steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"First"}
+- assistant: {"role":"assistant","text":"Google answer","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/1","generation":2}}
+
+## Turn 2: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Switch to Responses"}
+- assistant: {"role":"assistant","text":"Responses answer","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/2","generation":2}}
+
+## Turn 3: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Switch back to Google"}
+- assistant: {"role":"assistant","text":"Google again","owner":{"turnId":"00000000-0000-4000-8000-000000000001/turn/3","generation":2}}

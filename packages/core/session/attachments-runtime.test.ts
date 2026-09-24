@@ -3,7 +3,16 @@ import { z } from "zod";
 
 import { BlobRefSchema, hashBlob } from "../agent/content.ts";
 import { builtinResolvers } from "../policy/policy.ts";
-import { anthropicMessagesV2, openaiChat, type CompletionProfile } from "../providers/index.ts";
+import {
+  anthropicMessages,
+  anthropicMessagesV2,
+  googleGenerate,
+  googleGenerateV2,
+  openaiChat,
+  openaiResponses,
+  openaiResponsesV2,
+  type CompletionProfile,
+} from "../providers/index.ts";
 import { decodeRecord, journalJSONL, replay } from "./session-log.ts";
 import {
   createSession,
@@ -444,5 +453,54 @@ test("public user input requires content, accepts empty attachment lists with te
   const result = await session.input({ text: "Text only", attachments: [] }).settled;
   expect(result.kind === "terminal" && result.record.outcome.kind).toBe("completed");
   expect(session.snapshot.durable.records.every((record) => record.version === 3)).toBe(true);
+  await session.close();
+});
+
+for (const profile of [
+  anthropicMessages,
+  googleGenerate,
+  googleGenerateV2,
+  openaiResponses,
+  openaiResponsesV2,
+  openaiChat,
+])
+  test(`${profile.id} rejects PDF during prepare before blob reads or fetch`, async () => {
+    const { opts, reads, bodies } = setup(profile);
+    const session = await createSession(opts);
+    const ref = await opts.persistence.putBlob(
+      session.snapshot.durable.conversation.sessionId,
+      new TextEncoder().encode("%PDF-1.7"),
+      { media: "application/pdf" },
+      signal(),
+    );
+    const result = await session.input({ attachments: [ref] }).settled;
+    expect(result.kind === "terminal" && result.record.outcome.kind).toBe("failed");
+    expect(reads()).toBe(0);
+    expect(bodies).toHaveLength(0);
+    await session.close();
+  });
+
+test("Anthropic v2 prepares and encodes PDF as a document block", async () => {
+  const { opts, bodies } = setup(anthropicMessagesV2);
+  const session = await createSession(opts);
+  const pdf = new TextEncoder().encode("%PDF-1.7");
+  const ref = await opts.persistence.putBlob(
+    session.snapshot.durable.conversation.sessionId,
+    pdf,
+    { media: "application/pdf" },
+    signal(),
+  );
+  const result = await session.input({ attachments: [ref] }).settled;
+  expect(result.kind === "terminal" && result.record.outcome.kind).toBe("completed");
+  expect(bodies[0].messages[0].content).toEqual([
+    {
+      type: "document",
+      source: {
+        type: "base64",
+        media_type: "application/pdf",
+        data: Buffer.from(pdf).toString("base64"),
+      },
+    },
+  ]);
   await session.close();
 });

@@ -308,9 +308,12 @@ flowchart LR
 Provider thinking support crosses the host/session boundary through one model_settled event.
 Profiles decode an owner-free payload; the host admits the completion and stamps the payload
 with provider ID and completion-child turn/generation identity. The session commits both in the
-same journal append (v4), then releases dependent work. Turn decisions do not inspect envelopes.
+same journal append (v4 for inline payloads, v5 for blob refs), then releases dependent work. Turn decisions do not inspect envelopes.
 Session projection retains assistant owner metadata and attaches only matching provider envelopes.
-Replay validates the keyed set against projected owners. Fork seeds copy applicable envelopes;
+Payloads larger than 65,536 serialized JSON characters are stored under the same session before
+settlement. Prepared envelopes retain payloadBlob refs; only completion operations resolve them
+through getBlob after the prepared append commits. Idle restore remains free of object-store I/O.
+Replay validates the keyed set against projected owners. Forks copy applicable envelopes and blobs;
 compaction drops them, and restore rebuilds them without calling a completion port.
 
 ## Attachment refs and journal v5

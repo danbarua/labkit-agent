@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type { PreparedModel } from "../agent/agent.ts";
 import {
   blobRefs,
@@ -8,6 +10,7 @@ import {
   type MediaKind,
 } from "../agent/content.ts";
 import type { SessionId } from "../agent/types.ts";
+import { ContinuationSchema, type Continuation } from "../providers/types.ts";
 import type { SessionPersistence } from "./persistence.ts";
 
 async function readBlob(
@@ -41,11 +44,13 @@ export async function resolveRequestBlobs(
   request: PreparedModel,
   media: readonly MediaKind[],
   signal: AbortSignal,
+  includeContinuations = false,
 ): Promise<BlobResolver> {
   const refs = blobRefs(request.messages);
   for (const ref of refs)
     if (!media.includes(ref.media))
       throw new Error(`Provider does not support attachment media: ${ref.media}`);
+  if (includeContinuations) refs.push(...continuationBlobRefs(request.continuations ?? []));
   const blobs = new Map<string, { ref: BlobRef; bytes: Uint8Array }>();
   for (const ref of refs) {
     const existing = blobs.get(ref.id);
@@ -83,4 +88,25 @@ export async function copyBranchBlobs(
       throw new Error("Branch blob copy mismatch");
     copied.add(ref.id);
   }
+}
+
+export function continuationBlobRefs(entries: readonly Continuation[]) {
+  return entries.flatMap((entry) => (entry.payloadBlob ? [entry.payloadBlob] : []));
+}
+export async function storeContinuation(
+  port: SessionPersistence,
+  sessionId: SessionId,
+  entry: { provider: string; owner: Continuation["owner"]; payload: unknown },
+  signal: AbortSignal,
+): Promise<Continuation> {
+  signal.throwIfAborted();
+  const payload = z.json().parse(entry.payload);
+  const serialized = JSON.stringify(payload);
+  if (serialized.length <= 65536) return ContinuationSchema.parse({ ...entry, payload });
+  const bytes = new TextEncoder().encode(serialized);
+  const payloadBlob = await port.putBlob(sessionId, bytes, { media: "text/plain" }, signal);
+  signal.throwIfAborted();
+  if (payloadBlob.id !== hashBlob(bytes) || payloadBlob.bytes !== bytes.length)
+    throw new Error("Continuation blob write mismatch");
+  return ContinuationSchema.parse({ provider: entry.provider, owner: entry.owner, payloadBlob });
 }
