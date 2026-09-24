@@ -197,10 +197,19 @@ parts on the messages they keep. The canonical request keeps refs even when enco
 `encode(request, blobs?)` receives a synchronous BlobId-keyed resolver supplied by the host's
 completion operation; neither profiles nor projection policies read persistence themselves.
 
+Inline text shape is versioned wire behavior. OpenAI Chat/Responses `@1`, Google `@1`, and
+Anthropic `@1` combine explicit text and attachment text into one string, separated by a newline.
+Anthropic `@2` preserves separate text blocks: `Review` plus a small DESIGN.md produces two blocks.
+The encode vectors intentionally lock this difference; do not normalize `@2` to match `@1`.
+
 Text blobs of at most 65,536 bytes are decoded as UTF-8 and inlined. Larger text uses
-`[attached: NAME sha256:FULL_HASH]`; the ref remains on the request. No summarization, filesystem
-path reads, model calls, or implicit PDF conversion occur. Invalid UTF-8 or mismatched bytes fail
-encoding before HTTP. Existing text-only encode vectors remain unchanged.
+`[attached: NAME sha256:FULL_HASH]`; the ref remains on the request. This includes markdown on
+Anthropic `@2`: a 70 KiB DESIGN.md sends only the hash stub, not its contents or a document block.
+The model cannot review those omitted contents. Raising the inline cap or adding document encoding
+requires an explicit versioned profile change (for example Anthropic `@3`); current profiles never
+silently decode text beyond 64 KiB. No summarization, filesystem path reads, model calls, or implicit
+PDF conversion occur. Invalid UTF-8 or mismatched bytes fail encoding before HTTP. Existing
+text-only encode vectors remain unchanged.
 
 Preparation checks media and existence after projection; completion reloads immutable bytes after
 the prepared record commits. Canonical requests and all journal records store refs only. Blob

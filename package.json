@@ -13,6 +13,9 @@
     "test:with-logs": "LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/outfit": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
     "@logtape/logtape": "^2.3.7",
     "@radix-ui/react-label": "^2.1.7",
     "@radix-ui/react-select": "^2.2.6",

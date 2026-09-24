@@ -24,8 +24,8 @@ architecture belongs in `docs/`.
 - `packages/core/environment/`: asynchronous event sources and renderer bindings. See
   its `README.md`.
 - `packages/core/logging/`: environment-owned diagnostic logging. See its `README.md`.
-- `packages/web/`: React 19 completion console and Bun server. It calls the completion
-  transport directly; full session UI integration is separate work.
+- `packages/web/`: React 19 brand surface and Bun server. The design system lives here;
+  session UI integration is separate work.
 
 Use `docs/core-runtime.md` and `docs/agent-flow-diagrams.md` for the underlying agent
 runtime. Use `docs/session-runtime.md` for persistence and session flows.
