@@ -447,7 +447,9 @@ export async function openSession(input: CreateSessionBody = {}) {
   };
   const configuration = {
     agent: "operator",
-    agents: new Map([["operator", { model, systemPrompt: SYSTEM, tools: ["echo", "now"] }]]),
+    agents: new Map([
+      ["operator", { model, systemPrompt: SYSTEM, tools: ["echo", "now"], successors: [] }],
+    ]),
     steps: 6,
   };
   const bindings = {
