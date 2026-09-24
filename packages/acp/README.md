@@ -15,13 +15,21 @@ and `GOOGLE_API_KEY`, respectively. `LABKIT_ACP_BASE_URL` optionally overrides t
 The example enables streaming and once-only permissions, with one agent and `successors: []`.
 Omitting successors permits handoff to all registered agents, including itself.
 
-The example journals sessions and stores blobs **in memory only**. It prints a warning to
-stderr and advertises `loadSession: false`. Restart loses both journal and blobs. Applications
-can supply their own durable `SessionPersistence`; this example does not claim restart recovery.
+The example persists under `<cwd>/.labkit/sessions/store.sqlite` and advertises
+`loadSession: true`. Bun SQLite transactions store ordered journal batches and their stable
+append IDs; a separate table holds session-scoped blobs. Blob bytes never enter journal records.
+FULL synchronous commits (with macOS fullfsync enabled) precede append receipts. Database handles
+close after every operation. Restart can load saved sessions with compatible agent configuration;
+changing the model or tool schemas may require restoring the original configuration first.
+The database is bound to its canonical workspace cwd; moving/copying it to another workspace is
+rejected. Back up the database while the agent is stopped. This is a local-disk adapter, not a
+network-filesystem or multi-host service. Discovery metadata is added to older stores without rewriting journal records. No automatic pruning is provided.
+SQLite recovery handles interrupted transactions; interrupted agent turns use core recovery and
+never rerun tools automatically. Storage errors do not authorize execution.
 
 Workspace tools are `read_file` (read), `write_file` (edit), and `list_dir` (search). Every
 location is absolute and bound to the session cwd. Parent traversal, outside paths, symlink
-components, and hard-linked files are rejected. Reads require UTF-8 and reads/writes are capped
+components, hard-linked files, and the reserved `.labkit` directory are rejected. Reads require UTF-8 and reads/writes are capped
 at 256 KiB. Listings are shallow and capped at 1,000 entries and 256 KiB of entry data. Writes
 require existing parent directories. Rejected permission prevents execution. Cancellation after
 a write starts cannot undo bytes already written. These filesystem checks are not an OS sandbox
@@ -98,6 +106,16 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
 - `session/load`: opt-in via `loadSession: true`. The factory receives sessionId and must resolve the
   compatible saved configuration/store and validate that cwd belongs to that session. No durable
   session-to-workspace directory is invented by this adapter. Duplicate live loads are rejected.
+- `session/resume`: available with `loadSession`; restores and recovers like load but emits no
+  conversation replay. Duplicate live sessions remain rejected.
+- `session/list`: opt-in through an application `listSessions(params, signal)` callback. The workspace
+  example discovers the launch cwd and workspaces seen by its factory; an explicit absolute cwd
+  filter can discover another workspace. It reads only database metadata, without restoring sessions,
+  accessing blobs or binding providers. Pages contain at most 50 entries in stable cwd/session-ID
+  order, with opaque cursors (32 retained per factory, invalidated on process restart).
+  Titles come from the first committed nonempty user text, limited to 120 characters; updatedAt is
+  captured in the same transaction as each journal append. Older untouched stores omit unavailable
+  metadata. A filtered missing store returns an empty list and is never created by discovery.
 - `session/update`: tool lifecycle/content/locations, streamed agent text and thought chunks, and
   committed nonstream assistant text. Stable completion message IDs prevent duplicate final text.
 - `session/request_permission`: once-only options, correlated through SDK requests. The core
@@ -141,7 +159,7 @@ Image, audio and embedded-resource prompt blocks are not advertised and are reje
 
 Client-supplied MCP servers are rejected, including stdio MCP (required by the full ACP baseline).
 Tools currently come from session bindings. MCP connections, client filesystem/terminal delegation,
-remembered permissions, mode/model/config switching, extra workspace roots, session list/fork/resume,
+remembered permissions, mode/model/config switching, extra workspace roots, session fork/delete,
 and HTTP transport are not implemented. No usage_update is fabricated from provider usage deltas:
 ACP requires a context-window size that core does not currently supply.
 
@@ -162,5 +180,6 @@ integration test is implied.
 Protocol references: [stdio](https://agentclientprotocol.com/protocol/v1/transports),
 [initialization](https://agentclientprotocol.com/protocol/v1/initialization),
 [session setup](https://agentclientprotocol.com/protocol/v1/session-setup),
+[session discovery](https://agentclientprotocol.com/protocol/v1/session-list),
 [prompt turns](https://agentclientprotocol.com/protocol/v1/prompt-turn),
 [TypeScript SDK](https://agentclientprotocol.com/libraries/typescript).

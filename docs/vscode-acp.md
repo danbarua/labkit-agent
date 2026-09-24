@@ -50,24 +50,61 @@ All three file tools require approval. They provide absolute file locations befo
 Only workspace files are accessible; there is no shell or client filesystem/terminal delegation.
 Client MCP servers remain rejected. Remembered approvals and model/mode controls are not implemented.
 
-This example uses **process-local memory journals and blobs** and warns on stderr. It does not
-advertise session loading. Restart loses conversations. Durable file persistence is a later step;
-there is no restart-recovery claim in this launch example.
+The example now persists journals and blobs in `.labkit/sessions/store.sqlite` inside the opened
+workspace and advertises session loading. Restart the agent to pick up this configuration change;
+old memory-only conversations cannot be recovered. Use ACP Client's saved session entry to reopen
+a newly persisted conversation. Loading requires the same compatible agent/model/tool configuration
+and workspace cwd. **ACP: Refresh Sessions** can now discover saved sessions through `session/list`.
+Unfiltered discovery covers the launch cwd and workspaces opened in the current agent process;
+a cwd filter can address another workspace directly. The adapter also supports `session/resume`
+for hosts that already retain history and do not want replay. Runtime files are ignored by this repo and blocked from the file tools. Other workspaces should
+also add `.labkit/` to their `.gitignore`.
+
+For the denial check, ask: “Use write_file to create acp-deny-check.txt containing DENY_CHECK.”
+Choose **Reject** in the permission picker. The adapter returns `stopReason: "refusal"`; the file
+must remain absent (or unchanged if it already exists). The exact refusal rendering is client-owned.
 
 ## Attachments and validation
 
 The adapter accepts local `resource_link` prompt blocks as session attachments, rejecting outside
 paths and never fetching HTTP URLs. Direct image/audio/embedded blocks remain unsupported. ACP
 Client 0.2.0 lists file attachment UI as not yet functional; local resource ingestion can be exercised
-by another ACP host or the adapter tests until that client exposes it.
+by another ACP host or the adapter tests until that client exposes it. In the installed client,
+`Attach File to Prompt` posts a `file-attached` message with no receiving webview handler; it does
+not send a `resource_link`. Typing `@file` as plain text does not attach bytes. Do not count a
+model-initiated `read_file` call as attachment ingestion.
+
+The protocol form is:
+
+```json
+{
+  "sessionId": "SESSION_ID",
+  "prompt": [
+    { "type": "text", "text": "Review the attached design" },
+    { "type": "resource_link", "name": "DESIGN.md", "uri": "file:///ABS/workspace/DESIGN.md" }
+  ]
+}
+```
+
+Send this as `session/prompt` from an ACP host that supports resource links. Tests verify that
+only refs enter the journal, that stored bytes remain usable after the original file is deleted,
+and that idle reload performs no blob reads. Persistence tests include a killed writer with an
+uncommitted transaction and independent-reader checks; they do not simulate hardware power loss.
 
 Automated coverage exercises JSON-RPC, workspace boundaries, attachment storage, permissions,
-streaming, and cancellation. No live VS Code UI test runs in CI. ACP Client 0.2.0 was installed for
-local validation, but this environment's computer-use configuration and macOS automation access
-prevented the visible UI pass. The steps above remain the manual acceptance check; a stdio test
-alone does not establish that the client's permission card and file locations render correctly.
+streaming, and cancellation. No live VS Code UI test runs in CI. A user-operated manual check on
+2026-09-24 with ACP Client 0.2.0 and `claude-sonnet-5` confirmed the `read_file` permission picker
+(allow once / reject), a completed tool call, and a README-grounded answer in VS Code chat.
+The supplied screenshots do not establish how absolute file locations render in the client;
+those locations were verified in protocol traffic. UI denial and cancellation remain separate
+manual checks.
 
 A separate live stdio smoke test passed using the workspace example with Anthropic: the model
 requested `read_file` for the absolute README path, received an `allow_once` reply, emitted
 pending/in-progress/completed tool updates and streamed a grounded answer, then returned
 `end_turn`. This verifies the real provider and protocol path, not the VS Code rendering.
+
+A follow-up live stdio check with `claude-sonnet-5` passed local resource-link ingestion,
+process exit/restart plus `session/load` after deleting the source attachment, and rejection of a
+`write_file` call. The denied prompt returned `refusal` and created no file. These were protocol
+checks; the client attachment UI limitation and manual refusal-rendering check remain separate.

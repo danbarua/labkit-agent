@@ -4,15 +4,17 @@ import {
   openaiChatV2,
   openaiResponsesV3,
 } from "@labkit-agent/core/providers";
-import { createMemoryPersistence } from "@labkit-agent/core/testing";
 
 import type { AcpOptions } from "../adapter.ts";
+import { workspaceDirectory } from "../workspace-directory.ts";
 import { workspaceFiles } from "../workspace-files.ts";
+import { workspacePersistence } from "../workspace-persistence.ts";
 import { workspaceTools } from "../workspace-tools.ts";
 
 /** Exported separately for injected-environment tests. Keys stay in transport bindings. */
 export function workspaceAgent(
   env: Readonly<Record<string, string | undefined>> = process.env,
+  directory = workspaceDirectory(),
 ): AcpOptions {
   const profiles = [anthropicMessagesV3, openaiChatV2, openaiResponsesV3, googleGenerateV3];
   const id = env.LABKIT_ACP_PROVIDER ?? anthropicMessagesV3.id;
@@ -37,26 +39,17 @@ export function workspaceAgent(
     : google
       ? { "x-goog-api-key": key }
       : { Authorization: `Bearer ${key}` };
-  let warned = false;
   return {
-    loadSession: false,
-    async sessionOptions({ cwd, sessionId, signal }) {
-      if (sessionId)
-        throw new Error(
-          "This example uses memory persistence; loading after restart is unavailable",
-        );
+    loadSession: true,
+    listSessions: (params, signal) => directory.list(params, signal),
+    async sessionOptions({ cwd, signal }) {
       signal.throwIfAborted();
       const files = await workspaceFiles(cwd);
       signal.throwIfAborted();
-      if (!warned) {
-        console.error(
-          "Labkit: session journals and blobs are process-local memory only; restart loses them. session/load is disabled.",
-        );
-        warned = true;
-      }
+      directory.remember(files.root);
       const tools = workspaceTools(files);
       return {
-        persistence: createMemoryPersistence(),
+        persistence: workspacePersistence(files.root),
         configuration: {
           agent: "workspace",
           agents: new Map([
@@ -91,10 +84,18 @@ export function workspaceAgent(
 }
 // Resolve environment only when the host opens a session; importing this example performs no I/O.
 let options: AcpOptions | undefined;
+let directory: ReturnType<typeof workspaceDirectory> | undefined;
+function discovery() {
+  directory ??= workspaceDirectory();
+  return directory;
+}
 export default {
-  loadSession: false,
+  loadSession: true,
+  listSessions: (params, signal) => {
+    return discovery().list(params, signal);
+  },
   sessionOptions: (context) => {
-    options ??= workspaceAgent();
+    options ??= workspaceAgent(process.env, discovery());
     return options.sessionOptions(context);
   },
 } satisfies AcpOptions;

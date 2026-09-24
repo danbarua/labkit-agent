@@ -18,6 +18,12 @@ export async function workspaceFiles(cwd: string) {
     if (!raw || raw.includes("\0") || raw.split(/[\\/]/).includes(".."))
       throw new Error("Path must stay inside the workspace; parent traversal is not allowed");
     const candidate = resolve(requestedRoot, raw);
+    if (
+      [relative(requestedRoot, candidate), relative(root, candidate)].some(
+        (value) => value === ".labkit" || value.startsWith(`.labkit${sep}`),
+      )
+    )
+      throw new Error("The .labkit directory is reserved for session storage");
     if (inside(requestedRoot, candidate)) return resolve(root, relative(requestedRoot, candidate));
     if (inside(root, candidate)) return candidate;
     throw new Error("Path is outside the workspace");

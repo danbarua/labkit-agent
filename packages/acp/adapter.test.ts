@@ -841,3 +841,206 @@ test("cancel during attachment storage never admits a user event or starts compl
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("durable ACP reload resolves stored attachments without source files; denied write returns refusal", async () => {
+  const { mkdtemp, writeFile, rm, access } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { openaiChat } = await import("@labkit-agent/core/providers");
+  const { workspacePersistence } = await import("./workspace-persistence.ts");
+  const { workspaceFiles } = await import("./workspace-files.ts");
+  const { workspaceTools } = await import("./workspace-tools.ts");
+  const cwd = await mkdtemp(join(tmpdir(), "labkit-acp-durable-"));
+  const document = "# Blob-only document sentinel 27381";
+  await writeFile(join(cwd, "DESIGN.md"), document);
+  let blobReads = 0;
+  let completions = 0;
+  const options: AcpOptions = {
+    loadSession: true,
+    sessionOptions: async () => {
+      const tools = workspaceTools(await workspaceFiles(cwd));
+      const persistence = workspacePersistence(cwd);
+      return {
+        persistence: {
+          ...persistence,
+          getBlob: (...args) => {
+            blobReads++;
+            return persistence.getBlob(...args);
+          },
+        },
+        configuration: {
+          agent: "workspace",
+          agents: new Map([
+            ["workspace", { model: "m", tools: [...tools.keys()], successors: [] }],
+          ]),
+          steps: 6,
+          policy: { provider: openaiChat.id, permissions: "ask" },
+        },
+        bindings: {
+          tools,
+          providers: new Map([
+            [
+              openaiChat.id,
+              {
+                profile: openaiChat,
+                transport: {
+                  baseUrl: "https://test.invalid",
+                  fetch: (async (_url, init) => {
+                    completions++;
+                    const body = String(init?.body);
+                    if (body.includes("WRITE_DENIED"))
+                      return Response.json({
+                        choices: [
+                          {
+                            message: {
+                              content: null,
+                              tool_calls: [
+                                {
+                                  id: "write-one",
+                                  type: "function",
+                                  function: {
+                                    name: "write_file",
+                                    arguments: JSON.stringify({
+                                      path: "denied.txt",
+                                      text: "must not write",
+                                    }),
+                                  },
+                                },
+                              ],
+                            },
+                          },
+                        ],
+                      });
+                    expect(body).toContain(document);
+                    return Response.json({
+                      choices: [{ message: { content: "Attachment read" } }],
+                    });
+                  }) as typeof fetch,
+                },
+              },
+            ],
+          ]),
+        },
+      };
+    },
+  };
+  let h = harness(options);
+  try {
+    await h.initialize();
+    const sessionId = (await h.request("session/new", { cwd, mcpServers: [] })).result.sessionId;
+    expect(
+      (
+        await h.request("session/prompt", {
+          sessionId,
+          prompt: [
+            { type: "text", text: "Review" },
+            { type: "resource_link", name: "DESIGN.md", uri: "DESIGN.md" },
+          ],
+        })
+      ).result.stopReason,
+    ).toBe("end_turn");
+    await h.close();
+    await rm(join(cwd, "DESIGN.md"));
+    h = harness(options);
+    await h.initialize();
+    const before = blobReads;
+    expect(
+      (await h.request("session/load", { cwd, sessionId, mcpServers: [] })).error,
+    ).toBeUndefined();
+    expect(blobReads).toBe(before);
+    expect(completions).toBe(1);
+    expect(
+      (
+        await h.request("session/prompt", {
+          sessionId,
+          prompt: [{ type: "text", text: "Review that attachment again" }],
+        })
+      ).result.stopReason,
+    ).toBe("end_turn");
+    expect(blobReads).toBeGreaterThan(before);
+    const denialSession = (await h.request("session/new", { cwd, mcpServers: [] })).result
+      .sessionId;
+    const pending = await h.start("session/prompt", {
+      sessionId: denialSession,
+      prompt: [{ type: "text", text: "WRITE_DENIED" }],
+    });
+    await until(() => h.messages.some((m) => m.method === "session/request_permission"));
+    const permission = h.messages.find((m) => m.method === "session/request_permission")!;
+    expect(permission.params.toolCall).toMatchObject({
+      kind: "edit",
+      locations: [
+        { path: join(await import("node:fs/promises").then((m) => m.realpath(cwd)), "denied.txt") },
+      ],
+    });
+    const option = permission.params.options.find((value: any) => value.kind === "reject_once");
+    await h.send({
+      jsonrpc: "2.0",
+      id: permission.id,
+      result: { outcome: { outcome: "selected", optionId: option.optionId } },
+    });
+    expect((await h.response(pending)).result.stopReason).toBe("refusal");
+    await expect(access(join(cwd, "denied.txt"))).rejects.toThrow();
+    expect(completions).toBe(3);
+  } finally {
+    await h.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("resume advertises durable support and restores without replay; list is gated and read-only", async () => {
+  let completions = 0;
+  const base = setup({
+    complete: () => {
+      completions++;
+      return answer;
+    },
+  });
+  const listRequests: unknown[] = [];
+  const options: AcpOptions = {
+    ...base.options,
+    listSessions: (params, signal) => {
+      signal.throwIfAborted();
+      listRequests.push(params);
+      return { sessions: [] };
+    },
+  };
+  let h = harness(options);
+  try {
+    expect((await h.request("session/list", {})).error?.code).toBe(-32002);
+    expect((await h.initialize()).result.agentCapabilities.sessionCapabilities).toMatchObject({
+      list: {},
+      resume: {},
+    });
+    expect((await h.request("session/list", { cwd: "relative" })).error?.code).toBe(-32602);
+    expect((await h.request("session/list", {})).result).toEqual({ sessions: [] });
+    expect(listRequests).toHaveLength(1);
+    const id = await h.newSession();
+    await h.request("session/prompt", prompt(id));
+    await h.close();
+    h = harness(options);
+    await h.initialize();
+    expect((await h.request("session/resume", { sessionId: id, cwd: "/tmp" })).result).toEqual({});
+    expect(h.updates()).toHaveLength(0);
+    expect(completions).toBe(1);
+    expect((await h.request("session/resume", { sessionId: id, cwd: "/tmp" })).error?.code).toBe(
+      -32602,
+    );
+    expect((await h.request("session/prompt", prompt(id))).result.stopReason).toBe("end_turn");
+    expect(completions).toBe(2);
+  } finally {
+    await h.close();
+  }
+  const unsupported = harness({ ...base.options, loadSession: false });
+  try {
+    const capabilities = (await unsupported.initialize()).result.agentCapabilities
+      .sessionCapabilities;
+    expect(capabilities.list).toBeUndefined();
+    expect(capabilities.resume).toBeUndefined();
+    expect((await unsupported.request("session/list", {})).error?.code).toBe(-32601);
+    expect(
+      (await unsupported.request("session/resume", { sessionId: "none", cwd: "/tmp" })).error?.code,
+    ).toBe(-32601);
+  } finally {
+    await unsupported.close();
+  }
+});

@@ -6,6 +6,8 @@ import {
   RequestError,
   type AgentConnection,
   type AgentContext,
+  type ListSessionsRequest,
+  type ListSessionsResponse,
   type NewSessionRequest,
   type SessionUpdate,
   type Stream,
@@ -36,6 +38,11 @@ export type AcpOptions = Readonly<{
   ) => BoundSessionOptions | Promise<BoundSessionOptions>;
   /** Enable only when sessionOptions can resolve compatible persistence/configuration for saved IDs. */
   loadSession?: boolean;
+  /** Discovery only: do not restore sessions or read blob bytes. */
+  listSessions?: (
+    params: ListSessionsRequest,
+    signal: AbortSignal,
+  ) => ListSessionsResponse | Promise<ListSessionsResponse>;
   agentInfo?: { name: string; version: string; title?: string };
 }>;
 type Session = {
@@ -267,6 +274,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     params: NewSessionRequest & { sessionId?: string },
     client: AgentContext,
     signal: AbortSignal,
+    replay = true,
   ) {
     requireInitialized();
     if (!isAbsolute(params.cwd))
@@ -372,7 +380,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       }
       sessions.set(sessionId, Object.assign(entry, { runtime }));
       entry.revision = runtime.snapshot.durable.revision;
-      if (id) {
+      if (id && replay) {
         const durable = runtime.snapshot.durable;
         const state = durable.conversation;
         const evidence = toolEvidence(durable);
@@ -401,7 +409,11 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           loadSession,
           promptCapabilities: { image: false, audio: false, embeddedContext: false },
           mcpCapabilities: { http: false, sse: false },
-          sessionCapabilities: { close: {} },
+          sessionCapabilities: {
+            close: {},
+            ...(loadSession ? { resume: {} } : {}),
+            ...(options.listSessions ? { list: {} } : {}),
+          },
         },
       };
     })
@@ -410,6 +422,18 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       if (!loadSession) throw RequestError.methodNotFound("session/load");
       await open(params, client, signal);
       return {};
+    })
+    .onRequest("session/resume", async ({ params, client, signal }) => {
+      if (!loadSession) throw RequestError.methodNotFound("session/resume");
+      await open({ ...params, mcpServers: params.mcpServers ?? [] }, client, signal, false);
+      return {};
+    })
+    .onRequest("session/list", async ({ params, signal }) => {
+      requireInitialized();
+      if (!options.listSessions) throw RequestError.methodNotFound("session/list");
+      if (params.cwd != null && !isAbsolute(params.cwd))
+        throw RequestError.invalidParams(undefined, "cwd must be absolute");
+      return options.listSessions(params, signal);
     })
     .onRequest("session/prompt", async ({ params, client, signal }) => {
       const entry = lookup(params.sessionId);

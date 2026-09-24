@@ -155,7 +155,7 @@ test("permission rejection for write_file preserves bytes; approved execution re
   }
 });
 
-test("workspace example validates environment, disables load and self-handoff, and journals no credentials", async () => {
+test("workspace example validates environment, enables load and disables self-handoff, and journals no credentials", async () => {
   const f = await fixture();
   try {
     expect(() => workspaceAgent({})).toThrow("LABKIT_ACP_MODEL");
@@ -171,7 +171,7 @@ test("workspace example validates environment, disables load and self-handoff, a
         LABKIT_ACP_MODEL: "m",
         [key!]: "TEST_SECRET",
       });
-      expect(agent.loadSession).toBe(false);
+      expect(agent.loadSession).toBe(true);
       const options = await agent.sessionOptions({ cwd: f.cwd, signal: signal() });
       expect(options.configuration.agents.get("workspace")?.successors).toEqual([]);
       expect(options.configuration.policy).toMatchObject({
@@ -180,9 +180,6 @@ test("workspace example validates environment, disables load and self-handoff, a
         provider,
       });
       expect(JSON.stringify(options.configuration)).not.toContain("TEST_SECRET");
-      await expect(
-        agent.sessionOptions({ cwd: f.cwd, sessionId: "old", signal: signal() }),
-      ).rejects.toThrow("memory");
     }
   } finally {
     await f.cleanup();
