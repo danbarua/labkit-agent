@@ -45,7 +45,10 @@ calls. Context is not an approval token, and a tool called directly outside the 
 request. Return `{ completion, continuationPayload? }`; the host validates the untrusted response
 before accepting it. The public request/response types and the
 [executable exchange](../session/examples/completion-binding.ts) show tool arguments and messages.
-Use [provider bindings](../providers/README.md) for supported HTTP dialects.
+Use [provider bindings](../providers/README.md) for supported HTTP dialects. Before invoking the
+completion port, the host logs its full ordered system messages as `completion.system_prompt`
+at INFO. This shows the instructions actually supplied to that operation, including committed
+shared-instruction changes; restoration alone does not emit a fictitious completion.
 
 Use the supplied blob resolver for attachments and continuations; it is scoped to that operation.
 Do not retain it in domain state. The session arranges blob storage and loading while the host owns

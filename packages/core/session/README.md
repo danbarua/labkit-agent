@@ -172,7 +172,10 @@ messages; compaction drops them. Applications should not manufacture or edit the
 Configure [environment logging](../logging/README.md) before creating sessions. Follow a terminal
 failure's session/turn/operation IDs to `child.failed` and provider records for stack and transport
 details. For exact request/response bodies, bind [provider capture](../environment/README.md#retained-provider-traffic);
-ordinary lifecycle logs do not contain complete prompts. Core owns neither sink nor retention.
+`completion.system_prompt` logs the full ordered system messages at INFO before each completion,
+with session, turn, agent, model, and operation IDs. The readable journal includes configured agent
+prompts and the committed shared-instruction history. User/file contents and full HTTP bodies remain
+in the journal or provider capture. Core owns neither sink nor retention.
 
 ```sh
 LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/session/consumer-contract.test.ts

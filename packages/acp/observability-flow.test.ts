@@ -176,6 +176,13 @@ test("persisted CLI trace joins ACP, permission, tool and provider failure acros
     );
     const trace = records.filter((record) => record.sessionId === sessionId);
     expect(trace.length).toBeGreaterThan(10);
+    const instructions = trace.filter((record) => record.event === "completion.system_prompt");
+    expect(instructions).toHaveLength(3);
+    expect(instructions[0].level).toBe("info");
+    expect(instructions[0].systemMessages[0].content).toContain(`rooted at ${root}`);
+    expect(instructions[0].systemMessages[0].content).toContain("Do not claim to have read a file");
+    expect(instructions[0].childId).toBeDefined();
+    expect(instructions[0].turnId).toBeDefined();
     const failure = trace.find((record) => record.event === "provider.http.rejected");
     expect(failure).toBeDefined();
     expect(JSON.stringify(failure)).toContain("req-provider-failure-123");

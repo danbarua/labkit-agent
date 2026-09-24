@@ -276,3 +276,68 @@ test("restore registry drift identifies changed fields and missing tools without
     capture.close();
   }
 });
+
+test("session logs expose full system instructions actually supplied before and after reconfiguration", async () => {
+  const { journalMarkdown } = await import("./session-log.ts");
+  const capture = observeLogs();
+  const prompt =
+    "Review experimental claims against measured evidence.\nReport uncertainty and cite the source files.";
+  const options = testOptions({
+    agents: new Map([["reviewer", { model: "review-model", systemPrompt: prompt }]]),
+    agent: "reviewer",
+    systemInputs: ["Do not modify experiment data."],
+  });
+  const session = await createSession(options);
+  try {
+    await session.input("Review the measurements").settled;
+    expect(await session.updateSystem(["Limit this review to calibration errors."])).toMatchObject({
+      kind: "accepted",
+    });
+    await session.input("Review the calibration").settled;
+    const instructions = capture.records.filter(
+      (record) => record.event === "completion.system_prompt",
+    );
+    expect(instructions).toHaveLength(2);
+    expect(instructions[0]).toMatchObject({
+      level: "info",
+      fields: {
+        sessionId: session.snapshot.durable.conversation.sessionId,
+        agentId: "reviewer",
+        model: "review-model",
+        systemMessages: [
+          { role: "system", content: prompt },
+          { role: "system", content: "Do not modify experiment data." },
+        ],
+      },
+    });
+    expect(instructions[1]!.fields.systemMessages).toEqual([
+      { role: "system", content: prompt },
+      { role: "system", content: "Limit this review to calibration errors." },
+    ]);
+    expect(instructions[0]!.fields.turnId).toBeDefined();
+    expect(instructions[0]!.fields.childId).toBeDefined();
+    const restored = await restoreSession(options, session.snapshot.durable.conversation.sessionId);
+    try {
+      const text = journalMarkdown(restored.snapshot.durable);
+      expect(text).toContain(
+        prompt
+          .split("\n")
+          .map((line) => `> ${line}`)
+          .join("\n"),
+      );
+      expect(text).toContain("Do not modify experiment data.");
+      expect(text).toContain("Limit this review to calibration errors.");
+      expect(
+        capture.records.filter((record) => record.event === "completion.system_prompt"),
+      ).toHaveLength(2);
+      expect(
+        capture.records.filter((record) => ["warning", "error"].includes(record.level)),
+      ).toEqual([]);
+    } finally {
+      await restored.close();
+    }
+  } finally {
+    await session.close();
+    capture.close();
+  }
+});

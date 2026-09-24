@@ -25,8 +25,8 @@ session does not close caller-owned persistence or global logging.
 
 Use full capture when you need to inspect exactly what reached a provider, especially malformed
 JSON or a truncated stream. The journal records admitted runtime data; it cannot substitute for a
-raw response that failed admission. Normal diagnostic logs retain causes and identities but omit
-complete prompt/file bodies.
+raw response that failed admission. Diagnostic logs retain causes, identities, and the full ordered system messages in
+`completion.system_prompt` at INFO. Complete user/file bodies and provider responses require capture.
 
 ```ts
 import { createProviderCapture } from "@labkit-agent/core/environment/provider-capture";

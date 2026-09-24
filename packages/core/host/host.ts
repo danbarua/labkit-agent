@@ -415,6 +415,16 @@ export function createHost(
             run: async (request, signal) => {
               const blobs = await context.loadBlobs?.(request, signal, true);
               signal.throwIfAborted();
+              diagnostic("provider", "info", "completion.system_prompt", {
+                sessionId: bindings.sessionId,
+                turnId,
+                childId: command.child.id,
+                agentId: command.turn.agent,
+                provider: request.provider,
+                model: request.model,
+                message: "System instructions supplied to this completion, in order",
+                systemMessages: request.messages.filter((message) => message.role === "system"),
+              });
               const raw = await bindings.complete(
                 request,
                 signal,

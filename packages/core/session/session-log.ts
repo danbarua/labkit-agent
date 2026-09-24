@@ -940,6 +940,37 @@ export function journalMarkdown(
       `Origin: ${c.origin.kind} of session \`${c.origin.parent}\` at parent sequence ${c.origin.sequence}.`,
       "",
     );
+  lines.push("## Agent system prompts", "");
+  for (const [id, agent] of state.configuration.agents)
+    lines.push(
+      `### ${label(id)}`,
+      "",
+      agent.systemPrompt ? quote(agent.systemPrompt) : "No configured system prompt.",
+      "",
+    );
+  const instructionRecords = state.records.flatMap((record) => {
+    const body = record.body;
+    if (body.kind === "created")
+      return [
+        {
+          revision: record.revision,
+          version: body.seed.systemVersion,
+          inputs: body.seed.systemInputs,
+        },
+      ];
+    if (body.kind === "system")
+      return [{ revision: record.revision, version: body.version, inputs: body.inputs }];
+    return [];
+  });
+  lines.push("## Session instruction history", "");
+  for (const entry of instructionRecords)
+    lines.push(
+      `### Revision ${entry.revision} — instruction version ${entry.version}`,
+      "",
+      ...(entry.inputs.length
+        ? entry.inputs.flatMap((text) => [quote(text), ""])
+        : ["No shared instructions.", ""]),
+    );
   if (state.systemInputs.length)
     lines.push(
       "## Shared instructions",
