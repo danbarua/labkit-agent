@@ -163,6 +163,7 @@ test("workspace example validates environment, enables load and disables self-ha
     expect(() => workspaceAgent({ LABKIT_ACP_MODEL: "m" })).toThrow("ANTHROPIC_API_KEY");
     for (const [provider, key] of [
       ["anthropic-messages@3", "ANTHROPIC_API_KEY"],
+      ["anthropic-messages@4", "ANTHROPIC_API_KEY"],
       ["openai-chat@2", "OPENAI_API_KEY"],
       ["openai-responses@3", "OPENAI_API_KEY"],
       ["google-generate@3", "GOOGLE_API_KEY"],

@@ -10,6 +10,7 @@ export { openaiResponsesV2 } from "./openai-responses-v2.ts";
 export {
   openaiChatV2,
   anthropicMessagesV3,
+  anthropicMessagesV4,
   googleGenerateV3,
   openaiResponsesV3,
 } from "./streaming-profiles.ts";

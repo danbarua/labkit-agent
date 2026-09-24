@@ -21,6 +21,12 @@ model comes from `LABKIT_ACP_MODEL`; optional comma-separated `LABKIT_ACP_MODELS
 models for the same bound provider. No catalog or model availability is inferred. Thinking choices
 come from the versioned profile capability (off plus effort levels or adaptive/default budget).
 
+For Sonnet 5, set `LABKIT_ACP_PROVIDER=anthropic-messages@4` and start a new session. This profile
+sends native adaptive thinking; @3 retains the manual 1024-token budget required by older models.
+Sonnet 5 rejects that manual format with HTTP 400. The UI labels @4's choice Adaptive and @3's
+choice Provider budget (1024 tokens). The default profile remains @3 for compatibility; reopen old
+sessions with their original provider configuration.
+
 The example enables experimental session forking and persists under `<cwd>/.labkit/sessions/store.sqlite` and advertises
 `loadSession: true`. Bun SQLite transactions store ordered journal batches and their stable
 append IDs; a separate table holds session-scoped blobs. Blob bytes never enter journal records.

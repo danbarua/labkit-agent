@@ -1,5 +1,6 @@
 import {
   anthropicMessagesV3,
+  anthropicMessagesV4,
   googleGenerateV3,
   openaiChatV2,
   openaiResponsesV3,
@@ -19,7 +20,13 @@ export function workspaceAgent(
   env: Readonly<Record<string, string | undefined>> = process.env,
   directory = workspaceDirectory(),
 ): AcpOptions {
-  const profiles = [anthropicMessagesV3, openaiChatV2, openaiResponsesV3, googleGenerateV3];
+  const profiles = [
+    anthropicMessagesV3,
+    anthropicMessagesV4,
+    openaiChatV2,
+    openaiResponsesV3,
+    googleGenerateV3,
+  ];
   const id = env.LABKIT_ACP_PROVIDER ?? anthropicMessagesV3.id;
   const profile = profiles.find((entry) => entry.id === id);
   if (!profile) throw new Error("LABKIT_ACP_PROVIDER must name a supported streaming profile");
@@ -132,7 +139,13 @@ export function workspaceAgent(
           options: thinking.map((value) => ({
             value,
             name:
-              value === "off" ? "Off" : value === "adaptive" ? "Adaptive / provider budget" : value,
+              value === "off"
+                ? "Off"
+                : value === "adaptive"
+                  ? id === anthropicMessagesV4.id
+                    ? "Adaptive"
+                    : "Provider budget (1024 tokens)"
+                  : value,
             patch: { thinking: value },
           })),
         },

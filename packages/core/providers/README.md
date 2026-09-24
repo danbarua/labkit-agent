@@ -215,8 +215,15 @@ See [OpenAI stateless reasoning](https://developers.openai.com/api/docs/guides/r
 models supporting manual extended thinking (for example Claude Sonnet 4.5):
 `thinking:{type:"enabled",budget_tokens:1024}` and an explicit `maxOutputTokens > 1024`.
 The off/omitted path sends disabled thinking and defaults max_tokens to 1024. Models requiring
-native adaptive thinking need a separate versioned profile; this profile never switches wire
+native adaptive thinking use `anthropic-messages@4`; this profile never switches wire
 shapes based on model names. See [Anthropic extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking).
+
+`anthropic-messages@4` supports streaming and sends `thinking: { type: "adaptive" }` for policy
+adaptive, without `budget_tokens` or the manual budget's output-token minimum. Off/omitted explicitly
+disables thinking; the default max_tokens remains 1024. It reuses @3's signed continuation, media,
+and stream assembly contracts, with envelopes owned by the new profile ID. Choose this profile for
+native-adaptive models such as Sonnet 5, which rejects manual extended thinking. Existing @2/@3
+wire behavior is unchanged. The caller selects a compatible model; no model-name inference is used.
 
 Decode returns `{ completion, continuationPayload? }`; transport validates JSON and freezes it.
 Profiles stay owner-blind. The host admits completion and stamps the payload with the profile ID

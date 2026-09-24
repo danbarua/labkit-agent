@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { anthropicMessagesV2 } from "./anthropic-messages-v2.ts";
+import { anthropicMessagesProfile, anthropicMessagesV2 } from "./anthropic-messages-v2.ts";
 import { googleGenerateV2 } from "./google-generate-v2.ts";
 import { openaiChat } from "./openai-chat.ts";
 import { openaiResponsesV2 } from "./openai-responses-v2.ts";
@@ -65,6 +65,12 @@ export const openaiChatV2 = streamingProfile(openaiChat, "openai-chat@2", chatAs
 export const anthropicMessagesV3 = streamingProfile(
   anthropicMessagesV2,
   "anthropic-messages@3",
+  anthropicAssembler,
+  "messages",
+);
+export const anthropicMessagesV4 = streamingProfile(
+  anthropicMessagesProfile("anthropic-messages@4", true),
+  "anthropic-messages@4",
   anthropicAssembler,
   "messages",
 );
