@@ -344,3 +344,34 @@ test("failed workspace reads provide an executable discovery step and preserve t
     await f.cleanup();
   }
 });
+
+test("read_file ranges can read beyond the full-file byte cap with correct UTF-8 and line boundaries", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(
+      join(f.cwd, "large.txt"),
+      "padding\n".repeat(40000) + "first 🌍\r\nsecond\nlast",
+    );
+    const read = f.tools.get("read_file")!;
+    const run = async (range: { line?: number; limit?: number }) =>
+      read.run(await read.parseInput({ path: "large.txt", ...range }), signal());
+    await expect(run({})).rejects.toThrow("exceeds");
+    expect(await run({ line: 40001, limit: 2 })).toMatchObject({ text: "first 🌍\r\nsecond\n" });
+    expect(await run({ line: 40003 })).toMatchObject({ text: "last" });
+    expect(await run({ line: 40004, limit: 1 })).toMatchObject({ text: "" });
+    expect(await run({ limit: 1 })).toMatchObject({ text: "padding\n" });
+    await expect(read.parseInput({ path: "large.txt", line: 0 })).rejects.toThrow();
+    await expect(read.parseInput({ path: "large.txt", limit: -1 })).rejects.toThrow();
+    await writeFile(join(f.cwd, "huge-line.txt"), "x".repeat(MAX_FILE_BYTES + 1));
+    await expect(
+      read.run(await read.parseInput({ path: "huge-line.txt", line: 1, limit: 1 }), signal()),
+    ).rejects.toThrow("single line");
+    const aborted = new AbortController();
+    aborted.abort(new Error("Stop range scan"));
+    await expect(
+      f.files.readText("large.txt", aborted.signal, undefined, { line: 40001, limit: 1 }),
+    ).rejects.toThrow("Stop range scan");
+  } finally {
+    await f.cleanup();
+  }
+});

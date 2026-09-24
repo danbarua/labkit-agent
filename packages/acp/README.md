@@ -82,7 +82,8 @@ software does not migrate historical journal formats. See
 
 The workspace harness reports ordinary tool failures as tool results and continues the turn.
 A missing file includes its path, underlying error, and a concrete `list_dir` request for discovering
-existing paths. Invalid arguments return the validator’s field-level errors without execution or a
+existing paths. `read_file` also accepts `line` and `limit` to read large files in sections;
+those parameters are forwarded to editor reads so unsaved content remains authoritative. Invalid arguments return the validator’s field-level errors without execution or a
 permission prompt; other calls in the batch finish, and the
 model can choose a corrected action. Failed tool cards and original journal outcomes stay failed.
 No tool is automatically retried. Permission refusal, cancellation, deadlines, and persistence

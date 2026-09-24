@@ -4838,3 +4838,72 @@ test("live command catalogs update and clear without changing admitted prompts o
   expect(updated[0].sessionId).toBeString();
   expect(records.filter((record) => record.event === "acp.commands.rejected")).toHaveLength(2);
 });
+
+test("read_file forwards line ranges to the ACP client and retains range diagnostics", async () => {
+  const { workspaceFiles } = await import("./workspace-files.ts");
+  const { workspaceTools } = await import("./workspace-tools.ts");
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = `.session-artifacts/acp-file-range/${crypto.randomUUID()}`;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    let completions = 0;
+    const base = setup({
+      complete: (request) => {
+        if (++completions === 1)
+          return {
+            kind: "tools",
+            text: "Read the relevant lines",
+            calls: [
+              { id: "range", name: "read_file", args: { path: "note.txt", line: 10, limit: 3 } },
+            ],
+          };
+        expect(request.messages.find((message) => message.role === "tool")!.content).toContain(
+          "Unsaved editor lines",
+        );
+        return answer;
+      },
+    });
+    const h = harness({
+      ...base.options,
+      sessionOptions: async (context) => {
+        const options = await base.options.sessionOptions(context);
+        return {
+          ...options,
+          configuration: {
+            ...options.configuration,
+            policy: { permissions: "off" },
+            agents: new Map([["a", { model: "m", tools: ["read_file"] }]]),
+          },
+          bindings: {
+            ...options.bindings,
+            tools: workspaceTools(await workspaceFiles(context.cwd), context.clientFiles),
+          },
+        };
+      },
+    });
+    try {
+      await h.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: { fs: { readTextFile: true } },
+      });
+      const sessionId = await h.newSession();
+      const turn = await h.start("session/prompt", prompt(sessionId));
+      await until(() => h.messages.some((message) => message.method === "fs/read_text_file"));
+      const request = h.messages.find((message) => message.method === "fs/read_text_file")!;
+      expect(request.params).toMatchObject({ sessionId, line: 10, limit: 3 });
+      expect(request.params.path).toEndWith("/note.txt");
+      await h.send({ jsonrpc: "2.0", id: request.id, result: { content: "Unsaved editor lines" } });
+      expect((await h.response(turn)).result.stopReason).toBe("end_turn");
+    } finally {
+      await h.close();
+    }
+  });
+  const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(records.find((record) => record.event === "client_file.completed")).toMatchObject({
+    line: 10,
+    limit: 3,
+  });
+  expect(records.filter((record) => ["warning", "error"].includes(record.level))).toHaveLength(0);
+});

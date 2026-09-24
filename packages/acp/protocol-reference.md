@@ -48,7 +48,12 @@ Workspace file tools are `read_file` (read), `write_file` (edit), and `list_dir`
 location is absolute and bound to the session workspace roots. Parent traversal, outside paths, and the
 reserved `.labkit` directory are rejected. Local filesystem operations additionally reject symlink
 components and hard-linked files. Reads require UTF-8 and reads/writes are capped
-at 256 KiB. Listings are shallow and capped at 1,000 entries and 256 KiB of entry data. Writes
+at 256 KiB per result/write. `read_file` accepts optional `line` (1-based starting line) and `limit`
+(maximum line count). Omit both to read the complete file. A range can read part of a file larger
+than 256 KiB; local reads scan with bounded memory and retain original line endings. A start beyond
+EOF returns empty text. A single selected line larger than the result cap is rejected explicitly.
+The same range is forwarded to `fs/read_text_file` when the client owns reads, preserving unsaved
+editor content rather than substituting disk contents. Listings are shallow and capped at 1,000 entries and 256 KiB of entry data. Writes
 require existing parent directories. Rejected permission prevents execution. Cancellation after
 a write starts cannot undo bytes already written. These filesystem checks are not an OS sandbox
 against hostile concurrent ancestor-directory renames. Command execution is disabled by default.
@@ -69,6 +74,8 @@ handling, and editor write semantics. Local inode checks cannot constrain a remo
 
 Factories receive optional `SessionOptionsContext.clientFiles` methods (`readText`, `write`),
 with session identity and client capabilities already bound. Only advertised methods are present.
+`readText(path, signal, context?, range?)` accepts `{ line?, limit? }` as its final argument; range
+validation occurs before dispatch. Diagnostic request/completion/failure records include that range.
 Bind these ports inside tools, not during factory setup. The workspace example invokes them only
 inside the existing permission-gated tool operation; a rejection sends no filesystem request.
 RPCs use the tool AbortSignal and a 60-second timeout; disconnect cancels outstanding waits.

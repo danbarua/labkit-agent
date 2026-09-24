@@ -17,6 +17,8 @@ export {
 
 export type { ClientFiles } from "./client-files.ts";
 
+export type { FileReadRange } from "./workspace-files.ts";
+
 export { terminalTool, type ClientTerminal } from "./client-terminal.ts";
 
 export { planTool, type PlanEntries, type PlanSink } from "./plan.ts";
