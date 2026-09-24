@@ -9,14 +9,7 @@ import {
   type AgentMessage,
 } from "../../core/agent/types.ts";
 import type { PermissionPort, PermissionRequest } from "../../core/host/ports.ts";
-import {
-  anthropicMessagesV3,
-  googleGenerateV3,
-  openaiChatV2,
-  openaiResponses,
-  openaiResponsesV3,
-  type CompletionProfile,
-} from "../../core/providers/index.ts";
+import { openaiResponses, type CompletionProfile } from "../../core/providers/index.ts";
 import {
   createSession,
   defineTool,
@@ -40,6 +33,7 @@ import type {
   PublicReceipt,
   SessionView,
 } from "../protocol.ts";
+import { wiredProviders, type WiredModel, type WiredProvider } from "./model-catalog.ts";
 
 const SYSTEM = "You are a lab operator assistant. Be concise. Use echo and now when they help.";
 const FIXTURE_DELAY_MS = Number(process.env.LABKIT_FIXTURE_DELAY_MS ?? 1500);
@@ -54,21 +48,9 @@ const ADMITTED: Record<string, true> = {
 
 type Subscriber = (event: ConsoleEvent) => void;
 
-type CatalogModel = {
-  id: string;
-  label: string;
-  wireModel: string;
-  profile: CompletionProfile;
-};
+type CatalogModel = WiredModel;
 
-type CatalogProvider = {
-  id: string;
-  label: string;
-  defaultModel: string;
-  baseUrl: string;
-  headers: Record<string, string>;
-  models: CatalogModel[];
-};
+type CatalogProvider = WiredProvider;
 
 type PendingPermission = {
   request: PermissionRequest;
@@ -97,59 +79,18 @@ function thinkingChoices(profile: CompletionProfile) {
 }
 
 function model(id: string, label: string, profile: CompletionProfile): CatalogModel {
-  return { id, label, wireModel: id, profile };
+  return {
+    id,
+    label,
+    wireModel: id,
+    profile,
+    thinking: thinkingChoices(profile),
+    omitThinkingWhenOff: profile.capabilities.thinking.mode === "effort",
+  };
 }
 
-function providerCatalog(): CatalogProvider[] {
-  const openai = process.env.OPENAI_API_KEY;
-  const anthropic = process.env.ANTHROPIC_API_KEY;
-  const google = process.env.GOOGLE_API_KEY;
-  const xai = process.env.XAI_API_KEY;
-  const catalog: CatalogProvider[] = [];
-  if (openai) {
-    catalog.push({
-      id: "openai",
-      label: "OpenAI",
-      defaultModel: "gpt-4.1-mini",
-      baseUrl: "https://api.openai.com/v1",
-      headers: { Authorization: `Bearer ${openai}` },
-      models: [
-        model("gpt-4.1-mini", "GPT-4.1 mini", openaiResponsesV3),
-        model("gpt-4.1", "GPT-4.1", openaiResponsesV3),
-      ],
-    });
-  }
-  if (xai) {
-    catalog.push({
-      id: "xai",
-      label: "xAI",
-      defaultModel: "grok-3",
-      baseUrl: "https://api.x.ai/v1",
-      headers: { Authorization: `Bearer ${xai}` },
-      models: [model("grok-3", "Grok 3", openaiChatV2)],
-    });
-  }
-  if (anthropic) {
-    catalog.push({
-      id: "anthropic",
-      label: "Anthropic",
-      defaultModel: "claude-sonnet-4-5",
-      baseUrl: "https://api.anthropic.com/v1",
-      headers: { "x-api-key": anthropic },
-      models: [model("claude-sonnet-4-5", "Claude Sonnet 4.5", anthropicMessagesV3)],
-    });
-  }
-  if (google) {
-    catalog.push({
-      id: "google",
-      label: "Google",
-      defaultModel: "gemini-2.5-flash",
-      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-      headers: { "x-goog-api-key": google },
-      models: [model("gemini-2.5-flash", "Gemini 2.5 Flash", googleGenerateV3)],
-    });
-  }
-  return catalog;
+function providerCatalog() {
+  return wiredProviders();
 }
 
 function fixtureProvider(): CatalogProvider {
@@ -169,20 +110,24 @@ function publicProvider(provider: CatalogProvider): ProviderOption {
     id: provider.id,
     label: provider.label,
     stream: provider.models.some((entry) => entry.profile.capabilities.stream),
-    thinking: thinkingChoices(fallback?.profile ?? openaiResponses),
+    thinking: fallback?.thinking ?? ["off"],
     media: [...new Set(provider.models.flatMap((entry) => entry.profile.capabilities.media))],
     defaultModel: provider.defaultModel,
     models: provider.models.map((entry) => ({
       id: entry.id,
       label: entry.label,
       stream: entry.profile.capabilities.stream,
-      thinking: thinkingChoices(entry.profile),
+      thinking: entry.thinking,
+      ...(entry.maxOutputTokens === undefined ? {} : { maxOutputTokens: entry.maxOutputTokens }),
+      ...(entry.thinkingBudgetMin === undefined
+        ? {}
+        : { thinkingBudgetMin: entry.thinkingBudgetMin }),
     })),
   };
 }
 
-export function hostInfo(): HostInfo {
-  const catalog = providerCatalog();
+export async function hostInfo(): Promise<HostInfo> {
+  const catalog = await providerCatalog();
   if (!catalog.length) return { mode: "fixture", providers: [publicProvider(fixtureProvider())] };
   return { mode: "live", providers: catalog.map(publicProvider) };
 }
@@ -509,7 +454,7 @@ function requestPermissionFor(hosted: Hosted): PermissionPort {
 }
 
 export async function openSession(input: CreateSessionBody = {}) {
-  const catalog = providerCatalog();
+  const catalog = await providerCatalog();
   const fixture = !catalog.length;
   const providers = fixture ? [fixtureProvider()] : catalog;
   const selected = providers.find((provider) => provider.id === input.providerId) ?? providers[0];
@@ -521,7 +466,16 @@ export async function openSession(input: CreateSessionBody = {}) {
   if (!chosen) throw new Error(`Provider ${selected.label} has no models`);
   const model = chosen.id;
   const stream = Boolean(input.stream && chosen.profile.capabilities.stream);
-  const thinking = input.thinking || "off";
+  const thinking =
+    input.thinking && chosen.thinking.includes(input.thinking)
+      ? input.thinking
+      : (chosen.thinking.find((value) => value !== "off") ?? "off");
+  const outputCap =
+    input.maxOutputTokens === undefined
+      ? chosen.maxOutputTokens
+      : chosen.maxOutputTokens === undefined
+        ? input.maxOutputTokens
+        : Math.min(input.maxOutputTokens, chosen.maxOutputTokens);
   const subscribers = new Set<Subscriber>();
   const hosted: Hosted = {
     subscribers,
@@ -583,11 +537,17 @@ export async function openSession(input: CreateSessionBody = {}) {
         provider: selected.id,
         model,
         stream,
-        thinking: thinking as "off",
-        ...(input.maxOutputTokens === undefined ? {} : { maxOutputTokens: input.maxOutputTokens }),
-        ...(input.thinkingBudgetTokens == null
+        ...(thinking === "off" && chosen.omitThinkingWhenOff
           ? {}
-          : { thinkingBudgetTokens: input.thinkingBudgetTokens }),
+          : { thinking: thinking as "off" }),
+        ...(outputCap === undefined ? {} : { maxOutputTokens: outputCap }),
+        ...(thinking === "budget"
+          ? {
+              thinkingBudgetTokens: input.thinkingBudgetTokens ?? chosen.thinkingBudgetMin ?? 4096,
+            }
+          : thinking === "off"
+            ? {}
+            : { thinkingBudgetTokens: null }),
         permissions,
       },
     },
@@ -620,7 +580,7 @@ export async function openSession(input: CreateSessionBody = {}) {
   return {
     sessionId,
     view: project(hosted.runtime.snapshot, model, hosted.runtime.model),
-    host: hostInfo(),
+    host: await hostInfo(),
   };
 }
 

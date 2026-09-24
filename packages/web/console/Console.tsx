@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button.tsx";
 import { Textarea } from "../components/ui/textarea.tsx";
 import type {
   BlobChip,
+  CatalogModelOption,
   ConsoleEvent,
   HostInfo,
   MediaKind,
@@ -104,8 +105,22 @@ export function Console() {
         setHost(info);
         const first = info.providers[0];
         if (!first) return;
+        const firstModel =
+          first.models.find((item) => item.id === first.defaultModel) ?? first.models[0];
         setProviderId((current) => current || first.id);
         setModel((current) => current || first.defaultModel);
+        setThinking((current) =>
+          firstModel?.thinking.includes(current) && current !== "off"
+            ? current
+            : (firstModel?.thinking.find((value) => value !== "off") ?? "off"),
+        );
+        if (firstModel?.maxOutputTokens) {
+          setMaxOutputTokens((current) =>
+            Number(current) > firstModel.maxOutputTokens!
+              ? String(firstModel.maxOutputTokens)
+              : current,
+          );
+        }
       });
   }, []);
 
@@ -705,6 +720,15 @@ function PolicyFields({
   const selected = provider?.models.find((item) => item.id === model) ?? provider?.models[0];
   const thinkingOptions = selected?.thinking ?? provider?.thinking ?? ["off"];
   const canStream = selected?.stream ?? provider?.stream ?? false;
+  const applyModel = (next: CatalogModelOption | undefined) => {
+    if (!next) return;
+    if (!next.thinking.includes(thinking))
+      onThinking(next.thinking.find((value) => value !== "off") ?? "off");
+    if (next.maxOutputTokens && Number(maxOutputTokens) > next.maxOutputTokens)
+      onMaxOutputTokens(String(next.maxOutputTokens));
+    if (next.thinkingBudgetMin && Number(thinkingBudgetTokens) < next.thinkingBudgetMin)
+      onThinkingBudgetTokens(String(next.thinkingBudgetMin));
+  };
   return (
     <div className="grid gap-3">
       <label className="grid gap-1 text-sm">
@@ -717,9 +741,7 @@ function PolicyFields({
             const next = host.providers.find((item) => item.id === event.target.value);
             if (!next) return;
             onModel(next.defaultModel);
-            const nextModel =
-              next.models.find((item) => item.id === next.defaultModel) ?? next.models[0];
-            if (nextModel && !nextModel.thinking.includes(thinking)) onThinking("off");
+            applyModel(next.models.find((item) => item.id === next.defaultModel) ?? next.models[0]);
           }}
           disabled={host.mode === "fixture"}
         >
@@ -738,8 +760,7 @@ function PolicyFields({
           value={selected?.id ?? model}
           onChange={(event) => {
             onModel(event.target.value);
-            const next = provider?.models.find((item) => item.id === event.target.value);
-            if (next && !next.thinking.includes(thinking)) onThinking("off");
+            applyModel(provider?.models.find((item) => item.id === event.target.value));
           }}
         >
           {(provider?.models ?? []).map((item) => (
@@ -753,7 +774,7 @@ function PolicyFields({
         Thinking
         <select
           className="h-9 rounded-md border border-border bg-paper px-2"
-          value={thinkingOptions.includes(thinking) ? thinking : "off"}
+          value={thinkingOptions.includes(thinking) ? thinking : (thinkingOptions[0] ?? "off")}
           onChange={(event) => onThinking(event.target.value)}
         >
           {thinkingOptions.map((value) => (
@@ -769,7 +790,7 @@ function PolicyFields({
           <input
             className="h-9 rounded-md border border-border bg-paper px-2"
             type="number"
-            min="1"
+            min={selected?.thinkingBudgetMin ?? 1}
             step="1"
             required
             value={thinkingBudgetTokens}
@@ -783,6 +804,7 @@ function PolicyFields({
           className="h-9 rounded-md border border-border bg-paper px-2"
           type="number"
           min="1"
+          max={selected?.maxOutputTokens}
           step="1"
           required
           value={maxOutputTokens}
