@@ -23,6 +23,7 @@ const PolicyObjectSchema = z.strictObject({
   steps: StepsSchema,
   admission: z.enum(["reject-during-tools", "abort-tools-on-user", "queue-user"]),
   bargeIn: z.boolean(),
+  permissions: z.enum(["off", "ask"]).optional(),
   toolFailure: z.enum(["fail-turn", "return-error-and-continue"]),
   project: z.string().regex(/^.+@\d+$/),
   handoff: z.string().regex(/^.+@\d+$/),
@@ -53,6 +54,7 @@ export type PolicyPack = Readonly<
     Partial<Pick<Policy, "thinking">>
 >;
 export type PolicyResolvers = Readonly<{
+  permissionRequests?: boolean;
   providerStreams?: ReadonlyMap<string, boolean>;
   providerCapabilities?: ReadonlyMap<string, ThinkingCapability>;
   providerIds?: ReadonlySet<string>;
@@ -105,6 +107,7 @@ export const builtinResolvers: PolicyResolvers = {
 };
 export function copyResolvers(resolvers: PolicyResolvers = builtinResolvers): PolicyResolvers {
   return {
+    permissionRequests: resolvers.permissionRequests,
     providerStreams: resolvers.providerStreams ? new Map(resolvers.providerStreams) : undefined,
     providerCapabilities: resolvers.providerCapabilities
       ? new Map(
@@ -141,6 +144,8 @@ export function validatePolicy(
   resolvers: PolicyResolvers = builtinResolvers,
 ): Policy {
   const policy = PolicySchema.parse(raw);
+  if (policy.permissions === "ask" && !resolvers.permissionRequests)
+    throw new Error("Missing permission request binding");
   if (policy.provider && !resolvers.providerIds?.has(policy.provider))
     throw new Error("Missing versioned provider binding");
   if (

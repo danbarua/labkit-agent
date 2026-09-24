@@ -71,7 +71,7 @@ export function initialConversation(
 function advance(state: ConversationState, event: TurnEvent): D {
   if (
     event.type === "user" &&
-    (state.turn.status === "executing_tools" || state.turn.status === "cancelling_tools")
+    ["awaiting_permission", "executing_tools", "cancelling_tools"].includes(state.turn.status)
   ) {
     throw new Error("Cannot accept user input while tools are active; abort the turn first");
   }

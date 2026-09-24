@@ -106,7 +106,7 @@ export const TurnRecordSchema = z
   .readonly();
 export type TurnRecord = z.infer<typeof TurnRecordSchema>;
 
-export type OperationKind = "prepare" | "completion" | "handoff" | "batch" | "tool";
+export type OperationKind = "prepare" | "completion" | "handoff" | "permission" | "batch" | "tool";
 export type Ref<K extends OperationKind> = Readonly<{ kind: K; id: ActorId }>;
 export const ref = <K extends OperationKind>(kind: K, id: string): Ref<K> =>
   Object.freeze({ kind, id: ActorIdSchema.parse(id) });

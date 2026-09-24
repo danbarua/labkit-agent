@@ -54,3 +54,10 @@ Policy validation (including restore and patches) and transport independently re
 streaming before HTTP. Switching to a nonstream profile requires patching stream:false. Stream
 notifications remain outside policy/turn decisions; the captured prepared request controls the
 operation and one assembled completion determines its outcome.
+
+`permissions: "ask"` enables once-only permission requests for every admitted tool call. It requires
+an environment `requestPermission` binding; create, restore and policy patches reject a missing
+binding. Omitted/`off` preserves immediate execution after the intent receipt. Changes commit only at
+idle boundaries. `queue-user` and `abort-tools-on-user` also apply during `awaiting_permission`;
+default admission rejects new user input there. Tool-error continuation never overrides permission
+rejection. No remembered grants or new policy enum for individual answers are introduced.

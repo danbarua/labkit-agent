@@ -22,7 +22,7 @@ import {
 } from "../agent/types.ts";
 import { Actor, freeze } from "../fsm/fsm.ts";
 import { createHost, type StreamUpdateSink, type ToolUpdateSink } from "../host/host.ts";
-import type { CompletionPort } from "../host/ports.ts";
+import type { CompletionPort, PermissionPort } from "../host/ports.ts";
 import { copyRegistries } from "../host/ports.ts";
 import { diagnostic } from "../logging/index.ts";
 import {
@@ -68,7 +68,7 @@ export type {
   HostStreamNotification,
   StreamUpdateSink,
 } from "../host/host.ts";
-export type { ToolKind, ToolLocation } from "../host/ports.ts";
+export type { PermissionPort, PermissionRequest, ToolKind, ToolLocation } from "../host/ports.ts";
 /** Compatibility input: new integrations should supply SessionConfiguration and SessionBindings. */
 export type LegacySessionOptions = Omit<RuntimeOptions, "projectPrompt"> & {
   persistence: SessionPersistence;
@@ -93,6 +93,7 @@ export type SessionBindings = Readonly<{
   observe?: (snapshot: SessionState) => unknown;
   toolUpdate?: ToolUpdateSink;
   streamUpdate?: StreamUpdateSink;
+  requestPermission?: PermissionPort;
 }>;
 export type BoundSessionOptions = Readonly<{
   persistence: SessionPersistence;
@@ -102,7 +103,9 @@ export type BoundSessionOptions = Readonly<{
 }>;
 export type SessionOptions = LegacySessionOptions | BoundSessionOptions;
 function normalizeOptions(options: SessionOptions, restoring = false) {
-  if (!("configuration" in options))
+  if (!("configuration" in options)) {
+    if (options.requestPermission)
+      throw new Error("Permission requests require configuration.policy.permissions");
     return {
       options,
       resolvers: copyResolvers(),
@@ -111,6 +114,7 @@ function normalizeOptions(options: SessionOptions, restoring = false) {
       completePort: undefined,
       providerMedia: undefined,
     };
+  }
   const { configuration, bindings } = options;
   const capabilities = {
     agents: [...configuration.agents].map(
@@ -124,6 +128,7 @@ function normalizeOptions(options: SessionOptions, restoring = false) {
     ...copyResolvers(bindings.policies),
     providerCapabilities: providers?.capabilities,
     providerStreams: providers?.streams,
+    permissionRequests: !!bindings.requestPermission,
     providerIds: providers ? new Set(providers.ids) : undefined,
   });
   const initialPolicy = restoring
@@ -140,6 +145,7 @@ function normalizeOptions(options: SessionOptions, restoring = false) {
     tools: bindings.tools,
     toolUpdate: bindings.toolUpdate,
     streamUpdate: bindings.streamUpdate,
+    requestPermission: bindings.requestPermission,
     id: bindings.id,
     baseUrl: "https://journal.invalid",
     complete: (request) => {
@@ -188,6 +194,7 @@ function configure(raw: SessionOptions, restoring = false) {
     normalizeOptions(raw, restoring);
   const toolUpdate = options.toolUpdate;
   const streamUpdate = options.streamUpdate;
+  const requestPermission = options.requestPermission;
   const agentId = AgentIdSchema.parse(options.agent);
   const steps = StepsSchema.parse(options.steps);
   const baseUrl = z.url({ protocol: /^https?$/ }).parse(options.baseUrl);
@@ -282,6 +289,7 @@ function configure(raw: SessionOptions, restoring = false) {
         agents,
         tools,
         sessionId,
+        requestPermission,
         complete:
           completePort ?? ((request, signal) => complete({ ...request, baseUrl, apiKey, signal })),
       },
@@ -341,6 +349,7 @@ function configure(raw: SessionOptions, restoring = false) {
         prompt,
         allowedTools: prompt?.agent.tools,
         toolFailure: policy?.toolFailure,
+        permissions: policy?.permissions,
         provider: policy,
         continuations: durable.continuations,
         storeContinuation: (entry, signal) => storeContinuation(port, sessionId, entry, signal),

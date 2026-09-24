@@ -49,7 +49,7 @@ startState=Launching, endState=Finished, execTime=241548ms`.
 
 `packages/core/host/host.ts` and `ports.ts`. `createHost(bindings, sinks)` is an execution adapter:
 `dispatch` runs the conversation's turn commands (`prepare_model`, `complete`, `prepare_handoff`,
-`run_tools`, `cancel`) through operation actors and a tool batch. Four sinks report back: `turn` posts
+`request_permission`, `run_tools`, `cancel`) through operation actors and a tool batch. Four sinks report back: `turn` posts
 typed `TurnEvent`s; `tool` posts a `HostToolOutcome` — `turnId`, `batchId`, `callId`, `result` — for
 each tool call **after it has run**. Optional `toolUpdate` emits non-authoritative display
 notifications before execution and on operation transitions. Optional `streamUpdate` reports
@@ -78,10 +78,8 @@ See [host contract](../packages/core/host/README.md#tool-display-notifications).
 
 ## What is not implemented
 
-- **No `session/request_permission`.** The only gate is after execution (`releaseTool`). A pre-execution
-  gate is a phase between admission of a `tools` completion and `run_tools`: the batch does not start
-  until the host's option arrives, and `reject_*` becomes a batch outcome the turn records. It is not a
-  variant of `releaseTool`, because by then the effect has happened.
+- **No remembered permissions.** The in-process permission port supports allow_once/reject_once and
+  cancellation. Persistent per-tool/path choices require a separate policy design.
 - **No JSON-RPC transport.** The sinks are in-process callbacks; an ACP host needs them serialised as
   `session/update` notifications and the permission request as a call.
 
@@ -102,10 +100,25 @@ agent's proposal; a file-keyed read of session narration did not.
 3. **Implemented:** streaming as a fourth sink, versioned profile assemblers and shared SSE transport.
    Supported profiles accept policy stream:true. One assembled body passes through decode, retaining
    one model_settled outcome; incomplete streams fail/cancel without partial settlement.
-4. **Next separate slice:** `request_permission` as a new phase between admitted tools and run_tools.
+4. **Implemented:** once-only `request_permission` as a new phase between admitted tools and run_tools.
+   Both intent and approval receipts gate dependent work; rejection stops the entire batch.
 5. A JSON-RPC ACP adapter carrying notifications and permission requests across the process boundary.
 
 These core slices are sequential because they share the host, ports and sink list. Attachment
 preview is independent UI work: journaled BlobRefs plus getBlob already support markdown/image/PDF
 rendering. Tool file scope comes from locations, not attachment chips. Mode switching and a host
 file-system daemon remain unimplemented.
+
+## In-process permission boundary
+
+Policy `permissions: "ask"` requires a bound `requestPermission(request, signal)` callback. It receives
+ACP-shaped toolCall/options plus local turn/request correlation. All calls are approved in order
+before the batch starts. Selected option IDs must be one of the offered once-only choices; failures
+and malformed responses fail closed. Cancellation aborts the turn. This callback decides permission;
+toolUpdate and streamUpdate remain notification-only.
+
+The session commits model intent, then asks, then commits permission_settled before releasing tools.
+Rejection yields a failed terminal with no invented execution results. Journal v6 validates the
+policy gate and each decision against its admitted owner/call. Parsed input is kept only in the host
+and reused after approval. Restore recovers interrupted work without asking or executing, and fork
+inherits policy but no grants. See the [session contract](../packages/core/session/README.md#permission-requests-and-journal-v6).

@@ -75,7 +75,7 @@ The completed notification can arrive before the result append commits; only `to
 suppresses further notifications; cancellation while open emits one terminal update, ignoring late
 validation/output. Consumers should use session snapshots for authoritative state.
 
-ACP steps 1–2 are implemented in process. Request permissions and JSON-RPC are not implemented.
+ACP tool notifications and once-only permission requests are implemented in process. JSON-RPC is not implemented.
 Streaming uses the same notification-only helper through a fourth sink, `streamUpdate`.
 It receives frozen `HostStreamNotification` values with sessionId, turnId, completionId (child ID),
 generation, and `sessionUpdate: "completion" | "completion_update"`. Status transitions are
@@ -89,3 +89,28 @@ and any continuation blob storage but does not certify a journal receipt. Incomp
 fail the completion child and never publish a successful partial model_settled. Stream callbacks,
 like tool callbacks, cannot fail operations or hold the execution gate. Both runtimes capture the
 optional streamUpdate binding; session provider profiles opt into streaming through policy.
+
+## Permission requests
+
+`ExecutionBindings.requestPermission(request, signal)` is an authoritative port, separate from the
+four notification/outcome sinks. Context `permissions: "ask"` inserts `awaiting_permission` between
+an admitted tools completion and `run_tools`. Without that setting, execution retains its existing
+behavior. The nonjournaled runtime opts in when `RuntimeOptions.requestPermission` is supplied;
+sessions use an explicit policy setting.
+
+Requests carry sessionId, turnId, requestId, a pending toolCall (including kind, rawInput and parsed
+locations), and the two options `allow-once` / `allow_once` and `reject-once` / `reject_once`.
+Return `{ outcome: { outcome: "selected", optionId: "allow-once" } }` (or `reject-once`), or
+`{ outcome: { outcome: "cancelled" } }`. Unknown options, malformed responses and callback failures
+fail closed. Remembered choices are not supported.
+
+Calls are presented in admitted order. Every call must be allowed before any tool in the batch runs.
+A rejection fails the turn; cancellation aborts it. Neither fabricates a tool result for an unrun
+call. Pending tool notifications and permission requests share the eventual tool child ID. Permission
+approval does not mark a tool in_progress: that transition still belongs to actual execution.
+
+Input parsing occurs before asking and its exact result is held in host memory for execution after
+approval. Parsers and location callbacks must not perform tool effects. Locations remain display
+metadata, not a filesystem sandbox. Runtime functions, parsed inputs and grants never enter the
+journal. Abort/close revoke grants and signal the pending callback; late responses cannot run tools.
+The port receives a frozen request. Unlike display sinks, its response is awaited and validated.

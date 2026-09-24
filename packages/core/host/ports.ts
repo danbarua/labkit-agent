@@ -78,10 +78,44 @@ export type CompletionPort = (
   blobs?: BlobResolver,
   onDelta?: StreamDeltaSink,
 ) => unknown | Promise<unknown>;
+export const PermissionResponseSchema = z.strictObject({
+  outcome: z.discriminatedUnion("outcome", [
+    z.strictObject({
+      outcome: z.literal("selected"),
+      optionId: z.enum(["allow-once", "reject-once"]),
+    }),
+    z.strictObject({ outcome: z.literal("cancelled") }),
+  ]),
+});
+export type PermissionRequest = Readonly<{
+  sessionId?: string;
+  turnId: string;
+  requestId: string;
+  toolCall: Readonly<{
+    toolCallId: string;
+    title: string;
+    name: string;
+    kind: ToolKind;
+    status: "pending";
+    rawInput: unknown;
+    locations?: readonly ToolLocation[];
+  }>;
+  options: readonly Readonly<{
+    optionId: "allow-once" | "reject-once";
+    name: string;
+    kind: "allow_once" | "reject_once";
+  }>[];
+}>;
+/** Authoritative response, unlike display sinks. Exceptions and malformed responses fail closed. */
+export type PermissionPort = (
+  request: PermissionRequest,
+  signal: AbortSignal,
+) => unknown | Promise<unknown>;
 export type ExecutionBindings = Readonly<{
   agents: ReadonlyMap<string, AgentDefinition>;
   tools?: ReadonlyMap<string, Tool>;
   complete: CompletionPort;
+  requestPermission?: PermissionPort;
 }>;
 /** Connection settings remain in the transport closure, never in the session journal. */
 export function completionTransport(options: {

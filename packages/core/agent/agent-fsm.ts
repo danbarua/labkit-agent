@@ -3,10 +3,12 @@ import type { z } from "zod";
 import { defineMachine, stay, type Decision } from "../fsm/fsm.ts";
 import type { Continuation } from "../providers/types.ts";
 import type { PreparedModel } from "./agent.ts";
+import { validatePermissionDecisions, type PermissionDecisions } from "./permissions.ts";
 import type { BatchOutcome } from "./tool-batch.ts";
 import {
   appendMessage,
   CompletionSchema,
+  failure,
   PositiveStepsSchema,
   ref,
   StepsSchema,
@@ -47,6 +49,13 @@ export type TurnState =
     }>
   | Readonly<{ status: "awaiting_model"; turn: TurnData; child: Ref<"completion"> }>
   | Readonly<{ status: "preparing_handoff"; turn: TurnData; child: Ref<"handoff"> }>
+  | Readonly<{
+      status: "awaiting_permission";
+      turn: TurnData;
+      child: Ref<"permission">;
+      batch: Ref<"batch">;
+      completion: Extract<Completion, { kind: "tools" }>;
+    }>
   | Readonly<{ status: "executing_tools"; turn: TurnData; child: Ref<"batch"> }>
   | Readonly<{ status: "cancelling_tools"; turn: TurnData; child: Ref<"batch"> }>
   | Readonly<{ status: "done"; record: TurnRecord }>;
@@ -59,15 +68,28 @@ export type TurnEvent =
       child: Ref<"completion">;
       result: Result<AdmittedCompletion>;
       continuation?: Continuation;
+      permissionRequired?: true;
     }
   | { type: "handoff_prepared"; child: Ref<"handoff">; result: Result<readonly AgentMessage[]> }
+  | { type: "permission_settled"; child: Ref<"permission">; result: Result<PermissionDecisions> }
   | { type: "batch_settled"; child: Ref<"batch">; outcome: BatchOutcome }
   | { type: "failed"; child: ChildRef; error: Failure };
 export type TurnCommand =
   | { type: "prepare_model"; child: Ref<"prepare">; turn: TurnData }
   | { type: "complete"; child: Ref<"completion">; turn: TurnData; request: PreparedModel }
   | { type: "prepare_handoff"; child: Ref<"handoff">; turn: TurnData; from: AgentId }
-  | { type: "run_tools"; child: Ref<"batch">; completion: Extract<Completion, { kind: "tools" }> }
+  | {
+      type: "request_permission";
+      child: Ref<"permission">;
+      batch: Ref<"batch">;
+      completion: Extract<Completion, { kind: "tools" }>;
+    }
+  | {
+      type: "run_tools";
+      child: Ref<"batch">;
+      permission?: Ref<"permission">;
+      completion: Extract<Completion, { kind: "tools" }>;
+    }
   | { type: "cancel"; child: ChildRef };
 type Active = Exclude<TurnState, { status: "idle" | "done" }>;
 type D = Decision<TurnState, TurnCommand>;
@@ -171,6 +193,14 @@ export const decideTurn = defineMachine<TurnState, TurnEvent, TurnCommand>({
       if (result.kind === "answer") return done(turn, { kind: "completed" });
       const next = { ...turn, generation: turn.generation + 1 };
       if (result.kind === "tools") {
+        if (event.permissionRequired) {
+          const child = ref("permission", `${turn.id}/${next.generation}`);
+          const batch = ref("batch", `${turn.id}/${next.generation + 1}`);
+          return {
+            state: { status: "awaiting_permission", turn: next, child, batch, completion: result },
+            commands: [{ type: "request_permission", child, batch, completion: result }],
+          };
+        }
         const child = ref("batch", `${turn.id}/${next.generation}`);
         return {
           state: { status: "executing_tools", turn: next, child },
@@ -193,6 +223,38 @@ export const decideTurn = defineMachine<TurnState, TurnEvent, TurnCommand>({
       if (event.child.id !== state.child.id) return stay(state);
       if (event.result.kind !== "succeeded") return resultFailure(state.turn, event.result);
       return prepare({ ...state.turn, view: { kind: "handoff", messages: event.result.value } });
+    },
+  },
+  awaiting_permission: {
+    abort,
+    failed: fail,
+    permission_settled: (state, event) => {
+      if (event.child.id !== state.child.id) return stay(state);
+      if (event.result.kind !== "succeeded") return resultFailure(state.turn, event.result);
+      const decisions = validatePermissionDecisions(state.completion.calls, event.result.value);
+      const refused = decisions.find((entry) => entry.decision !== "allow_once");
+      if (refused)
+        return done(
+          state.turn,
+          refused.decision === "cancelled"
+            ? { kind: "aborted" }
+            : { kind: "failed", error: failure("Tool permission rejected") },
+        );
+      return {
+        state: {
+          status: "executing_tools",
+          turn: { ...state.turn, generation: state.turn.generation + 1 },
+          child: state.batch,
+        },
+        commands: [
+          {
+            type: "run_tools",
+            child: state.batch,
+            permission: state.child,
+            completion: state.completion,
+          },
+        ],
+      };
     },
   },
   executing_tools: {

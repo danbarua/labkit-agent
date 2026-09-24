@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { ChatMessageSchema, ChatToolSchema } from "../agent/agent.ts";
 import { BlobRefSchema } from "../agent/content.ts";
+import { PermissionDecisionsSchema } from "../agent/permissions.ts";
 import { parseSessionContext } from "../agent/prompt.ts";
 import { ToolResultSchema } from "../agent/tool-batch.ts";
 import {
@@ -137,6 +138,7 @@ export const WireEventSchema = z.discriminatedUnion("type", [
       z.strictObject({
         type: z.literal("model_settled"),
         continuation: ContinuationSchema.optional(),
+        permissionRequired: z.literal(true).optional(),
         child: child("completion"),
         result: result(CompletionSchema.brand<"AdmittedCompletion">()),
       }),
@@ -144,6 +146,11 @@ export const WireEventSchema = z.discriminatedUnion("type", [
         type: z.literal("handoff_prepared"),
         child: child("handoff"),
         result: result(MessagesSchema),
+      }),
+      z.strictObject({
+        type: z.literal("permission_settled"),
+        child: child("permission"),
+        result: result(PermissionDecisionsSchema),
       }),
       z.strictObject({
         type: z.literal("batch_settled"),
@@ -158,6 +165,7 @@ export const WireEventSchema = z.discriminatedUnion("type", [
           child("handoff"),
           child("batch"),
           child("tool"),
+          child("permission"),
         ]),
         error: FailureSchema,
       }),
@@ -208,6 +216,18 @@ export const BodySchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("recovery"), turnId: ActorIdSchema, reason: z.string().min(1) }),
 ]);
 export type JournalBody = z.infer<typeof BodySchema>;
+export function bodyHasPermissions(body: JournalBody): boolean {
+  if (body.kind === "created") return body.seed.policy?.permissions !== undefined;
+  if (body.kind === "policy" || body.kind === "upgrade")
+    return body.policy.permissions !== undefined;
+  if (body.kind !== "event" || body.event.type !== "child") return false;
+  const child = body.event.event;
+  return (
+    child.type === "permission_settled" ||
+    child.child.kind === "permission" ||
+    (child.type === "model_settled" && child.permissionRequired === true)
+  );
+}
 export function bodyHasBlobs(body: JournalBody): boolean {
   const messages = (items: readonly { role: string; parts?: readonly { type: string }[] }[]) =>
     items.some((message) => message.parts?.some((part) => part.type === "blob"));
@@ -238,7 +258,14 @@ export function bodyHasBlobs(body: JournalBody): boolean {
 }
 export const JournalRecordSchema = z
   .strictObject({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
+    version: z.union([
+      z.literal(1),
+      z.literal(2),
+      z.literal(3),
+      z.literal(4),
+      z.literal(5),
+      z.literal(6),
+    ]),
     sessionId: SessionIdSchema,
     revision: RevisionSchema,
     entryId: z.string().min(1),
@@ -247,6 +274,7 @@ export const JournalRecordSchema = z
   })
   .refine((record) => {
     const body = record.body;
+    if (record.version < 6 && bodyHasPermissions(body)) return false;
     if (record.version < 5 && bodyHasBlobs(body)) return false;
     const policy =
       body.kind === "created"

@@ -344,5 +344,17 @@ emits completion identity/status plus incremental text/thinking/usage, using the
 notification helper as tool display. Nothing in decideTurn consumes those notifications. Only one
 fully assembled body reaches decode and admission; the normal model_settled event then follows.
 Truncation/error/cancellation produces a failed/cancelled outcome, never partial authoritative text.
-Continuation storage and commit-before-dispatch are unchanged. Request permission remains separate
-work requiring a phase between admitted tools and run_tools.
+Continuation storage and commit-before-dispatch are unchanged. Permission requests use the separate
+phase between admitted tools and run_tools described below.
+
+## Pre-execution permissions
+
+With policy permissions:ask, a committed tools completion enters awaiting_permission. The host asks
+for allow_once/reject_once with parsed locations and the eventual tool operation ID. Only a committed
+permission_settled approving every call releases run_tools. Rejection fails the turn, cancellation
+aborts it, and neither creates tool results. This authoritative port is separate from display sinks.
+
+The new semantics require journal v6. Replay validates the policy gate and ordered call decisions;
+restore never resumes an interrupted permission or execution phase. Parsed inputs and grants live
+only in the host and are discarded on cancellation/close. See the
+[permission contract](../packages/core/session/README.md#permission-requests-and-journal-v6).

@@ -2,7 +2,12 @@ import { z } from "zod";
 
 import { Actor, freeze } from "../fsm/fsm.ts";
 import { createHost, type StreamUpdateSink, type ToolUpdateSink } from "../host/host.ts";
-import { copyRegistries, type AgentDefinition, type Tool } from "../host/ports.ts";
+import {
+  copyRegistries,
+  type AgentDefinition,
+  type PermissionPort,
+  type Tool,
+} from "../host/ports.ts";
 import {
   decideConversation,
   initialConversation,
@@ -41,13 +46,14 @@ export type {
   HostStreamNotification,
   StreamUpdateSink,
 } from "../host/host.ts";
-export type { ToolKind, ToolLocation } from "../host/ports.ts";
+export type { PermissionPort, PermissionRequest, ToolKind, ToolLocation } from "../host/ports.ts";
 export type RuntimeOptions = {
   agent: string;
   agents: ReadonlyMap<string, AgentDefinition>;
   tools?: ReadonlyMap<string, Tool>;
   toolUpdate?: ToolUpdateSink;
   streamUpdate?: StreamUpdateSink;
+  requestPermission?: PermissionPort;
   steps: number;
   baseUrl: string;
   apiKey?: string;
@@ -88,6 +94,7 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
   const projectHandoff = options.projectHandoff;
   const toolUpdate = options.toolUpdate;
   const streamUpdate = options.streamUpdate;
+  const requestPermission = options.requestPermission;
   const complete =
     options.complete ??
     ((request: ChatCompletionRequest) => createChatCompletion(request, fetcher));
@@ -111,6 +118,7 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
         agents,
         tools,
         sessionId: initial.sessionId,
+        requestPermission,
         complete: (request, signal) => complete({ ...request, baseUrl, apiKey, signal }),
       },
       {
@@ -129,6 +137,7 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
         host.dispatch(effect, {
           prompt: "turn" in effect.command ? input(effect.command.turn) : undefined,
           projectPrompt: project,
+          permissions: requestPermission ? "ask" : "off",
           projectHandoff,
         });
       return undefined;

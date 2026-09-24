@@ -925,3 +925,142 @@ Context: []
 Outcome: {"kind":"failed","error":{"message":"Incomplete completion stream"}}
 
 - user: {"role":"user","text":"Truncated"}
+
+---
+
+# permission-allow-batch: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"steps":4,"admission":"reject-during-tools","bargeIn":true,"permissions":"ask","toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Go"}
+- assistant: {"role":"assistant","text":"Read files","calls":[{"id":"one","name":"echo","args":{"text":"one"}},{"id":"two","name":"echo","args":{"text":"two"}}]}
+- tool: {"role":"tool","text":"one","callId":"one"}
+- tool: {"role":"tool","text":"two","callId":"two"}
+- assistant: {"role":"assistant","text":"Read both"}
+
+# permission-allow-batch: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"steps":4,"admission":"reject-during-tools","bargeIn":true,"permissions":"ask","toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Go"}
+- assistant: {"role":"assistant","text":"Read files","calls":[{"id":"one","name":"echo","args":{"text":"one"}},{"id":"two","name":"echo","args":{"text":"two"}}]}
+- tool: {"role":"tool","text":"one","callId":"one"}
+- tool: {"role":"tool","text":"two","callId":"two"}
+- assistant: {"role":"assistant","text":"Read both"}
+
+---
+
+# permission-reject-batch: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"steps":4,"admission":"reject-during-tools","bargeIn":true,"permissions":"ask","toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: failed (a)
+
+Outcome: {"kind":"failed","error":{"message":"Tool permission rejected"}}
+
+- user: {"role":"user","text":"Go"}
+- assistant: {"role":"assistant","text":"Read files","calls":[{"id":"one","name":"echo","args":{"text":"one"}},{"id":"two","name":"echo","args":{"text":"two"}}]}
+
+# permission-reject-batch: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"steps":4,"admission":"reject-during-tools","bargeIn":true,"permissions":"ask","toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: failed (a)
+
+Outcome: {"kind":"failed","error":{"message":"Tool permission rejected"}}
+
+- user: {"role":"user","text":"Go"}
+- assistant: {"role":"assistant","text":"Read files","calls":[{"id":"one","name":"echo","args":{"text":"one"}},{"id":"two","name":"echo","args":{"text":"two"}}]}
+
+---
+
+# permission-cancel-batch: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"steps":4,"admission":"reject-during-tools","bargeIn":true,"permissions":"ask","toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: aborted (a)
+
+Outcome: {"kind":"aborted"}
+
+- user: {"role":"user","text":"Go"}
+- assistant: {"role":"assistant","text":"Read files","calls":[{"id":"one","name":"echo","args":{"text":"one"}},{"id":"two","name":"echo","args":{"text":"two"}}]}
+
+---
+
+# permission-interrupted-recovery: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"steps":4,"admission":"reject-during-tools","bargeIn":true,"permissions":"ask","toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Interrupted/active turn 1: awaiting_permission
+
+- user: {"role":"user","text":"Go"}
+- assistant: {"role":"assistant","text":"Read files","calls":[{"id":"one","name":"echo","args":{"text":"one"}},{"id":"two","name":"echo","args":{"text":"two"}}]}
+
+# permission-interrupted-recovery: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"steps":4,"admission":"reject-during-tools","bargeIn":true,"permissions":"ask","toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: failed (a)
+
+Outcome: {"kind":"failed","error":{"message":"Interrupted session; external effects were not replayed"}}
+
+- user: {"role":"user","text":"Go"}
+- assistant: {"role":"assistant","text":"Read files","calls":[{"id":"one","name":"echo","args":{"text":"one"}},{"id":"two","name":"echo","args":{"text":"two"}}]}
+  Recovery: Interrupted session; external effects were not replayed

@@ -46,6 +46,7 @@ const StepSchema = z.object({
     "abort",
     "release",
     "requests",
+    "permissions",
     "partial",
     "settle",
     "join",
@@ -66,6 +67,7 @@ const StepSchema = z.object({
 const ScenarioSchema = z.object({
   format: z.literal(2).optional(),
   providerResponses: z.literal(true).optional(),
+  permissions: z.array(z.unknown()).optional(),
   blobs: z.record(z.string(), BlobInputMetaSchema.extend({ text: z.string() })).optional(),
   policy: PolicyPatchSchema.optional(),
   name: z.string().regex(/^[a-z0-9-]+$/),
@@ -116,6 +118,7 @@ async function runScenario(scenario: Scenario, directory: string) {
     { promise: Promise<unknown>; resolve: (value: unknown) => void; value?: unknown }
   >();
   let completionIndex = 0;
+  let permissionIndex = 0;
   const options = testOptions({
     persistence: port,
     id: deterministicIds(),
@@ -165,6 +168,22 @@ async function runScenario(scenario: Scenario, directory: string) {
           bindings: {
             tools: legacy.tools,
             id: legacy.id,
+            ...(scenario.permissions
+              ? {
+                  requestPermission: (request: import("../host/ports.ts").PermissionRequest) => {
+                    results.push({ permission: request });
+                    const response = scenario.permissions![permissionIndex++];
+                    if (response === undefined)
+                      throw new Error("Fixture permission script exhausted");
+                    if (typeof response === "object" && response !== null && "defer" in response) {
+                      const work = deferred<unknown>();
+                      deferredWork.set(String(response.defer), work);
+                      return work.promise;
+                    }
+                    return response;
+                  },
+                }
+              : {}),
             ...(scenario.providerResponses
               ? {
                   providers: new Map(
@@ -319,6 +338,9 @@ async function runScenario(scenario: Scenario, directory: string) {
           break;
         case "settle":
           results.push({ session: step.session, terminal: await active.get(step.session) });
+          break;
+        case "permissions":
+          await until(() => permissionIndex === step.count);
           break;
         case "requests":
           await until(() => requests.length === step.count);

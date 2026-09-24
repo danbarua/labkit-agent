@@ -259,7 +259,8 @@ an unreferenced blob. The existing 8 MiB cap also applies to continuation blobs.
 `bindings.toolUpdate(notification)` receives non-authoritative `tool_call` / `tool_call_update`
 notifications from the shared host. Flat legacy options also accept `toolUpdate`. Tools can declare
 `kind` and pure `locations(parsedArgs)` metadata. Locations arrive before execution; the pending
-notification cannot occur until the admitted tools completion's append receipt releases run_tools.
+notification cannot occur until the admitted tools completion's append receipt releases the
+permission phase or run_tools.
 Completed/failed display notifications do not certify persistence: the existing per-tool result
 receipt still gates batch release. Notifications are not journaled or replayed, cannot decide turn
 state, and callback failures are isolated. Forks inherit the captured sink and report their own
@@ -274,3 +275,32 @@ only an assembled, decoded and admitted completion produces a successful model_s
 receipt still gates tools. Interrupted streams fail/cancel with no partial assistant message or
 continuation. Idle restore emits no stream updates and performs no HTTP. Barge-in keeps its existing
 same-turn semantics while cancelling the old completion reader. See [provider streaming](../providers/README.md#streaming).
+
+## Permission requests and journal v6
+
+Set `configuration.policy.permissions: "ask"` and bind `bindings.requestPermission`:
+
+```ts
+const requestPermission = async (request, signal) => {
+  // Display request.toolCall and request.options; resolve when the user chooses.
+  const optionId = await promptUser(request, signal);
+  return { outcome: { outcome: "selected", optionId } };
+};
+```
+
+Options are `allow-once` and `reject-once`; `{ outcome: { outcome: "cancelled" } }` cancels the turn.
+All calls must be approved before any call runs. A reject fails the turn without tool results, even
+under tolerant tool-error policy. Omitted/off keeps existing behavior. Legacy flat options must
+migrate to configuration/bindings to enable permissions. See the [host port](../host/README.md#permission-requests).
+
+The successful tools model_settled captures `permissionRequired: true`. Its receipt releases the
+permission child. The correlated permission_settled records ordered call IDs and once-only choices;
+its receipt releases run_tools only after all calls were allowed. Replay checks the captured policy,
+child identity, call order, completeness and refusal boundary. These new policy/event semantics
+require v6; old record versions and fixture bytes remain unchanged. Streams remain v6 after opt-out.
+
+Host-owned parsed inputs and grants are never persisted. Interrupted permission requests, including
+an approval committed before execution, restore through ordinary failed recovery without reasking
+or running tools. Lost approval receipts use normal reconciliation. Forks/compaction inherit policy
+and the captured callback, but each new call needs a fresh choice. Idle restore emits no prompts.
+Remembered approvals and the JSON-RPC ACP adapter remain unimplemented.

@@ -43,6 +43,7 @@ import {
 import { projectSessionPrompt } from "./session-prompt.ts";
 import {
   bodyHasBlobs,
+  bodyHasPermissions,
   JournalRecordSchema,
   SeedSchema,
   WireEventSchema,
@@ -365,6 +366,14 @@ function domainEvent(
       },
     };
   }
+  if (child.type === "model_settled") {
+    const required =
+      state.policy?.permissions === "ask" &&
+      child.result.kind === "succeeded" &&
+      child.result.value.kind === "tools";
+    if (!!child.permissionRequired !== required)
+      throw new Error("Permission phase differs from captured policy");
+  }
   if (child.type === "model_settled" && child.result.kind === "succeeded") {
     const result = child.result.value;
     const c = state.conversation;
@@ -513,7 +522,7 @@ function reduce(
       state.policy.admission !== "queue-user" &&
       !(
         state.policy.admission === "abort-tools-on-user" &&
-        (c.turn.status === "executing_tools" || c.turn.status === "cancelling_tools")
+        ["awaiting_permission", "executing_tools", "cancelling_tools"].includes(c.turn.status)
       )
     )
       throw new Error("Policy does not queue this input");
@@ -724,7 +733,9 @@ export function stage(
     next.conversation.turn.status !== "idle" &&
     (next.policy.admission === "queue-user" ||
       (next.policy.admission === "abort-tools-on-user" &&
-        ["executing_tools", "cancelling_tools"].includes(next.conversation.turn.status)))
+        ["awaiting_permission", "executing_tools", "cancelling_tools"].includes(
+          next.conversation.turn.status,
+        )))
   ) {
     apply({
       kind: "queued",
@@ -735,7 +746,7 @@ export function stage(
     });
     if (
       next.policy!.admission === "abort-tools-on-user" &&
-      next.conversation.turn.status === "executing_tools"
+      ["awaiting_permission", "executing_tools"].includes(next.conversation.turn.status)
     )
       apply({
         kind: "event",
@@ -788,6 +799,7 @@ function packageRecords(
     )
       version = 4;
     if (bodyHasBlobs(body) || previous.records.at(-1)?.version === 5) version = 5;
+    if (bodyHasPermissions(body)) version = 6;
     version = Math.max(version, precedingVersion, previous.records.at(-1)?.version ?? 1);
     return JournalRecordSchema.parse({
       version,
@@ -847,16 +859,18 @@ export function replay(
           throw new Error("Missing creation record");
         if (
           record.version !==
-          (bodyHasBlobs(body)
-            ? 5
-            : body.seed.continuations !== undefined ||
-                (body.seed.policy?.thinking !== undefined && body.seed.policy.thinking !== "off")
-              ? 4
-              : body.seed.policy?.provider
-                ? 3
-                : body.seed.policy
-                  ? 2
-                  : 1)
+          (bodyHasPermissions(body)
+            ? 6
+            : bodyHasBlobs(body)
+              ? 5
+              : body.seed.continuations !== undefined ||
+                  (body.seed.policy?.thinking !== undefined && body.seed.policy.thinking !== "off")
+                ? 4
+                : body.seed.policy?.provider
+                  ? 3
+                  : body.seed.policy
+                    ? 2
+                    : 1)
         )
           throw new Error("Creation version does not match policy");
         state = seedConversation(body.seed, resolvers);
@@ -865,22 +879,24 @@ export function replay(
           throw new Error("Invalid session identity");
         if (
           record.version !==
-          (state.records.at(-1)?.version === 5 || bodyHasBlobs(body)
-            ? 5
-            : state.records.at(-1)?.version === 4 ||
-                (body.kind === "policy" &&
-                  body.policy.thinking !== undefined &&
-                  body.policy.thinking !== "off") ||
-                (body.kind === "event" &&
-                  body.event.type === "child" &&
-                  body.event.event.type === "model_settled" &&
-                  body.event.event.continuation)
-              ? 4
-              : state.policy?.provider || (body.kind === "policy" && body.policy.provider)
-                ? 3
-                : state.policy || body.kind === "upgrade"
-                  ? 2
-                  : 1)
+          (state.records.at(-1)?.version === 6 || bodyHasPermissions(body)
+            ? 6
+            : state.records.at(-1)?.version === 5 || bodyHasBlobs(body)
+              ? 5
+              : state.records.at(-1)?.version === 4 ||
+                  (body.kind === "policy" &&
+                    body.policy.thinking !== undefined &&
+                    body.policy.thinking !== "off") ||
+                  (body.kind === "event" &&
+                    body.event.type === "child" &&
+                    body.event.event.type === "model_settled" &&
+                    body.event.event.continuation)
+                ? 4
+                : state.policy?.provider || (body.kind === "policy" && body.policy.provider)
+                  ? 3
+                  : state.policy || body.kind === "upgrade"
+                    ? 2
+                    : 1)
         )
           throw new Error("Invalid journal upgrade boundary");
         if (expectedTerminal) {

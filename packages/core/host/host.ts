@@ -9,6 +9,7 @@ import {
   type Operation,
   type OperationState,
 } from "../agent/operation-actor.ts";
+import { PermissionDecisionsSchema, type PermissionDecisions } from "../agent/permissions.ts";
 import type { PromptInput } from "../agent/prompt.ts";
 import {
   toolBatchMachine,
@@ -19,6 +20,7 @@ import {
 import {
   failure,
   MessagesSchema,
+  ref,
   ToolNameSchema,
   type ActorId,
   type ChildRef,
@@ -38,6 +40,7 @@ import {
 import { notify } from "./notifications.ts";
 import {
   copyRegistries,
+  PermissionResponseSchema,
   ToolLocationSchema,
   type ExecutionBindings,
   type ToolKind,
@@ -91,6 +94,7 @@ export type HostStreamNotification = Readonly<
 export type StreamUpdateSink = (notification: HostStreamNotification) => unknown;
 
 export type ExecutionContext = Readonly<{
+  permissions?: "off" | "ask";
   prompt?: PromptInput;
   loadBlobs?: (
     request: PreparedModel,
@@ -135,6 +139,31 @@ export function createHost(
       batch: Actor<BatchState, BatchEvent, BatchCommand>;
     }
   >();
+  const requestPermission = bindings.requestPermission;
+  const grants = new Map<
+    ActorId,
+    {
+      batchId: ActorId;
+      approved: boolean;
+      inputs: Map<string, unknown>;
+      pending: HostToolNotification[];
+    }
+  >();
+  const revoke = (id: ActorId) => {
+    const grant = grants.get(id);
+    grants.delete(id);
+    for (const { sessionId, turnId, batchId, callId, toolCallId } of grant?.pending ?? [])
+      notifyTool({
+        ...(sessionId ? { sessionId } : {}),
+        turnId,
+        batchId,
+        callId,
+        toolCallId,
+        sessionUpdate: "tool_call_update",
+        status: "failed",
+        rawOutput: { error: "Tool permission not granted or cancelled" },
+      });
+  };
   let closed = false;
   const toolUpdate = sinks.toolUpdate;
   const streamUpdate = sinks.streamUpdate;
@@ -180,6 +209,7 @@ export function createHost(
     void actor.start();
   }
   const cancel = (child: ChildRef) => {
+    revoke(child.id);
     diagnostic("host", "debug", "child.cancellation_requested", {
       sessionId: bindings.sessionId,
       childId: child.id,
@@ -333,6 +363,11 @@ export function createHost(
                 result.kind === "succeeded"
                   ? { kind: "succeeded", value: result.value.completion }
                   : result,
+              ...(result.kind === "succeeded" &&
+              result.value.completion.kind === "tools" &&
+              context.permissions === "ask"
+                ? { permissionRequired: true as const }
+                : {}),
               ...(result.kind === "succeeded" && result.value.continuation
                 ? { continuation: result.value.continuation }
                 : {}),
@@ -385,7 +420,121 @@ export function createHost(
         );
         break;
       }
+      case "request_permission": {
+        const grant = {
+          batchId: command.batch.id,
+          approved: false,
+          inputs: new Map<string, unknown>(),
+          pending: [] as HostToolNotification[],
+        };
+        grants.set(command.child.id, grant);
+        spawn(
+          command.child,
+          {
+            input: null,
+            parseInput: z.null().parse,
+            run: async (_, signal) => {
+              if (!requestPermission) throw new Error("Missing permission request binding");
+              const decisions: PermissionDecisions[number][] = [];
+              for (const call of command.completion.calls) {
+                signal.throwIfAborted();
+                const tool = tools.get(call.name)!;
+                const identity = {
+                  ...(bindings.sessionId ? { sessionId: bindings.sessionId } : {}),
+                  turnId,
+                  batchId: command.batch.id,
+                  callId: call.id,
+                  toolCallId: ref("tool", `${command.batch.id}/${call.id}`).id,
+                };
+                const display = {
+                  ...identity,
+                  sessionUpdate: "tool_call" as const,
+                  title: call.name,
+                  name: call.name,
+                  kind: tool.kind ?? "other",
+                  status: "pending" as const,
+                  rawInput: call.args,
+                };
+                grant.pending.push(display);
+                notifyTool(display);
+                signal.throwIfAborted();
+                const input = await tool.parseInput(call.args);
+                signal.throwIfAborted();
+                grant.inputs.set(call.id, input);
+                let locations: readonly ToolLocation[] | undefined;
+                if (tool.locations) {
+                  try {
+                    locations = z
+                      .array(ToolLocationSchema)
+                      .parse(tool.locations(structuredClone(input)));
+                  } catch {
+                    diagnostic("host", "warning", "tool.locations_failed", {
+                      childId: identity.toolCallId,
+                    });
+                  }
+                }
+                if (locations)
+                  notifyTool({ ...identity, sessionUpdate: "tool_call_update", locations });
+                signal.throwIfAborted();
+                const response = PermissionResponseSchema.parse(
+                  await requestPermission(
+                    freeze({
+                      ...(bindings.sessionId ? { sessionId: bindings.sessionId } : {}),
+                      turnId,
+                      requestId: `${command.child.id}/${call.id}`,
+                      toolCall: {
+                        toolCallId: identity.toolCallId,
+                        title: call.name,
+                        name: call.name,
+                        kind: tool.kind ?? "other",
+                        status: "pending",
+                        rawInput: structuredClone(call.args),
+                        ...(locations ? { locations } : {}),
+                      },
+                      options: [
+                        { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+                        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+                      ],
+                    }),
+                    signal,
+                  ),
+                );
+                signal.throwIfAborted();
+                const decision =
+                  response.outcome.outcome === "cancelled"
+                    ? "cancelled"
+                    : response.outcome.optionId === "allow-once"
+                      ? "allow_once"
+                      : "reject_once";
+                decisions.push({ callId: call.id, decision });
+                if (decision !== "allow_once") break;
+              }
+              return decisions;
+            },
+            parseOutput: PermissionDecisionsSchema.parse,
+          },
+          (result) => {
+            if (
+              result.kind !== "succeeded" ||
+              result.value.some((entry) => entry.decision !== "allow_once")
+            )
+              revoke(command.child.id);
+            else grant.approved = true;
+            post(turnId, { type: "permission_settled", child: command.child, result });
+          },
+        );
+        break;
+      }
       case "run_tools": {
+        const grant = command.permission ? grants.get(command.permission.id) : undefined;
+        if (
+          command.permission &&
+          (!grant?.approved ||
+            grant.batchId !== command.child.id ||
+            command.completion.calls.some((call) => !grant.inputs.has(call.id)))
+        )
+          throw new Error("Missing tool permission grant");
+        if (command.permission) grants.delete(command.permission.id);
         let batch: Actor<BatchState, BatchEvent, BatchCommand>;
         const runBatchCommand = (batchCommand: BatchCommand): undefined => {
           switch (batchCommand.type) {
@@ -398,15 +547,16 @@ export function createHost(
                 callId: batchCommand.call.id,
                 toolCallId: batchCommand.child.id,
               };
-              notifyTool({
-                ...identity,
-                sessionUpdate: "tool_call",
-                title: batchCommand.call.name,
-                name: batchCommand.call.name,
-                kind: tool.kind ?? "other",
-                status: "pending",
-                rawInput: batchCommand.call.args,
-              });
+              if (!grant)
+                notifyTool({
+                  ...identity,
+                  sessionUpdate: "tool_call",
+                  title: batchCommand.call.name,
+                  name: batchCommand.call.name,
+                  kind: tool.kind ?? "other",
+                  status: "pending",
+                  rawInput: batchCommand.call.args,
+                });
               if (closed) break;
               let status = "pending";
 
@@ -415,6 +565,7 @@ export function createHost(
                 {
                   input: batchCommand.call.args,
                   parseInput: async (raw) => {
+                    if (grant) return grant.inputs.get(batchCommand.call.id);
                     const input = await tool.parseInput(raw);
                     if (!closed && status === "pending" && toolUpdate && tool.locations) {
                       try {
@@ -549,6 +700,7 @@ export function createHost(
       closed = true;
       for (const { actor } of children.values()) void actor.cancel();
       pendingTools.clear();
+      grants.clear();
     },
     get snapshot() {
       return freeze(
