@@ -28,3 +28,10 @@ export type { AcpCommand } from "./commands.ts";
 export type { AcpAuth, AcpAuthContext } from "./auth.ts";
 
 export type { ClientElicitation, ElicitationResult } from "./client-elicitation.ts";
+
+export {
+  AcpUsageSchema,
+  type AcpUsage,
+  type AcpUsageContext,
+  type AcpUsageBinding,
+} from "./session-usage.ts";

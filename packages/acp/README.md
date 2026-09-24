@@ -78,6 +78,28 @@ fail validation. Preserve compatible bindings for sessions you intend to reopen;
 software does not migrate historical journal formats. See
 [configuration binding details](protocol-reference.md#configuration-bindings).
 
+## Publish context usage and cumulative cost
+
+Return an `AcpSessionOptions.usage` binding when your environment can measure the current prompt
+context and its effective capacity. `read({ sessionId, cwd, snapshot, model }, signal)` returns
+`{ used, size, cost? }`. Include cached tokens in `used`; `cost`, when known, is the cumulative
+session amount with an explicit currency such as `{ amount: 0.12, currency: "EUR" }`. It is not a
+per-request charge. Return `undefined` when you cannot provide meaningful context usage and size.
+The adapter does not infer capacity or prices from model names or add up response tokens as context.
+
+The adapter reads after new/load/resume/fork and committed state changes. An optional
+`subscribe(changed, signal)` tells it to read again when external accounting changes; return a
+cleanup function if the subscription needs one. Superseded reads receive cancellation, and late
+results cannot overwrite newer state or reach a closed session. Read/subscription failures produce
+warnings and leave agent execution running. Identical values do not produce duplicate updates.
+The source owns measurement and billing persistence; reopening queries it without replaying tools.
+
+`acp.usage.updated` logs the published counts/cost with session, connection, revision and usage-request IDs.
+`acp.usage.failed` explains why no replacement was sent. Core's `lastCompletionUsage` is historical
+per-response evidence and is not interchangeable with this session-level measurement. The default
+workspace launcher does not yet supply a context-measurement/billing source; these controls must
+not be described as wired into that launcher until that integration exists.
+
 ## Tool failures go back to the model
 
 The workspace harness reports ordinary tool failures as tool results and continues the turn.

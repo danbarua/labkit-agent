@@ -50,6 +50,7 @@ import {
   type AcpConfigBinding,
 } from "./session-config.ts";
 import { parseSessionInfo } from "./session-info.ts";
+import { usageReporter, type AcpUsageBinding } from "./session-usage.ts";
 
 export type SessionOptionsContext = Readonly<{
   cwd: string;
@@ -68,6 +69,7 @@ export type SessionOptionsContext = Readonly<{
 export type AcpSessionOptions = SessionOptions & {
   config?: readonly AcpConfigBinding[];
   commands?: readonly AcpCommand[];
+  usage?: AcpUsageBinding;
   /** Persist host metadata after runtime initialization, before visible lifecycle publication. */
   onReady?: (sessionId: string, signal: AbortSignal) => void | Promise<void>;
 };
@@ -103,6 +105,7 @@ export type AcpOptions = Readonly<{
 
 type Session = {
   runtime: SessionRuntime;
+  usage?: ReturnType<typeof usageReporter>;
   dispose: () => Promise<void>;
   persistence: SessionPersistence;
   promptController?: AbortController;
@@ -344,6 +347,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     snapshot: SessionState,
   ) => {
     if (!entry.acceptingUpdates) return;
+    entry.usage?.refresh();
     const id = snapshot.durable.conversation.sessionId;
     const configuration = configState(entry.config, snapshot.durable.policy);
     const signature = JSON.stringify(configuration);
@@ -517,6 +521,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       }
       const cleanup = async () => {
         commandPublisherActive = false;
+        commandEntry?.usage?.close();
         elicitation.close();
         try {
           await mcp.close();
@@ -847,6 +852,22 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       boundSessionId = sessionId;
       entry.acceptingUpdates = visible;
       published = true;
+      if (visible && original.usage) {
+        commandEntry.usage = usageReporter(
+          original.usage,
+          () => ({
+            sessionId,
+            cwd: params.cwd,
+            snapshot: runtime.snapshot,
+            model: runtime.model,
+          }),
+          (update) => {
+            if (sessions.get(sessionId) === commandEntry && commandEntry?.acceptingUpdates)
+              send(client, sessionId, update);
+          },
+          connectionId,
+        );
+      }
       if (visible) refreshInfo(sessions.get(sessionId)!, client);
       if (visible && entry.commands.length)
         send(client, sessionId, {
@@ -962,6 +983,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     authLifetime = new AbortController();
     const active = [...sessions.entries()];
     for (const [, entry] of active) {
+      entry.usage?.close();
       entry.acceptingUpdates = false;
       entry.promptController?.abort();
     }
@@ -1164,6 +1186,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         if (borrowed) {
           try {
             if (entry) {
+              entry.usage?.close();
               entry.acceptingUpdates = false;
               try {
                 await entry.runtime.close();
@@ -1205,6 +1228,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       const remove = options.deleteSession;
       const operation = (async () => {
         if (entry) {
+          entry.usage?.close();
           entry.acceptingUpdates = false;
           entry.promptController?.abort();
           try {
@@ -1425,6 +1449,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     .onRequest("session/close", async ({ params }) => {
       const entry = lookup(params.sessionId, true);
       // Close is terminal for this runtime, even if the client never answers permission requests.
+      entry.usage?.close();
       entry.acceptingUpdates = false;
       entry.promptController?.abort();
       try {
@@ -1441,7 +1466,10 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
   const closed = connection.closed.then(async () => {
     diagnostic("acp", "info", "acp.connection.closing", { connectionId, count: sessions.size });
     closing = true;
-    for (const entry of sessions.values()) entry.acceptingUpdates = false;
+    for (const entry of sessions.values()) {
+      entry.usage?.close();
+      entry.acceptingUpdates = false;
+    }
     await Promise.allSettled([...sessions.values()].map((entry) => entry.runtime.close()));
     await Promise.allSettled([...resources].map((dispose) => dispose()));
     sessions.clear();

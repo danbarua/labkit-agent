@@ -83,6 +83,28 @@ Late responses cannot settle cancelled tool operations. Writes already dispatche
 effect despite cancellation or an ambiguous response. Read results and write input retain the
 256 KiB cap, and normal tool arguments/results are journaled through core.
 
+## Session usage
+
+`AcpSessionOptions.usage` implements the [session usage notification](https://agentclientprotocol.com/rfds/session-usage).
+Its public types are `AcpUsageBinding`, `AcpUsageContext` and `AcpUsage`; `AcpUsageSchema` validates
+source output. Required `used` is a finite nonnegative number and `size` a finite positive number. `used` can
+exceed `size` so a source can report an over-capacity context. Optional `cost` is null or
+`{ amount, currency, _meta? }`, with a finite nonnegative cumulative amount and an uppercase
+three-letter currency code. Top-level `_meta` is preserved. There is no implicit currency or price.
+
+The read context contains the immutable session snapshot and resolved bound model when available.
+Only committed journal revisions trigger reads. The optional subscription can trigger a refresh
+without a journal change. Reads are asynchronous and never hold up a prompt; updates may follow
+its terminal response. Each new read cancels the preceding one, and late or stale results are
+ignored. Close, logout, delete and disconnect cancel reads and unsubscribe. Setup/restore queries
+never dispatch a completion, tool or permission request.
+
+`undefined` emits nothing because the protocol has no unknown-capacity state. Invalid data or a
+thrown read logs `acp.usage.failed` and sends no replacement. If an earlier measurement was shown,
+that is still the last published measurement; the adapter does not fabricate a zero to clear it.
+The application must provide a measurement/billing source. No default workspace source is shipped
+by this notification binding.
+
 ## Slash commands
 
 The workspace example advertises `/review`, `/explain`, and `/plan`. These expand into ordinary
