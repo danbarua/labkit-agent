@@ -561,3 +561,35 @@ Protocol references: [stdio](https://agentclientprotocol.com/protocol/v1/transpo
 [prompt turns](https://agentclientprotocol.com/protocol/v1/prompt-turn),
 [TypeScript SDK](https://agentclientprotocol.com/libraries/typescript),
 [MCP-over-ACP wire reference](https://agentclientprotocol.github.io/rust-sdk/protocol.html).
+
+## Diagnostic event coverage
+
+ACP runtime diagnostics use the `labkit.acp` category. Session opening records carry a
+connection ID, initiating `rpcRequestId`, session ID, cwd, provider version, restored revision,
+and elapsed time. `acp.prompt.*` joins incoming requests to admitted turns and terminal outcomes;
+`acp.config.*` distinguishes waiting for the active prompt from a committed policy revision.
+A failed load records its original error and cause chain, rather than only the translated RPC error.
+
+`acp.permission.waiting` includes the absolute target paths, tool-call ID, offered option IDs,
+and originating prompt RPC ID. `acp.permission.resolved` records the actual selected option and
+wait duration; cancellation and client errors are separate events. A wait without a terminal event
+identifies an unanswered client permission request. RPC IDs are connection-local; always retain
+`connectionId` when following them. Tool IDs link ACP updates to core host operation events.
+
+`client_file.*`, `client_terminal.*`, and `elicitation.*` report remote waits, timeouts,
+validation failures and cleanup outcomes. `mcp.*` records connection setup, catalog pagination,
+remote calls and cleanup, including server identity and operation correlation. `prompt.ingest.*`
+and `attachment.*` identify the block/stage that failed and record resolved paths, media, sizes,
+and stored blob refs. Workspace file events correlate each local effect with an `operationId`,
+absolute path, cwd, tool-call ID and elapsed time; that tool-call ID joins the surrounding host session context.
+SQLite diagnostics preserve the database path, session/append identity and underlying storage
+error, including indeterminate outcomes that require reconciliation.
+
+Display metadata and subscriber failures remain non-authoritative, but now emit warnings instead
+of silently disappearing. These logs do not certify a journal commit. Routine events omit file,
+prompt, output and form-answer contents; errors retain causes with credential values redacted.
+Inspect runtime instrumentation in tests with:
+
+```sh
+LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/acp
+```

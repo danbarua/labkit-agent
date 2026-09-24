@@ -147,7 +147,9 @@ export function validatePolicy(
   if (policy.permissions === "ask" && !resolvers.permissionRequests)
     throw new Error("Missing permission request binding");
   if (policy.provider && !resolvers.providerIds?.has(policy.provider))
-    throw new Error("Missing versioned provider binding");
+    throw new Error(
+      `Missing versioned provider binding: requested ${policy.provider}; available: ${[...(resolvers.providerIds ?? [])].sort().join(", ") || "none"}`,
+    );
   if (
     !policy.provider &&
     [policy.model, policy.thinking, policy.stream, policy.maxOutputTokens].some(

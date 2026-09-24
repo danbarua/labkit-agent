@@ -24,7 +24,7 @@ import { Actor, freeze } from "../fsm/fsm.ts";
 import { createHost, type StreamUpdateSink, type ToolUpdateSink } from "../host/host.ts";
 import type { CompletionPort, PermissionPort } from "../host/ports.ts";
 import { copyRegistries } from "../host/ports.ts";
-import { diagnostic } from "../logging/index.ts";
+import { diagnostic, diagnosticError } from "../logging/index.ts";
 import {
   copyResolvers,
   projectPolicy,
@@ -189,6 +189,43 @@ export type SessionRuntime = {
   close(): Promise<void>;
 };
 
+/** Describe binding drift without copying system prompts or JSON-schema bodies into errors. */
+function registryDifferences(
+  expected: z.infer<typeof ConfigurationSchema>,
+  actual: z.infer<typeof ConfigurationSchema>,
+): string[] {
+  const differences: string[] = [];
+  for (const group of ["agents", "tools"] as const) {
+    const before = new Map<string, unknown>(expected[group]);
+    const after = new Map<string, unknown>(actual[group]);
+    const names = [...new Set([...before.keys(), ...after.keys()])].sort();
+    for (const name of names) {
+      const path = `${group}.${name}`;
+      if (!after.has(name)) differences.push(`missing ${path}`);
+      else if (!before.has(name)) differences.push(`added ${path}`);
+      else if (JSON.stringify(before.get(name)) !== JSON.stringify(after.get(name))) {
+        if (group === "tools") differences.push(`changed ${path}.parameters`);
+        else {
+          const previous = before.get(name) as Record<string, unknown>;
+          const current = after.get(name) as Record<string, unknown>;
+          const fields = [...new Set([...Object.keys(previous), ...Object.keys(current)])].sort();
+          const changed = fields.filter(
+            (field) => JSON.stringify(previous[field]) !== JSON.stringify(current[field]),
+          );
+          for (const field of changed) differences.push(`changed ${path}.${field}`);
+          if (!changed.length) differences.push(`changed ${path} serialization order`);
+        }
+      }
+    }
+    if (
+      JSON.stringify([...before.keys()]) !== JSON.stringify([...after.keys()]) &&
+      names.every((name) => before.has(name) && after.has(name))
+    )
+      differences.push(`changed ${group} registry order`);
+  }
+  return differences;
+}
+
 function configure(raw: SessionOptions, restoring = false) {
   const { options, resolvers, initialPolicy, observe, completePort, providerMedia } =
     normalizeOptions(raw, restoring);
@@ -231,8 +268,15 @@ function configure(raw: SessionOptions, restoring = false) {
   function build(initial: JournalState) {
     const sessionId = initial.conversation.sessionId;
     if (initial.policy) validatePolicy(initial.policy, initial.configuration, resolvers);
-    if (JSON.stringify(initial.configuration) !== JSON.stringify(configuration))
-      throw new Error("Session configuration does not match persisted registry");
+    if (JSON.stringify(initial.configuration) !== JSON.stringify(configuration)) {
+      const differences = registryDifferences(initial.configuration, configuration);
+      throw Object.assign(
+        new Error(
+          `Session configuration does not match persisted registry: ${differences.join("; ")}`,
+        ),
+        { differences },
+      );
+    }
     const branchReplies = new Map<
       ActorId,
       { resolve: (runtime: SessionRuntime) => void; reject: (error: unknown) => void }
@@ -255,19 +299,41 @@ function configure(raw: SessionOptions, restoring = false) {
         tools: session.snapshot.durable.policy?.tools[turn.agent] ?? agents.get(turn.agent)!.tools,
       },
     });
+    let observedTransition = "";
     function send(event: SessionEvent) {
       return session.send(event).then((snapshot) => {
-        diagnostic(
-          "session",
-          snapshot.status === "failed" ? "error" : "debug",
-          "session.observed",
-          {
-            sessionId,
-            status: snapshot.status,
-            revision: snapshot.durable.revision,
-            operation: event.type,
-          },
-        );
+        const phase = snapshot.durable.conversation.turn.status;
+        const transition = `${snapshot.status}/${phase}`;
+        if (transition !== observedTransition) {
+          diagnostic(
+            "session",
+            snapshot.status === "failed" ? "error" : "debug",
+            "session.transition",
+            {
+              sessionId,
+              turnId: snapshot.durable.conversation.turnId,
+              previousStatus: observedTransition || undefined,
+              status: snapshot.status,
+              phase,
+              revision: snapshot.durable.revision,
+              operation: event.type,
+              queuedSubmissions: snapshot.queue.length,
+              ...("pending" in snapshot
+                ? {
+                    appendId: snapshot.pending.request.appendId,
+                    requestId: snapshot.pending.submission.id,
+                    attempts: snapshot.pending.attempts,
+                    reason:
+                      snapshot.status === "reconciling"
+                        ? "Append outcome unknown; verifying committed journal"
+                        : "Waiting for durable append receipt before releasing work",
+                  }
+                : {}),
+              ...(snapshot.status === "failed" ? { reason: snapshot.message } : {}),
+            },
+          );
+          observedTransition = transition;
+        }
         try {
           const result = observe?.(snapshot);
           if (result instanceof Promise) void result.catch(() => {});
@@ -459,6 +525,16 @@ function configure(raw: SessionOptions, restoring = false) {
                 waiters.set(turnId, [...(waiters.get(turnId) ?? []), waiting]);
               }
             }
+          for (const body of newBodies) {
+            if (body.kind === "policy" || body.kind === "upgrade")
+              diagnostic("session", "info", "policy.committed", {
+                sessionId,
+                appendId: command.submission.appendId,
+                requestId: command.submission.id,
+                revision: command.durable.revision,
+                policy: body.policy,
+              });
+          }
           const admission = admissions.get(command.submission.id);
           if (admission) {
             admissions.delete(command.submission.id);
@@ -471,6 +547,18 @@ function configure(raw: SessionOptions, restoring = false) {
                   : command.durable.conversation.turnId;
               waiters.set(turnId, [...(waiters.get(turnId) ?? []), admission]);
             }
+          }
+          if (command.submission.input.kind === "tool") {
+            diagnostic("session", "debug", "tool.receipt_committed", {
+              sessionId,
+              turnId: command.submission.input.turnId,
+              batchId: command.submission.input.batchId,
+              callId: command.submission.input.callId,
+              appendId: command.submission.appendId,
+              requestId: command.submission.id,
+              revision: command.durable.revision,
+              reason: "Individual tool result is durable; releasing batch gate",
+            });
           }
           // Forward a committed individual result before processing a queued cancellation.
           afterCommit.get(command.submission.id)?.();
@@ -485,6 +573,15 @@ function configure(raw: SessionOptions, restoring = false) {
                 turnId: terminal.turnId,
                 outcome: terminal.record.outcome.kind,
                 revision: command.durable.revision,
+                appendId: command.submission.appendId,
+                requestId: command.submission.id,
+                stepLimit: command.durable.conversation.allowance,
+                ...(terminal.record.outcome.kind === "failed"
+                  ? { error: diagnosticError(terminal.record.outcome.error) }
+                  : {}),
+                ...(terminal.record.outcome.kind === "exhausted"
+                  ? { reason: "Turn step allowance exhausted; user continuation required" }
+                  : {}),
               },
             );
             for (const settle of waiters.get(terminal.turnId) ?? [])
@@ -495,6 +592,15 @@ function configure(raw: SessionOptions, restoring = false) {
             try {
               execute(effect);
             } catch (error) {
+              diagnostic("session", "error", "dispatch.failed", {
+                sessionId,
+                appendId: command.submission.appendId,
+                operation: effect.type,
+                error: diagnosticError(error),
+                ...(effect.type === "turn"
+                  ? { turnId: effect.turnId, childId: effect.command.child.id }
+                  : {}),
+              });
               if (effect.type === "turn")
                 post(effect.turnId, {
                   type: "failed",
@@ -519,6 +625,13 @@ function configure(raw: SessionOptions, restoring = false) {
               sessionId,
               requestId: command.id,
               outcome: command.result.kind,
+              ...(command.result.kind === "accepted"
+                ? {
+                    appendId: command.result.receipt.appendId,
+                    revision: command.result.receipt.revision,
+                  }
+                : {}),
+              ...(command.result.kind === "failed" ? { reason: command.result.message } : {}),
             },
           );
           receipts.get(command.id)?.(command.result);
@@ -702,41 +815,63 @@ export async function restoreSession(
   options: SessionOptions,
   rawSessionId: string,
 ): Promise<SessionRuntime> {
-  const configured = configure(options, true);
   const sessionId = SessionIdSchema.parse(rawSessionId);
-  diagnostic("session", "info", "session.restoring", { sessionId });
-  const loaded = await loadSession(options.persistence, sessionId);
-  if (loaded.kind !== "loaded")
-    throw new Error(loaded.kind === "not_found" ? "Session not found" : loaded.message);
-  const journal = replay(loaded.batches, configured.resolvers);
-  if (journal.conversation.sessionId !== sessionId || journal.revision !== loaded.revision)
-    throw new Error("Loaded stream identity/revision mismatch");
-  const built = configured.build(
-    freeze({ ...journal, conversation: { ...journal.conversation, pending: [] } }),
-  );
-  if (journal.conversation.turn.status !== "idle" || journal.pendingInputs?.length) {
-    diagnostic("session", "warning", "session.recovering", {
-      sessionId,
-      turnId: journal.conversation.turnId,
-    });
-    const receipt = await built.submit(
-      {
-        kind: "recovery",
-        turnId: journal.conversation.turnId,
-        reason: "Interrupted session; external effects were not replayed",
-      },
-      undefined,
-      undefined,
-      AppendIdSchema.parse(`recovery/${sessionId}/${journal.conversation.turnId}`),
+  const startedAt = performance.now();
+  let stage = "configure_bindings";
+  try {
+    const configured = configure(options, true);
+    diagnostic("session", "info", "session.restoring", { sessionId });
+    stage = "load_journal";
+    const loaded = await loadSession(options.persistence, sessionId);
+    if (loaded.kind !== "loaded")
+      throw new Error(loaded.kind === "not_found" ? "Session not found" : loaded.message);
+    stage = "replay_journal";
+    const journal = replay(loaded.batches, configured.resolvers);
+    if (journal.conversation.sessionId !== sessionId || journal.revision !== loaded.revision)
+      throw new Error("Loaded stream identity/revision mismatch");
+    stage = "validate_registry";
+    const built = configured.build(
+      freeze({ ...journal, conversation: { ...journal.conversation, pending: [] } }),
     );
-    if (receipt.kind !== "accepted") {
-      await built.runtime.close();
-      throw new Error(receipt.kind === "failed" ? receipt.message : `Recovery ${receipt.kind}`);
+    if (journal.conversation.turn.status !== "idle" || journal.pendingInputs?.length) {
+      stage = "recover_interrupted_turn";
+      diagnostic("session", "warning", "session.recovering", {
+        sessionId,
+        turnId: journal.conversation.turnId,
+        phase: journal.conversation.turn.status,
+        revision: journal.revision,
+        reason: "Interrupted operation; external effects will not be replayed",
+      });
+      const receipt = await built.submit(
+        {
+          kind: "recovery",
+          turnId: journal.conversation.turnId,
+          reason: "Interrupted session; external effects were not replayed",
+        },
+        undefined,
+        undefined,
+        AppendIdSchema.parse(`recovery/${sessionId}/${journal.conversation.turnId}`),
+      );
+      if (receipt.kind !== "accepted") {
+        await built.runtime.close();
+        throw new Error(receipt.kind === "failed" ? receipt.message : `Recovery ${receipt.kind}`);
+      }
     }
+    diagnostic("session", "info", "session.restored", {
+      sessionId,
+      revision: built.runtime.snapshot.durable.revision,
+      durationMs: Math.round(performance.now() - startedAt),
+      provider: built.runtime.snapshot.durable.policy?.provider,
+      model: built.runtime.snapshot.durable.policy?.model,
+    });
+    return built.runtime;
+  } catch (error) {
+    diagnostic("session", "error", "session.restore_failed", {
+      sessionId,
+      stage,
+      durationMs: Math.round(performance.now() - startedAt),
+      error: diagnosticError(error),
+    });
+    throw error;
   }
-  diagnostic("session", "info", "session.restored", {
-    sessionId,
-    revision: built.runtime.snapshot.durable.revision,
-  });
-  return built.runtime;
 }

@@ -10,6 +10,7 @@ import {
   type ElicitationSessionScope,
 } from "@agentclientprotocol/sdk";
 import type { ToolRunContext } from "@labkit-agent/core/host";
+import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 
@@ -123,32 +124,72 @@ function boundElicitation(
 ) {
   const lifetime = new AbortController();
   const pending = new Set<string>();
-  const request = async (params: CreateElicitationRequest, signal: AbortSignal) => {
-    limit(params);
-    if (
-      (!CreateElicitationRequest.isForm(params) && !CreateElicitationRequest.isUrl(params)) ||
-      !params.message.trim() ||
-      params.message.length > 4096
-    )
-      throw new Error("Invalid elicitation request");
-    const cancellation = AbortSignal.any([
-      signal,
-      lifetime.signal,
-      operationSignal(),
-      connectionSignal,
-      AbortSignal.timeout(120000),
-    ]);
-    cancellation.throwIfAborted();
-    const raw = await waitForBoundary(
-      client.request("elicitation/create", params, { cancellationSignal: cancellation }),
-      cancellation,
-    );
-    limit(raw);
-    if (CreateElicitationResponse.isDecline(raw)) return { action: "decline" as const };
-    if (CreateElicitationResponse.isCancel(raw)) return { action: "cancel" as const };
-    if (!CreateElicitationResponse.isAccept(raw))
-      throw new Error("Invalid elicitation response action or content");
-    return { action: "accept" as const, ...(raw.content != null ? { content: raw.content } : {}) };
+  const request = async (params: CreateElicitationRequest, signal: AbortSignal, id?: string) => {
+    const started = performance.now();
+    const fields = {
+      sessionId: "sessionId" in params ? params.sessionId : undefined,
+      requestId: "requestId" in params ? String(params.requestId) : undefined,
+      toolCallId: "toolCallId" in params ? (params.toolCallId ?? undefined) : undefined,
+      elicitationId: "elicitationId" in params ? params.elicitationId : (id ?? crypto.randomUUID()),
+      operation: params.mode,
+      timeoutMs: 120000,
+    };
+    diagnostic("acp", "debug", "elicitation.requested", fields);
+    try {
+      limit(params);
+      if (
+        (!CreateElicitationRequest.isForm(params) && !CreateElicitationRequest.isUrl(params)) ||
+        !params.message.trim() ||
+        params.message.length > 4096
+      )
+        throw new Error("Invalid elicitation request");
+      const cancellation = AbortSignal.any([
+        signal,
+        lifetime.signal,
+        operationSignal(),
+        connectionSignal,
+        AbortSignal.timeout(120000),
+      ]);
+      cancellation.throwIfAborted();
+      const raw = await waitForBoundary(
+        client.request("elicitation/create", params, { cancellationSignal: cancellation }),
+        cancellation,
+      );
+      limit(raw);
+      diagnostic("acp", "debug", "elicitation.responded", {
+        ...fields,
+        outcome: raw.action,
+        durationMs: performance.now() - started,
+      });
+      if (CreateElicitationResponse.isDecline(raw)) return { action: "decline" as const };
+      if (CreateElicitationResponse.isCancel(raw)) return { action: "cancel" as const };
+      if (!CreateElicitationResponse.isAccept(raw))
+        throw new Error("Invalid elicitation response action or content");
+      return {
+        action: "accept" as const,
+        ...(raw.content != null ? { content: raw.content } : {}),
+      };
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === "TimeoutError";
+      const cancelled =
+        !timedOut &&
+        (signal.aborted ||
+          lifetime.signal.aborted ||
+          operationSignal().aborted ||
+          connectionSignal.aborted);
+      diagnostic(
+        "acp",
+        cancelled ? "info" : "warning",
+        cancelled ? "elicitation.cancelled" : "elicitation.failed",
+        {
+          outcome: timedOut ? "timed_out" : cancelled ? "cancelled" : "failed",
+          ...fields,
+          durationMs: performance.now() - started,
+          error: diagnosticError(error),
+        },
+      );
+      throw error;
+    }
   };
   const reserve = () => {
     if (pending.size >= 32) throw new Error("Too many outstanding elicitations");
@@ -170,9 +211,16 @@ function boundElicitation(
               const response = await request(
                 { ...scope(context), mode: "form", message: input.message, requestedSchema: wire },
                 signal,
+                id,
               );
-              if (response.action === "accept" && !validate(response.content ?? {}))
+              if (response.action === "accept" && !validate(response.content ?? {})) {
+                diagnostic("acp", "warning", "elicitation.validation_failed", {
+                  elicitationId: id,
+                  toolCallId: context?.toolCallId,
+                  reason: JSON.stringify(validate.errors),
+                });
                 throw new Error("Elicitation response does not match the requested form");
+              }
               return response;
             } finally {
               pending.delete(id);
@@ -231,7 +279,16 @@ function boundElicitation(
                   if (!pending.has(id) || cancellation.aborted) return;
                   scope();
                   discard();
-                  await client.notify("elicitation/complete", { elicitationId: id });
+                  try {
+                    await client.notify("elicitation/complete", { elicitationId: id });
+                    diagnostic("acp", "debug", "elicitation.completed", { elicitationId: id });
+                  } catch (error) {
+                    diagnostic("acp", "warning", "elicitation.completion_failed", {
+                      elicitationId: id,
+                      error: diagnosticError(error),
+                    });
+                    throw error;
+                  }
                 },
               };
             } catch (error) {

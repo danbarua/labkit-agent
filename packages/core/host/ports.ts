@@ -88,6 +88,12 @@ export type CompletionPort = (
   signal: AbortSignal,
   blobs?: BlobResolver,
   onDelta?: StreamDeltaSink,
+  correlation?: Readonly<{
+    sessionId?: string;
+    turnId?: string;
+    childId?: string;
+    generation?: number;
+  }>,
 ) => unknown | Promise<unknown>;
 export const PermissionResponseSchema = z.strictObject({
   outcome: z.discriminatedUnion("outcome", [

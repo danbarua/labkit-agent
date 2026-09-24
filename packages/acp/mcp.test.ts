@@ -1,7 +1,9 @@
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "bun:test";
+
+import { withConfig, type LogRecord } from "@logtape/logtape";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { until } from "../core/agent/test-support.ts";
 import { mcpConnections, mcpToolName } from "./mcp.ts";
@@ -21,7 +23,14 @@ async function fixture(mode = "normal", additionalDirectories: string[] = []) {
       { name: "MCP_TEST_MODE", value: mode },
     ],
   };
-  const connection = mcpConnections([server], cwd, additionalDirectories);
+  const connection = mcpConnections(
+    [server],
+    cwd,
+    additionalDirectories,
+    undefined,
+    {},
+    { sessionId: "mcp-test-session" },
+  );
   return {
     cwd,
     server,
@@ -152,6 +161,109 @@ test("MCP root discovery includes additional workspace roots without changing se
       { uri: pathToFileURL(f.cwd).href, name: "Workspace" },
       { uri: "file:///additional/workspace", name: "Workspace 2" },
     ]);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("MCP diagnostics trace catalog, call completion and cancellation without dumping payloads", async () => {
+  const records: LogRecord[] = [];
+  await withConfig(
+    {
+      sinks: {
+        assertion: (record) => {
+          records.push(record);
+        },
+      },
+      loggers: [{ category: ["labkit", "acp"], lowestLevel: "debug", sinks: ["assertion"] }],
+    },
+    async () => {
+      const f = await fixture();
+      try {
+        const tools = await f.connection.open(signal());
+        const tool = tools.get(mcpToolName(f.server.name, "echo"))!;
+        await tool.run({ text: "private-input-content" }, signal(), {
+          toolCallId: "operation-123",
+        });
+        expect(
+          records
+            .filter((record) => record.level === "debug")
+            .map((record) => [record.properties.event, record.properties]),
+        ).toContainEqual([
+          "mcp.call.completed",
+          expect.objectContaining({
+            event: "mcp.call.completed",
+            sessionId: "mcp-test-session",
+            serverName: f.server.name,
+            toolCallId: "operation-123",
+            durationMs: expect.any(Number),
+            bytes: expect.any(Number),
+          }),
+        ]);
+        expect(
+          records
+            .filter((record) => record.level === "debug")
+            .map((record) => [record.properties.event, record.properties]),
+        ).toContainEqual(["mcp.catalog.page", expect.objectContaining({ totalCount: 2 })]);
+        const cancelled = new AbortController();
+        cancelled.abort(new Error("User cancelled review"));
+        await expect(
+          tool.run({ text: "unused" }, cancelled.signal, { toolCallId: "operation-cancelled" }),
+        ).rejects.toThrow("User cancelled review");
+        expect(
+          records
+            .filter((record) => record.level === "info")
+            .map((record) => [record.properties.event, record.properties]),
+        ).toContainEqual([
+          "mcp.call.cancelled",
+          expect.objectContaining({
+            toolCallId: "operation-cancelled",
+            error: expect.objectContaining({ message: "User cancelled review" }),
+          }),
+        ]);
+        expect(
+          JSON.stringify(
+            records
+              .filter((record) => record.level === "debug")
+              .map((record) => [record.properties.event, record.properties]),
+          ),
+        ).not.toContain("private-input-content");
+        expect(
+          JSON.stringify(
+            records
+              .filter((record) => record.level === "debug")
+              .map((record) => [record.properties.event, record.properties]),
+          ),
+        ).not.toContain("private-mcp-token");
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+});
+
+test("MCP errors sanitize client-provided credentials before crossing into host and journal", async () => {
+  const f = await fixture();
+  try {
+    const tools = await f.connection.open(signal());
+    const tool = tools.get(mcpToolName(f.server.name, "echo"))!;
+    const error = await Promise.resolve(tool.run({ text: "credential-error" }, signal())).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({
+      code: -32042,
+      data: {
+        status: 401,
+        upstreamRequestId: "upstream-request-42",
+        detail: "Credential [REDACTED] expired",
+      },
+    });
+    // Host/session error translation uses Error.message; diagnostics also retain stack and data.
+    expect((error as Error).message).toContain("Upstream rejected credential [REDACTED]");
+    expect((error as Error).stack).not.toContain("private-mcp-token");
+    expect(JSON.stringify(error)).not.toContain("private-mcp-token");
   } finally {
     await f.cleanup();
   }

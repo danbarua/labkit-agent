@@ -27,6 +27,7 @@ import {
   type SessionState,
 } from "@labkit-agent/core";
 import type { HostToolNotification, Tool } from "@labkit-agent/core/host";
+import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
 import type { AgentMessage } from "@labkit-agent/core/types";
 
 import { bindAuth, type AcpAuth } from "./auth.ts";
@@ -102,6 +103,7 @@ type Session = {
   persistence: SessionPersistence;
   media: (provider: string | undefined) => readonly MediaKind[];
   promptController?: AbortController;
+  promptRpcRequestId?: string;
   cwd: string;
   additionalDirectories: readonly string[];
   mcpServers: readonly McpServer[];
@@ -163,10 +165,21 @@ function toolUpdate(event: HostToolNotification, terminals: readonly string[] = 
       : {}),
   };
 }
-function observeSafely<T>(callback: ((value: T) => unknown) | undefined, value: T) {
+function observeSafely<T>(
+  callback: ((value: T) => unknown) | undefined,
+  value: T,
+  fields: Record<string, unknown>,
+) {
+  const failed = (error: unknown) =>
+    diagnostic("acp", "warning", "acp.subscriber.failed", {
+      ...fields,
+      error: diagnosticError(error),
+    });
   try {
-    void Promise.resolve(callback?.(value)).catch(() => {});
-  } catch {}
+    void Promise.resolve(callback?.(value)).catch(failed);
+  } catch (error) {
+    failed(error);
+  }
 }
 
 /** Raw journal tool outcomes retain failures even when policy projects them as tool text. */
@@ -215,6 +228,7 @@ function toolEvidence(state: JournalState) {
 
 /** One connection owns its runtimes; persistence and credentials remain caller-owned. */
 export function connectAcp(stream: Stream, options: AcpOptions) {
+  const connectionId = crypto.randomUUID();
   const sessions = new Map<string, Session>();
   const auth = bindAuth(options.auth);
   let authLifetime = new AbortController();
@@ -238,6 +252,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     writes = writes
       .then(() => client.notify("session/update", { sessionId, update }))
       .catch((error) => {
+        diagnostic("acp", "error", "acp.notification.failed", {
+          connectionId,
+          sessionId,
+          method: "session/update",
+          error: diagnosticError(error),
+        });
         connection.close(error);
       });
   };
@@ -265,9 +285,21 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           entry.infoSignature = signature;
           send(client, sessionId, { sessionUpdate: "session_info_update", ...info });
         })
-        .catch(() => {});
-    } catch {
-      /* Display metadata cannot decide session execution. */
+        .catch((error) =>
+          diagnostic("acp", "warning", "acp.session.metadata.failed", {
+            connectionId,
+            sessionId,
+            revision,
+            error: diagnosticError(error),
+          }),
+        );
+    } catch (error) {
+      diagnostic("acp", "warning", "acp.session.metadata.failed", {
+        connectionId,
+        sessionId,
+        revision,
+        error: diagnosticError(error),
+      });
     }
   };
   const requireInitialized = () => {
@@ -409,6 +441,16 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     replay = true,
     visible = true,
   ) {
+    const started = performance.now();
+    const trace = {
+      connectionId,
+      rpcRequestId: String(client.requestId),
+      method: params.sessionId ? (replay ? "session/load" : "session/resume") : "session/new",
+      sessionId: params.sessionId,
+      cwd: params.cwd,
+      replay,
+    };
+    diagnostic("acp", "info", "acp.session.open.started", trace);
     requireAccess();
     if (!isAbsolute(params.cwd))
       throw RequestError.invalidParams(undefined, "cwd must be absolute");
@@ -458,6 +500,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           additionalDirectories,
           (serverId) => mcpBridge.transport(serverId, client),
           elicitation.port,
+          { sessionId: id },
         );
       } catch (error) {
         throw RequestError.invalidParams(
@@ -546,6 +589,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       signal.throwIfAborted();
       if (closing) throw new Error("Connection closed");
       const entry = {
+        promptRpcRequestId: undefined as string | undefined,
         cwd: params.cwd,
         additionalDirectories,
         mcpServers: structuredClone(params.mcpServers),
@@ -594,7 +638,11 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           observe: (snapshot) => {
             if (!boundSessionId || snapshot.durable.conversation.sessionId === boundSessionId)
               observe(entry, client, snapshot);
-            observeSafely(subscribers.observe, snapshot);
+            observeSafely(subscribers.observe, snapshot, {
+              connectionId,
+              sessionId: snapshot.durable.conversation.sessionId,
+              operation: "observe",
+            });
           },
           toolUpdate: (event) => {
             if (event.sessionUpdate === "tool_call")
@@ -617,7 +665,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
               entry.terminals.delete(event.toolCallId);
               entry.toolCards.delete(event.toolCallId);
             }
-            observeSafely(subscribers.toolUpdate, event);
+            observeSafely(subscribers.toolUpdate, event, {
+              connectionId,
+              sessionId: event.sessionId,
+              toolCallId: event.toolCallId,
+              operation: "toolUpdate",
+            });
           },
           streamUpdate: (event) => {
             if (entry.acceptingUpdates && event.sessionId) {
@@ -638,13 +691,38 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
                 );
               if (event.status === "failed") entry.streamed.delete(event.completionId);
             }
-            observeSafely(subscribers.streamUpdate, event);
+            observeSafely(subscribers.streamUpdate, event, {
+              connectionId,
+              sessionId: event.sessionId,
+              childId: event.completionId,
+              operation: "streamUpdate",
+            });
           },
           requestPermission: async (request, permissionSignal) => {
             await writes;
             if (permissionSignal.aborted || closing) return { outcome: { outcome: "cancelled" } };
+            const started = performance.now();
+            const trace = {
+              connectionId,
+              rpcRequestId: entry.promptRpcRequestId,
+              sessionId: request.sessionId,
+              toolCallId: request.toolCall.toolCallId,
+              toolName: request.toolCall.title,
+              paths: request.toolCall.locations?.map((location) => location.path),
+              optionIds: request.options.map((option) => option.optionId),
+            };
+            diagnostic("acp", "info", "acp.permission.waiting", {
+              ...trace,
+              reason: "client_decision",
+            });
             return new Promise((resolve, reject) => {
-              const abort = () => resolve({ outcome: { outcome: "cancelled" } });
+              const abort = () => {
+                diagnostic("acp", "info", "acp.permission.cancelled", {
+                  ...trace,
+                  durationMs: performance.now() - started,
+                });
+                resolve({ outcome: { outcome: "cancelled" } });
+              };
               permissionSignal.addEventListener("abort", abort, { once: true });
               const { locations, ...toolCall } = request.toolCall;
               void client
@@ -663,7 +741,29 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
                   },
                   { cancellationSignal: permissionSignal },
                 )
-                .then(resolve, reject)
+                .then(
+                  (response) => {
+                    diagnostic("acp", "info", "acp.permission.resolved", {
+                      ...trace,
+                      response: response,
+                      durationMs: performance.now() - started,
+                    });
+                    resolve(response);
+                  },
+                  (error) => {
+                    diagnostic(
+                      "acp",
+                      permissionSignal.aborted ? "debug" : "error",
+                      "acp.permission.failed",
+                      {
+                        ...trace,
+                        durationMs: performance.now() - started,
+                        error: diagnosticError(error),
+                      },
+                    );
+                    reject(error);
+                  },
+                )
                 .finally(() => permissionSignal.removeEventListener("abort", abort));
             });
           },
@@ -715,7 +815,27 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           availableCommands: availableCommands(entry.commands),
         });
       await writes;
+      diagnostic("acp", "info", "acp.session.open.completed", {
+        ...trace,
+        sessionId,
+        revision: entry.revision,
+        provider: runtime.snapshot.durable.policy?.provider,
+        durationMs: performance.now() - started,
+      });
       return { sessionId, ...configuration };
+    } catch (error) {
+      diagnostic(
+        "acp",
+        signal.aborted ? "info" : "error",
+        signal.aborted ? "acp.session.open.cancelled" : "acp.session.open.failed",
+        {
+          ...trace,
+          outcome: signal.aborted ? "cancelled" : "failed",
+          durationMs: performance.now() - started,
+          error: diagnosticError(error),
+        },
+      );
+      throw error;
     } finally {
       if (cancelOpening) signal.removeEventListener("abort", cancelOpening);
       if (!published) {
@@ -734,7 +854,19 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     signal: AbortSignal,
     type?: string,
   ) {
+    const started = performance.now();
+    const trace = {
+      connectionId,
+      sessionId: id,
+      rpcRequestId: String(client.requestId),
+      method: "session/set_config_option",
+      configId,
+    };
     const entry = lookup(id);
+    diagnostic("acp", "info", "acp.config.queued", {
+      ...trace,
+      reason: entry.busy ? "active_prompt" : "configuration_boundary",
+    });
     const binding = entry.config.find((binding) => binding.id === configId);
     const patch = binding && configPatch(binding, value, type);
     if (!binding || !patch)
@@ -753,6 +885,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         if (receipt.kind !== "accepted")
           throw new RequestError(-32000, "Configuration change was not committed", receipt);
       }
+      diagnostic("acp", "info", "acp.config.committed", {
+        ...trace,
+        configValue: typeof value === "boolean" || typeof value === "string" ? value : undefined,
+        revision: entry.runtime.snapshot.durable.revision,
+        durationMs: performance.now() - started,
+      });
       const state = configState(entry.config, entry.runtime.snapshot.durable.policy);
       observe(entry, client, entry.runtime.snapshot);
       refreshInfo(entry, client);
@@ -763,7 +901,22 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       () => {},
       () => {},
     );
-    return waitForBoundary(operation, cancellation).then(() => operation);
+    return waitForBoundary(operation, cancellation)
+      .then(() => operation)
+      .catch((error) => {
+        diagnostic(
+          "acp",
+          cancellation.aborted ? "info" : "warning",
+          cancellation.aborted ? "acp.config.cancelled" : "acp.config.failed",
+          {
+            ...trace,
+            outcome: cancellation.aborted ? "cancelled" : "failed",
+            durationMs: performance.now() - started,
+            error: diagnosticError(error),
+          },
+        );
+        throw error;
+      });
   }
   const closeForAuth = async () => {
     authLifetime.abort();
@@ -819,11 +972,30 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         cancellation,
         connection.signal,
       );
+      const started = performance.now();
+      const trace = {
+        connectionId,
+        rpcRequestId: String(client.requestId),
+        method: "authenticate",
+        authMethodId: params.methodId,
+      };
+      diagnostic("acp", "info", "acp.auth.started", trace);
       try {
         await auth.authenticate(params.methodId, cancellation, closeForAuth, {
           elicitation: interaction.port,
         });
+        diagnostic("acp", "info", "acp.auth.completed", {
+          ...trace,
+          durationMs: performance.now() - started,
+        });
         return {};
+      } catch (error) {
+        diagnostic("acp", "warning", "acp.auth.failed", {
+          ...trace,
+          durationMs: performance.now() - started,
+          error: diagnosticError(error),
+        });
+        throw error;
       } finally {
         interaction.close();
       }
@@ -907,6 +1079,13 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
             throw new RequestError(-32000, "Parent session closed");
           const child = await parent.runtime.fork();
           const childId = child.snapshot.durable.conversation.sessionId;
+          diagnostic("acp", "info", "acp.fork.committed", {
+            connectionId,
+            rpcRequestId: String(client.requestId),
+            parentSessionId: params.sessionId,
+            sessionId: childId,
+            revision: child.snapshot.durable.revision,
+          });
           // Fork inherits core bindings. Rebind ACP resources before allowing any child input.
           await child.close();
           refreshInfo(parent, client);
@@ -924,6 +1103,13 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
               false,
             );
           } catch (error) {
+            diagnostic("acp", "error", "acp.fork.rebind.failed", {
+              connectionId,
+              rpcRequestId: String(client.requestId),
+              parentSessionId: params.sessionId,
+              sessionId: childId,
+              error: diagnosticError(error),
+            });
             throw new RequestError(-32000, "Fork was committed but could not be opened", {
               sessionId: childId,
               message: error instanceof Error ? error.message : String(error),
@@ -953,7 +1139,15 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         }
       }
     })
-    .onRequest("session/delete", async ({ params, signal }) => {
+    .onRequest("session/delete", async ({ params, signal, client }) => {
+      const started = performance.now();
+      const trace = {
+        connectionId,
+        rpcRequestId: String(client.requestId),
+        sessionId: params.sessionId,
+        method: "session/delete",
+      };
+      diagnostic("acp", "info", "acp.session.delete.started", trace);
       requireAccess();
       if (!options.deleteSession) throw RequestError.methodNotFound("session/delete");
       if (
@@ -987,15 +1181,55 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           cancellation,
         );
         return {};
-      })().finally(() => deleting.delete(params.sessionId));
+      })()
+        .then(
+          (result) => {
+            diagnostic("acp", "info", "acp.session.delete.completed", {
+              ...trace,
+              durationMs: performance.now() - started,
+            });
+            return result;
+          },
+          (error) => {
+            diagnostic("acp", "error", "acp.session.delete.failed", {
+              ...trace,
+              durationMs: performance.now() - started,
+              error: diagnosticError(error),
+            });
+            throw error;
+          },
+        )
+        .finally(() => deleting.delete(params.sessionId));
       return waitForBoundary(operation, cancellation);
     })
-    .onRequest("session/list", async ({ params, signal }) => {
+    .onRequest("session/list", async ({ params, signal, client }) => {
       requireAccess();
       if (!options.listSessions) throw RequestError.methodNotFound("session/list");
       if (params.cwd != null && !isAbsolute(params.cwd))
         throw RequestError.invalidParams(undefined, "cwd must be absolute");
-      return options.listSessions(params, signal);
+      const started = performance.now();
+      const trace = {
+        connectionId,
+        rpcRequestId: String(client.requestId),
+        method: "session/list",
+        cwd: params.cwd,
+      };
+      try {
+        const result = await options.listSessions(params, signal);
+        diagnostic("acp", "debug", "acp.session.list.completed", {
+          ...trace,
+          count: result.sessions.length,
+          durationMs: performance.now() - started,
+        });
+        return result;
+      } catch (error) {
+        diagnostic("acp", "error", "acp.session.list.failed", {
+          ...trace,
+          durationMs: performance.now() - started,
+          error: diagnosticError(error),
+        });
+        throw error;
+      }
     })
     .onRequest("session/set_config_option", ({ params, client, signal }) =>
       setConfig(
@@ -1017,6 +1251,14 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       return {};
     })
     .onRequest("session/prompt", async ({ params, client, signal }) => {
+      const started = performance.now();
+      const trace = {
+        connectionId,
+        rpcRequestId: String(client.requestId),
+        sessionId: params.sessionId,
+        method: "session/prompt",
+      };
+      diagnostic("acp", "info", "acp.prompt.received", { ...trace, count: params.prompt.length });
       const entry = lookup(params.sessionId);
       if (entry.busy) throw new RequestError(-32000, "Session already has an active prompt");
       let barrier: Promise<void>;
@@ -1034,6 +1276,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       });
       const controller = new AbortController();
       entry.promptController = controller;
+      entry.promptRpcRequestId = String(client.requestId);
       const promptSignal = AbortSignal.any([signal, controller.signal, connection.signal]);
       let admitted = false;
       let aborted = false;
@@ -1059,7 +1302,26 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         const receipt = await turn.accepted;
         if (receipt.kind !== "accepted")
           throw new RequestError(-32000, "Prompt admission failed", receipt);
+        diagnostic("acp", "info", "acp.prompt.admitted", {
+          ...trace,
+          revision: entry.runtime.snapshot.durable.revision,
+          provider: entry.runtime.snapshot.durable.policy?.provider,
+        });
         const result = await turn.settled;
+        diagnostic(
+          "acp",
+          result.kind === "terminal" && result.record.outcome.kind === "failed"
+            ? "warning"
+            : "info",
+          "acp.prompt.settled",
+          {
+            ...trace,
+            ...(result.kind === "terminal"
+              ? { turnId: result.turnId, outcome: result.record.outcome.kind }
+              : { outcome: result.kind }),
+            durationMs: performance.now() - started,
+          },
+        );
         observe(entry, client, entry.runtime.snapshot);
         refreshInfo(entry, client);
         await writes;
@@ -1091,12 +1353,24 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
                 : "end_turn",
         };
       } catch (error) {
+        diagnostic(
+          "acp",
+          promptSignal.aborted ? "info" : "error",
+          promptSignal.aborted ? "acp.prompt.cancelled" : "acp.prompt.failed",
+          {
+            ...trace,
+            outcome: promptSignal.aborted ? "cancelled" : "failed",
+            durationMs: performance.now() - started,
+            error: diagnosticError(error),
+          },
+        );
         if (promptSignal.aborted) return { stopReason: "cancelled" };
         throw error;
       } finally {
         promptSignal.removeEventListener("abort", abort);
         controller.abort(); // Release pending elicitation UI after this prompt settles.
         entry.promptController = undefined;
+        entry.promptRpcRequestId = undefined;
         entry.busy = false;
         finishPrompt();
         entry.streamed.clear();
@@ -1105,6 +1379,10 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       }
     })
     .onNotification("session/cancel", async ({ params }) => {
+      diagnostic("acp", "info", "acp.prompt.cancel.requested", {
+        connectionId,
+        sessionId: params.sessionId,
+      });
       const entry = lookup(params.sessionId, true);
       entry.promptController?.abort();
     })
@@ -1123,7 +1401,9 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       return {};
     });
   connection = app.connect(stream);
+  diagnostic("acp", "info", "acp.connection.opened", { connectionId });
   const closed = connection.closed.then(async () => {
+    diagnostic("acp", "info", "acp.connection.closing", { connectionId, count: sessions.size });
     closing = true;
     for (const entry of sessions.values()) entry.acceptingUpdates = false;
     await Promise.allSettled([...sessions.values()].map((entry) => entry.runtime.close()));

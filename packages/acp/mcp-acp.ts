@@ -3,6 +3,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
+import { diagnostic, diagnosticError } from "../core/logging/index.ts";
 import { waitForBoundary } from "./session-config.ts";
 
 export const McpMessageSchema = z.object({
@@ -47,7 +48,12 @@ export function acpMcpBridge(connectionSignal: () => AbortSignal) {
             client.request("mcp/disconnect", { connectionId: id }, { cancellationSignal: signal }),
             signal,
           );
-        } catch {
+        } catch (error) {
+          diagnostic("acp", "warning", "mcp.proxy.disconnect.failed", {
+            serverId,
+            connectionId: id,
+            error: diagnosticError(error),
+          });
           /* Local release must not wait indefinitely for the host. */
         }
       };
@@ -107,6 +113,7 @@ export function acpMcpBridge(connectionSignal: () => AbortSignal) {
               throw new Error("MCP transport closed while connecting");
             }
             connectionId = result.connectionId;
+            diagnostic("acp", "debug", "mcp.proxy.connected", { serverId, connectionId });
             endpoints.set(connectionId, endpoint);
           });
           await waitForBoundary(pending, AbortSignal.any([lifetime.signal, connectionSignal()]));
@@ -135,6 +142,14 @@ export function acpMcpBridge(connectionSignal: () => AbortSignal) {
             });
             return;
           }
+          const started = performance.now();
+          const fields = {
+            serverId,
+            connectionId,
+            requestId: String(message.id),
+            method: message.method,
+          };
+          diagnostic("acp", "debug", "mcp.proxy.request.started", fields);
           const controller = new AbortController();
           outgoing.set(message.id, controller);
           const signal = AbortSignal.any([controller.signal, lifetime.signal, connectionSignal()]);
@@ -151,6 +166,11 @@ export function acpMcpBridge(connectionSignal: () => AbortSignal) {
             )
             .then(
               (result) => {
+                diagnostic("acp", "debug", "mcp.proxy.request.completed", {
+                  ...fields,
+                  durationMs: performance.now() - started,
+                  discarded: closed || signal.aborted,
+                });
                 if (!closed && !signal.aborted)
                   transport.onmessage?.({
                     jsonrpc: "2.0",
@@ -159,6 +179,16 @@ export function acpMcpBridge(connectionSignal: () => AbortSignal) {
                   });
               },
               (error: unknown) => {
+                diagnostic(
+                  "acp",
+                  signal.aborted ? "info" : "warning",
+                  signal.aborted ? "mcp.proxy.request.cancelled" : "mcp.proxy.request.failed",
+                  {
+                    ...fields,
+                    durationMs: performance.now() - started,
+                    error: diagnosticError(error),
+                  },
+                );
                 if (!closed && !signal.aborted)
                   transport.onmessage?.({
                     jsonrpc: "2.0",
@@ -179,6 +209,12 @@ export function acpMcpBridge(connectionSignal: () => AbortSignal) {
         close() {
           if (closing) return closing;
           closed = true;
+          diagnostic("acp", "debug", "mcp.proxy.closed", {
+            serverId,
+            connectionId,
+            outgoingCount: outgoing.size,
+            incomingCount: incoming.size,
+          });
           if (connectionId && endpoints.get(connectionId) === endpoint)
             endpoints.delete(connectionId);
           lifetime.abort();

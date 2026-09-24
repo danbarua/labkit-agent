@@ -4,6 +4,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
+import { diagnostic, diagnosticError } from "../core/logging/index.ts";
+
 function remoteSettings(server: Extract<McpServer, { type: "http" | "sse" }>) {
   const url = new URL(server.url);
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
@@ -89,7 +91,19 @@ export function mcpTransport(
         try {
           if (transport instanceof StreamableHTTPClientTransport)
             await transport.terminateSession();
-        } catch {
+        } catch (error) {
+          diagnostic("acp", "warning", "mcp.remote.termination.failed", {
+            serverName: server.name,
+            transport: server.type,
+            origin: url.origin,
+            error: diagnosticError(
+              error,
+              [...headers.values()].flatMap((value) => [
+                value,
+                value.replace(/^(Bearer|Basic)\s+/i, ""),
+              ]),
+            ),
+          });
           /* Remote termination is best-effort; local resources still close. */
         } finally {
           lifetime.abort();

@@ -27,6 +27,7 @@ test("Bun stdio launcher exchanges ACP JSON lines and exits on EOF with stdout r
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
+      env: { ...process.env, LABKIT_ACP_LOG_DIR: join(directory, "logs") },
     },
   );
   const messages: any[] = [];
@@ -74,7 +75,7 @@ test("Bun stdio launcher exchanges ACP JSON lines and exits on EOF with stdout r
     child.stdin.end();
     expect(await child.exited).toBe(0);
     await reading;
-    expect(await errors).toBe("");
+    expect(await errors).toContain("Labkit diagnostics:");
   } finally {
     child.kill();
     await child.exited;

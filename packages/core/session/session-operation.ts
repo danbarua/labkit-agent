@@ -1,6 +1,6 @@
 import type { SessionId } from "../agent/types.ts";
 import { Actor, type Decision } from "../fsm/fsm.ts";
-import { diagnostic } from "../logging/index.ts";
+import { diagnostic, diagnosticError } from "../logging/index.ts";
 import {
   AppendResultSchema,
   LoadResultSchema,
@@ -78,6 +78,7 @@ function operation<T>(
 }
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 export function appendOperation(port: SessionPersistence, request: AppendRequest) {
+  const startedAt = performance.now();
   return operation<AppendResult>(
     { kind: "append", id: request.appendId },
     async (signal) => {
@@ -96,7 +97,15 @@ export function appendOperation(port: SessionPersistence, request: AppendRequest
           sessionId: request.sessionId,
           appendId: request.appendId,
           outcome: result.kind,
-          revision: result.kind === "committed" ? result.receipt.revision : undefined,
+          revision:
+            result.kind === "committed"
+              ? result.receipt.revision
+              : result.kind === "conflict"
+                ? result.revision
+                : undefined,
+          expectedRevision: request.expectedRevision,
+          durationMs: Math.round(performance.now() - startedAt),
+          ...("message" in result ? { reason: result.message } : {}),
         },
       );
       return result;
@@ -105,6 +114,10 @@ export function appendOperation(port: SessionPersistence, request: AppendRequest
       diagnostic("persistence", "warning", "append.indeterminate", {
         sessionId: request.sessionId,
         appendId: request.appendId,
+        expectedRevision: request.expectedRevision,
+        durationMs: Math.round(performance.now() - startedAt),
+        error: diagnosticError(error),
+        reason: "Append threw; commit outcome unknown until reconciliation",
       });
       return { kind: "indeterminate", message: message(error) };
     },
@@ -112,6 +125,7 @@ export function appendOperation(port: SessionPersistence, request: AppendRequest
   );
 }
 export function loadOperation(port: SessionPersistence, sessionId: SessionId) {
+  const startedAt = performance.now();
   return operation<LoadResult>(
     { kind: "load", id: sessionId },
     async (signal) => {
@@ -121,11 +135,18 @@ export function loadOperation(port: SessionPersistence, sessionId: SessionId) {
         sessionId,
         outcome: result.kind,
         revision: result.kind === "loaded" ? result.revision : undefined,
+        durationMs: Math.round(performance.now() - startedAt),
+        ...(result.kind === "failed" ? { reason: result.message } : {}),
+        ...(result.kind === "loaded" ? { batchCount: result.batches.length } : {}),
       });
       return result;
     },
     (error) => {
-      diagnostic("persistence", "warning", "load.failed", { sessionId });
+      diagnostic("persistence", "warning", "load.failed", {
+        sessionId,
+        durationMs: Math.round(performance.now() - startedAt),
+        error: diagnosticError(error),
+      });
       return { kind: "failed", message: message(error) };
     },
     sessionId,

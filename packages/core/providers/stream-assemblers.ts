@@ -7,10 +7,15 @@ const object = z.record(z.string(), z.json());
 const indexSchema = z.number().int().nonnegative();
 const usageDelta = (value: unknown): StreamDelta[] =>
   value == null ? [] : [{ usage: object.parse(value) }];
+function streamFailure(message: string, details: Record<string, z.JSONType>): Error {
+  return Object.assign(new Error(`${message}: ${JSON.stringify(details)}`), {
+    providerError: details,
+  });
+}
 function body(event: StreamEvent) {
   const value = object.parse(JSON.parse(event.data));
   if (value.error || event.event === "error" || value.type === "error")
-    throw new Error("Provider stream error");
+    throw streamFailure("Provider stream error", value);
   if (event.event && value.type && event.event !== value.type)
     throw new Error("Mismatched SSE event type");
   return value;
@@ -23,6 +28,7 @@ export function chatAssembler(): StreamAssembler {
   let done = false;
   let finish: string | undefined;
   let text = "";
+  let usage: Record<string, z.JSONType> | undefined;
   const calls = new Map<
     number,
     { id: string; type: "function"; function: { name: string; arguments: string } }
@@ -62,6 +68,7 @@ export function chatAssembler(): StreamAssembler {
         )
         .max(1)
         .parse(chunk.choices);
+      if (chunk.usage != null) usage = object.parse(chunk.usage);
       const deltas = usageDelta(chunk.usage);
       for (const choice of choices) {
         if (finish) throw new Error("Choice after finish reason");
@@ -91,6 +98,7 @@ export function chatAssembler(): StreamAssembler {
     finish() {
       if (!done || !finish) incomplete();
       return {
+        ...(usage ? { usage } : {}),
         choices: [
           {
             finish_reason: finish,
@@ -173,6 +181,8 @@ export function anthropicAssembler(): StreamAssembler {
         case "message_delta": {
           if (active || reason) throw new Error("Invalid message_delta");
           const delta = object.parse(item.delta);
+          if (item.usage != null)
+            message.usage = { ...object.parse(message.usage ?? {}), ...object.parse(item.usage) };
           reason = anthropicStopReason(delta.stop_reason, item.usage);
           return usageDelta(item.usage);
         }
@@ -214,6 +224,18 @@ export function responsesAssembler(): StreamAssembler {
       }
       if (!started) throw new Error("Missing response.created");
       switch (item.type) {
+        case "response.failed":
+        case "response.incomplete": {
+          const response = object.parse(item.response);
+          throw streamFailure(`Provider stream ${item.type}`, {
+            type: item.type,
+            responseId: response.id ?? null,
+            status: response.status ?? null,
+            error: response.error ?? null,
+            incomplete_details: response.incomplete_details ?? null,
+            usage: response.usage ?? null,
+          });
+        }
         case "response.completed": {
           const response = object.parse(item.response);
           if (response.id !== responseId || response.status !== "completed")
@@ -240,7 +262,7 @@ export function responsesAssembler(): StreamAssembler {
         case "response.reasoning_text.done":
           return [];
         default:
-          throw new Error("Unsupported or failed Responses stream event");
+          throw streamFailure("Unsupported Responses stream event", { type: item.type ?? null });
       }
     },
     finish() {
@@ -251,10 +273,12 @@ export function responsesAssembler(): StreamAssembler {
 
 export function googleAssembler(): StreamAssembler {
   let finished = false;
+  let usageMetadata: Record<string, z.JSONType> | undefined;
   const parts: Record<string, z.JSONType>[] = [];
   return {
     push(event) {
       const chunk = body(event);
+      if (chunk.usageMetadata != null) usageMetadata = object.parse(chunk.usageMetadata);
       const deltas = usageDelta(chunk.usageMetadata);
       if (chunk.promptFeedback) {
         const feedback = object.parse(chunk.promptFeedback);
@@ -291,7 +315,10 @@ export function googleAssembler(): StreamAssembler {
     },
     finish() {
       if (!finished) incomplete();
-      return { candidates: [{ finishReason: "STOP", content: { role: "model", parts } }] };
+      return {
+        ...(usageMetadata ? { usageMetadata } : {}),
+        candidates: [{ finishReason: "STOP", content: { role: "model", parts } }],
+      };
     },
   };
 }

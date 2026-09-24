@@ -15,9 +15,11 @@ test("test capture honors environment modes and levels after logging reconfigura
       `
 import { test } from ${JSON.stringify(import.meta.resolve("@logtape/testing-bun/autoload"))};
 import { getLogger } from ${JSON.stringify(import.meta.resolve("@logtape/logtape"))};
+import { diagnostic } from ${JSON.stringify(new URL("./index.ts", import.meta.url).pathname)};
 test("capture probe", () => {
   const logger = getLogger(["labkit", "capture-probe"]);
   logger.debug("CAPTURE_DEBUG_MARKER");
+  diagnostic("capture-probe", "debug", "operation.waiting", { sessionId: "session-probe", childId: "child-probe", reason: "permission response pending", path: "/workspace/core.ts" });
   logger.warning("CAPTURE_WARNING_MARKER");
   if (process.env.LOGTAPE_PROBE_FAIL === "1") throw new Error("expected probe failure");
 });
@@ -56,6 +58,21 @@ test("capture probe", () => {
       expect(exitCode).toBe(fail ? 1 : 0);
       expect(output.includes("labkit·capture-probe CAPTURE_DEBUG_MARKER")).toBe(debug);
       expect(output.includes("labkit·capture-probe CAPTURE_WARNING_MARKER")).toBe(warning);
+      for (const detail of [
+        "session-probe",
+        "child-probe",
+        "permission response pending",
+        "/workspace/core.ts",
+      ]) {
+        expect(
+          output
+            .split("\n")
+            .some(
+              (line) =>
+                line.includes("labkit·capture-probe operation.waiting") && line.includes(detail),
+            ),
+        ).toBe(debug);
+      }
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

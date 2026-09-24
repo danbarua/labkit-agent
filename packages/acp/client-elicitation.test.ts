@@ -1,4 +1,6 @@
-import { expect, test } from "bun:test";
+import type { AgentContext } from "@agentclientprotocol/sdk";
+import { getLogger } from "@logtape/logtape";
+import { expect, spyOn, test } from "@logtape/testing-bun/autoload";
 
 import { clientElicitation, elicitationFormSchema } from "./client-elicitation.ts";
 
@@ -64,5 +66,51 @@ test("empty or null capability modes expose no elicitation port", () => {
     );
     expect(binding.port).toEqual({});
     binding.close();
+  }
+});
+
+test("elicitation diagnostics retain scope and invalid response cause without answers", async () => {
+  const emitted = spyOn(getLogger(["labkit", "acp"]), "emit");
+  try {
+    const client = {
+      request: async () => ({ action: "accept", content: { choice: "PRIVATE_ANSWER" } }),
+    } as unknown as AgentContext;
+    const signal = new AbortController().signal;
+    const binding = clientElicitation(
+      client,
+      { elicitation: { form: {} } },
+      () => "form-session",
+      signal,
+      () => signal,
+    );
+    await expect(
+      binding.port.form!(
+        {
+          message: "Choose",
+          requestedSchema: { type: "object", properties: { choice: { type: "boolean" } } },
+        },
+        signal,
+        { toolCallId: "form-tool" },
+      ),
+    ).rejects.toThrow("does not match");
+    const records = emitted.mock.calls.map((call) => call[0].properties);
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        event: "elicitation.requested",
+        sessionId: "form-session",
+        toolCallId: "form-tool",
+        timeoutMs: 120000,
+      }),
+    );
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        event: "elicitation.validation_failed",
+        reason: expect.stringContaining("boolean"),
+      }),
+    );
+    expect(JSON.stringify(records)).not.toContain("PRIVATE_ANSWER");
+    binding.close();
+  } finally {
+    emitted.mockRestore();
   }
 });

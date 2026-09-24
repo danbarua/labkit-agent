@@ -64,7 +64,21 @@ for await (const bytes of Bun.stdin.stream()) {
         });
     } else if (request.method === "tools/call") {
       if (request.params.name === "slow") continue;
-      if (request.params.arguments.text === "error")
+      if (request.params.arguments.text === "credential-error")
+        send({
+          jsonrpc: "2.0",
+          id: request.id,
+          error: {
+            code: -32042,
+            message: `Upstream rejected credential ${process.env.MCP_TEST_TOKEN}`,
+            data: {
+              status: 401,
+              upstreamRequestId: "upstream-request-42",
+              detail: `Credential ${process.env.MCP_TEST_TOKEN} expired`,
+            },
+          },
+        });
+      else if (request.params.arguments.text === "error")
         result(request.id, {
           isError: true,
           content: [{ type: "text", text: "fixture tool error" }],

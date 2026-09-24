@@ -1,7 +1,13 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { resolve } from "node:path";
+
+import { configure, getConfig } from "@logtape/logtape";
 import { format } from "prettier";
 import { z } from "zod";
 
 import { BlobInputMetaSchema, type BlobRef } from "../agent/content.ts";
+import { withFixtureDiagnostics } from "../logging/fixture-capture.ts";
+import { diagnostic, diagnosticError } from "../logging/index.ts";
 import { PolicyPatchSchema } from "../policy/policy.ts";
 import {
   anthropicMessagesV2,
@@ -358,6 +364,10 @@ async function runScenario(scenario: Scenario, directory: string) {
       }
     }
   } catch (caught) {
+    diagnostic("fixture", "error", "scenario.failed", {
+      scenario: scenario.name,
+      error: diagnosticError(caught),
+    });
     error = caught instanceof Error ? caught.message : String(caught);
   }
   const states = Object.fromEntries(
@@ -375,6 +385,13 @@ async function runScenario(scenario: Scenario, directory: string) {
   await Bun.write(`${directory}/states.json`, json(states));
   await Bun.write(`${directory}/outputs.json`, json(results));
   await Bun.write(`${directory}/transcript.md`, transcript);
+  const aliases: Record<string, string[]> = {};
+  for (const [alias, session] of sessions) {
+    const sessionId = session.snapshot.durable.conversation.sessionId;
+    aliases[sessionId] ??= [];
+    aliases[sessionId].push(alias);
+  }
+  await Bun.write(`${directory}/session-aliases.json`, json(aliases));
   for (const [alias, session] of sessions)
     await Bun.write(`${directory}/journal-${alias}.jsonl`, journalJSONL(session.snapshot.durable));
   if (error) await Bun.write(`${directory}/error.json`, json({ error }));
@@ -392,6 +409,14 @@ async function runScenario(scenario: Scenario, directory: string) {
 export async function runFixtures(
   options: { update?: boolean; artifactDirectory?: string; version?: 1 | 2 } = {},
 ) {
+  // Standalone fixture runs need an async-local logging boundary. Test autoload already owns one.
+  if (!getConfig())
+    await configure({
+      contextLocalStorage: new AsyncLocalStorage(),
+      sinks: {},
+      loggers: [{ category: ["logtape", "meta"], lowestLevel: "warning", sinks: [] }],
+    });
+  const runId = crypto.randomUUID();
   const suffix = options.version === 2 ? "-v2" : "";
   const scenarios = z
     .array(ScenarioSchema)
@@ -402,8 +427,30 @@ export async function runFixtures(
   const directory =
     options.artifactDirectory ??
     (options.version === 2 ? `${defaultArtifacts.replace(/\/$/, "")}-v2` : defaultArtifacts);
+  await Bun.write(
+    `${directory}/run.json`,
+    json({
+      runId,
+      fixtureVersion: options.version ?? 1,
+      directory: resolve(directory),
+      startedAt: new Date().toISOString(),
+    }),
+  );
+  if (import.meta.main)
+    console.log(
+      `Session fixture journals and runtime diagnostics: ${resolve(directory)} (each scenario: diagnostics.log, diagnostics.jsonl, session-aliases.json)`,
+    );
   for (const scenario of scenarios) {
-    const result = await runScenario(scenario, `${directory}/${scenario.name}`);
+    const scenarioDirectory = `${directory}/${scenario.name}`;
+    const result = await withFixtureDiagnostics(
+      scenarioDirectory,
+      {
+        runId,
+        scenario: scenario.name,
+        fixtureVersion: options.version ?? 1,
+      },
+      () => runScenario(scenario, scenarioDirectory),
+    );
     outputs.push(result.output);
     transcripts.push(result.transcript);
     if (result.error) failures.push(`${scenario.name}: ${result.error}`);
@@ -431,7 +478,13 @@ export async function runFixtures(
         `Session fixture mismatch; inspect ${directory}/actual.json and actual.md. Baselines require explicit --update.`,
       );
   }
-  return { structured, markdown, count: scenarios.length };
+  return {
+    structured,
+    markdown,
+    count: scenarios.length,
+    artifactDirectory: resolve(directory),
+    runId,
+  };
 }
 if (import.meta.main) {
   const args = Bun.argv.slice(2);

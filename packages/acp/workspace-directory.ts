@@ -8,6 +8,7 @@ import {
   type ListSessionsResponse,
   type SessionInfo,
 } from "@agentclientprotocol/sdk";
+import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
 import { SessionIdSchema } from "@labkit-agent/core/types";
 
 import { workspacePersistence } from "./workspace-persistence.ts";
@@ -21,6 +22,33 @@ export function workspaceDirectory(initialCwd = process.cwd()) {
     roots.add(realpathSync(cwd));
   }
   function rows(cwd: string, afterId: string, limit: number, onlyId?: string): SessionInfo[] {
+    const started = performance.now();
+    try {
+      const result = readRows(cwd, afterId, limit, onlyId);
+      diagnostic("acp.storage", "debug", "workspace.sessions.discovered", {
+        cwd,
+        path: join(cwd, ".labkit/sessions/store.sqlite"),
+        sessionId: onlyId,
+        afterId,
+        limit,
+        count: result.length,
+        durationMs: performance.now() - started,
+      });
+      return result;
+    } catch (error) {
+      diagnostic("acp.storage", "error", "workspace.sessions.discovery_failed", {
+        cwd,
+        path: join(cwd, ".labkit/sessions/store.sqlite"),
+        sessionId: onlyId,
+        afterId,
+        limit,
+        durationMs: performance.now() - started,
+        error: diagnosticError(error),
+      });
+      throw error;
+    }
+  }
+  function readRows(cwd: string, afterId: string, limit: number, onlyId?: string): SessionInfo[] {
     const path = join(cwd, ".labkit/sessions/store.sqlite");
     try {
       for (const directory of [join(cwd, ".labkit"), join(cwd, ".labkit/sessions")]) {

@@ -28,7 +28,7 @@ import {
   type ToolCall,
 } from "../agent/types.ts";
 import { Actor, freeze } from "../fsm/fsm.ts";
-import { diagnostic } from "../logging/index.ts";
+import { diagnostic, diagnosticError } from "../logging/index.ts";
 import { effectiveToolResult, type Policy } from "../policy/policy.ts";
 import {
   ContinuationSchema,
@@ -180,9 +180,39 @@ export function createHost(
     settled: (result: Result<O>) => void,
     observe?: (state: OperationState<O>) => unknown,
   ) {
+    const startedAt = performance.now();
+    const attempt = async <T>(
+      phase: string,
+      run: () => T | Promise<T>,
+      signal?: AbortSignal,
+    ): Promise<T> => {
+      try {
+        return await run();
+      } catch (error) {
+        diagnostic(
+          child.kind === "completion" ? "provider" : "host",
+          signal?.aborted ? "info" : "warning",
+          signal?.aborted ? "child.cancelled" : "child.failed",
+          {
+            sessionId: bindings.sessionId,
+            childId: child.id,
+            operation: child.kind,
+            phase,
+            durationMs: Math.round(performance.now() - startedAt),
+            error: diagnosticError(error),
+          },
+        );
+        throw error;
+      }
+    };
     const actor = createOperationActor(
       child,
-      operation,
+      {
+        input: operation.input,
+        parseInput: (input) => attempt("validate_input", () => operation.parseInput(input)),
+        run: (input, signal) => attempt("run", () => operation.run(input, signal), signal),
+        parseOutput: (output) => attempt("validate_output", () => operation.parseOutput(output)),
+      },
       (result) => {
         children.delete(child.id);
         diagnostic(
@@ -194,6 +224,8 @@ export function createHost(
             childId: child.id,
             operation: child.kind,
             outcome: result.kind,
+            durationMs: Math.round(performance.now() - startedAt),
+            ...(result.kind === "failed" ? { error: diagnosticError(result.error) } : {}),
           },
         );
         if (!closed) settled(result);
@@ -233,6 +265,14 @@ export function createHost(
       turnId,
       childId: command.child.id,
       operation: command.type,
+      provider: context.provider?.provider,
+      model: context.provider?.model,
+      thinking: context.provider?.thinking,
+      stream: context.provider?.stream,
+      maxOutputTokens: context.provider?.maxOutputTokens,
+      ...("turn" in command
+        ? { generation: command.turn.generation, stepsRemaining: command.turn.steps }
+        : {}),
     });
     switch (command.type) {
       case "cancel":
@@ -318,11 +358,22 @@ export function createHost(
             run: async (request, signal) => {
               const blobs = await context.loadBlobs?.(request, signal, true);
               signal.throwIfAborted();
-              const raw = await bindings.complete(request, signal, blobs, (delta) => {
-                const parsed = StreamDeltaSchema.safeParse(delta);
-                if (parsed.success && !signal.aborted && status === "in_progress")
-                  notifyStream({ ...parsed.data, sessionUpdate: "completion_update" });
-              });
+              const raw = await bindings.complete(
+                request,
+                signal,
+                blobs,
+                (delta) => {
+                  const parsed = StreamDeltaSchema.safeParse(delta);
+                  if (parsed.success && !signal.aborted && status === "in_progress")
+                    notifyStream({ ...parsed.data, sessionUpdate: "completion_update" });
+                },
+                {
+                  sessionId: bindings.sessionId,
+                  turnId,
+                  childId: command.child.id,
+                  generation: command.turn.generation,
+                },
+              );
               signal.throwIfAborted();
               const wrapped = raw !== null && typeof raw === "object" && "completion" in raw;
               const output = wrapped
@@ -467,8 +518,11 @@ export function createHost(
                     locations = z
                       .array(ToolLocationSchema)
                       .parse(tool.locations(structuredClone(input)));
-                  } catch {
+                  } catch (error) {
                     diagnostic("host", "warning", "tool.locations_failed", {
+                      ...identity,
+                      toolName: call.name,
+                      error: diagnosticError(error),
                       childId: identity.toolCallId,
                     });
                   }
@@ -476,6 +530,17 @@ export function createHost(
                 if (locations)
                   notifyTool({ ...identity, sessionUpdate: "tool_call_update", locations });
                 signal.throwIfAborted();
+                const permissionStartedAt = performance.now();
+                const permissionContext = {
+                  ...identity,
+                  requestId: `${command.child.id}/${call.id}`,
+                  toolName: call.name,
+                  locations,
+                };
+                diagnostic("host", "info", "permission.waiting", {
+                  ...permissionContext,
+                  reason: "Tool execution requires user approval; batch execution is blocked",
+                });
                 const response = PermissionResponseSchema.parse(
                   await requestPermission(
                     freeze({
@@ -506,6 +571,11 @@ export function createHost(
                     : response.outcome.optionId === "allow-once"
                       ? "allow_once"
                       : "reject_once";
+                diagnostic("host", "info", "permission.decided", {
+                  ...permissionContext,
+                  decision,
+                  durationMs: Math.round(performance.now() - permissionStartedAt),
+                });
                 decisions.push({ callId: call.id, decision });
                 if (decision !== "allow_once") break;
               }
@@ -547,6 +617,12 @@ export function createHost(
                 callId: batchCommand.call.id,
                 toolCallId: batchCommand.child.id,
               };
+              diagnostic("host", "debug", "tool.admitted", {
+                ...identity,
+                toolName: batchCommand.call.name,
+                kind: tool.kind ?? "other",
+                permission: grant ? "approved" : "not_required",
+              });
               if (!grant)
                 notifyTool({
                   ...identity,
@@ -567,16 +643,23 @@ export function createHost(
                   parseInput: async (raw) => {
                     if (grant) return grant.inputs.get(batchCommand.call.id);
                     const input = await tool.parseInput(raw);
-                    if (!closed && status === "pending" && toolUpdate && tool.locations) {
+                    if (!closed && status === "pending" && tool.locations) {
                       try {
                         const locations = z
                           .array(ToolLocationSchema)
                           .parse(tool.locations(structuredClone(input)));
+                        diagnostic("host", "debug", "tool.locations_resolved", {
+                          ...identity,
+                          toolName: batchCommand.call.name,
+                          locations,
+                        });
                         notifyTool({ ...identity, sessionUpdate: "tool_call_update", locations });
-                      } catch {
+                      } catch (error) {
                         diagnostic("host", "warning", "tool.locations_failed", {
                           sessionId: bindings.sessionId,
                           childId: batchCommand.child.id,
+                          toolName: batchCommand.call.name,
+                          error: diagnosticError(error),
                         });
                       }
                     }
@@ -607,6 +690,13 @@ export function createHost(
                     batch,
                     toolFailure: context.toolFailure,
                   });
+                  diagnostic("host", "debug", "tool.awaiting_release", {
+                    ...identity,
+                    toolName: batchCommand.call.name,
+                    outcome: result.kind,
+                    reason:
+                      "Result reported; awaiting caller release (session journal receipt when durable)",
+                  });
                   sinks.tool(outcome);
                 },
                 (state) => {
@@ -619,6 +709,18 @@ export function createHost(
                           ? "in_progress"
                           : "pending";
                   if (next === status) return;
+                  diagnostic(
+                    "host",
+                    next === "failed" ? "warning" : "debug",
+                    "tool.status_changed",
+                    {
+                      ...identity,
+                      toolName: batchCommand.call.name,
+                      previousStatus: status,
+                      status: next,
+                      ...(state.status === "failed" ? { error: diagnosticError(state.error) } : {}),
+                    },
+                  );
                   status = next;
                   notifyTool({
                     ...identity,
@@ -697,7 +799,12 @@ export function createHost(
       });
     },
     close() {
-      diagnostic("host", "debug", "host.closed", { sessionId: bindings.sessionId });
+      diagnostic("host", "debug", "host.closed", {
+        sessionId: bindings.sessionId,
+        activeChildren: children.size,
+        pendingToolReceipts: pendingTools.size,
+        pendingGrants: grants.size,
+      });
       closed = true;
       for (const { actor } of children.values()) void actor.cancel();
       pendingTools.clear();

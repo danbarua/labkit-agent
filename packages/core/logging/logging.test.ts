@@ -8,7 +8,16 @@ import { getConfig } from "@logtape/logtape";
 import { createSession, restoreSession } from "../session/session-runtime.ts";
 import { lostAcknowledgement, scriptedCompletion, testOptions } from "../session/test-support.ts";
 import { createMemoryPersistence } from "../session/testing/memory-persistence.ts";
-import { configure, diagnostic, reset, type LogRecord, type Sink } from "./index.ts";
+import {
+  configure,
+  diagnostic,
+  diagnosticContext,
+  diagnosticError,
+  redactDiagnostics,
+  reset,
+  type LogRecord,
+  type Sink,
+} from "./index.ts";
 
 const testLoggingConfig = getConfig()!;
 afterEach(async () => {
@@ -128,7 +137,7 @@ test("sink failures cannot fail a turn or close shared logging", async () => {
   expect(calls).toBeGreaterThan(before);
 });
 
-test("lost acknowledgements expose reconciliation without logging failure messages", async () => {
+test("lost acknowledgements preserve reconciliation identity and completion failure cause", async () => {
   const records: LogRecord[] = [];
   await capture((record) => {
     records.push(record);
@@ -151,7 +160,7 @@ test("lost acknowledgements expose reconciliation without logging failure messag
     ),
   ).toBe(true);
   expect(records.some((record) => record.level === "warning")).toBe(true);
-  expect(JSON.stringify(records)).not.toContain("PRIVATE_ERROR");
+  expect(JSON.stringify(records)).toContain("PRIVATE_ERROR");
   await session.close();
 });
 
@@ -194,4 +203,80 @@ test("only environment reset disposes sinks; multiple sinks receive records", as
   expect(second).toEqual(first);
   await reset();
   expect(disposed).toBe(1);
+});
+
+test("diagnostics render correlation and causes in human output and structured records", async () => {
+  const records: LogRecord[] = [];
+  await capture((record) => {
+    records.push(record);
+  });
+  const log = diagnosticContext("provider", { sessionId: "session-7", turnId: "turn-2" });
+  const cause = Object.assign(new Error("socket reset while contacting /v1/messages"), {
+    code: "ECONNRESET",
+  });
+  const error = Object.assign(new Error("Anthropic request failed", { cause }), {
+    status: 400,
+    requestId: "req-123",
+    body: { error: { message: "thinking budget exceeds max_tokens" } },
+    apiKey: "secret-key",
+    authorization: "Bearer private-token",
+  });
+  log("warning", "provider.request.failed", {
+    childId: "child-3",
+    durationMs: 42,
+    error: diagnosticError(error),
+  });
+  const record = records[0]!;
+  expect(record.properties.event).toBe("provider.request.failed");
+  expect(record.properties.sessionId).toBe("session-7");
+  const rendered = record.message.join("");
+  for (const expected of [
+    "session-7",
+    "turn-2",
+    "child-3",
+    "req-123",
+    "ECONNRESET",
+    "thinking budget exceeds max_tokens",
+    "400",
+    "42",
+  ]) {
+    expect(rendered).toContain(expected);
+  }
+  expect(rendered).not.toContain("secret-key");
+  expect(rendered).not.toContain("private-token");
+  expect((record.properties.error as { stack: string }).stack).toContain(
+    "Anthropic request failed",
+  );
+});
+
+test("redaction targets credentials and preserves diagnostic details including exact-key echoes", () => {
+  const output = redactDiagnostics(
+    {
+      path: "/workspace/auth/token.ts",
+      maxOutputTokens: 4096,
+      tokenUsage: { output: 3000 },
+      url: "https://example.invalid/messages?api_key=secret-value&model=sonnet",
+      body: "Provider rejected key arbitrary-provider-credential: invalid account scope",
+      headers: new Headers({ "x-api-key": "secret-value", "request-id": "req-5" }),
+      cause: new Error("failure details"),
+    },
+    ["arbitrary-provider-credential"],
+  );
+  const serialized = JSON.stringify(output);
+  for (const detail of [
+    "/workspace/auth/token.ts",
+    "4096",
+    "3000",
+    "model=sonnet",
+    "invalid account scope",
+    "req-5",
+    "failure details",
+  ]) {
+    expect(serialized).toContain(detail);
+  }
+  expect(serialized).not.toContain("secret-value");
+  expect(serialized).not.toContain("arbitrary-provider-credential");
+  const cyclic: Record<string, unknown> = {};
+  cyclic.cause = cyclic;
+  expect(redactDiagnostics(cyclic)).toEqual({ cause: "[Circular]" });
 });

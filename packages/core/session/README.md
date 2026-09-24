@@ -305,3 +305,36 @@ or running tools. Lost approval receipts use normal reconciliation. Forks/compac
 and the captured callback, but each new call needs a fresh choice. Idle restore emits no prompts.
 Remembered approvals remain unimplemented. The separate [ACP stdio adapter](../../acp/README.md)
 translates session and permission operations without changing journal semantics.
+
+## Runtime diagnostics
+
+`session.transition` reports changes to storage status or turn phase, including the prior state,
+revision and the reason for a pending append/reconciliation gate. Repeated observations of the same
+state are suppressed. Append attempts and classified outcomes carry append IDs, expected/actual
+revisions, duration and failure details; an indeterminate result never claims rollback or commit.
+`tool.receipt_committed` joins a batch/call to its append receipt before release. `policy.committed`
+reports the effective policy only after persistence. `turn.settled` includes the committed append,
+step limit and explicit exhaustion/failure reason. Restore failures preserve the original cause;
+recovery identifies the interrupted phase and states that external effects will not be replayed.
+
+These diagnostics are separate from journal authority. Core does not configure logging or own a
+file sink; the launcher supplies durable output. The observability test exercises actual runtime
+logging for permission waits/refusal, cancellation, lost receipts, exhausted allowance and failed
+restore. Run it with debug capture to inspect what an operator will see, not just fixture output.
+
+### Inspect fixture runtime logs beside journals
+
+Both fixture commands print their artifact directory before executing scenarios. The defaults are
+`.session-artifacts/latest` and `.session-artifacts/latest-v2`. Each scenario directory contains
+`diagnostics.jsonl` (structured debug-and-higher runtime records) and `diagnostics.log` (readable
+records), beside `journal-<alias>.jsonl`. `session-aliases.json` maps each real session ID to the
+journal aliases, including restored sessions. Root `run.json` identifies the run; each diagnostic
+carries that run ID, scenario name and fixture version.
+
+These files capture real host/session/provider/persistence instrumentation, including failure and
+close events. Capture is scoped to the scenario and still forwards records to the configured test
+reporter; it does not replace the journal, reset global logging, or change approved fixture baselines.
+Failures retain their diagnostic files. Re-running the same artifact directory replaces that run's
+logs; use `runFixtures({ artifactDirectory: "..." })` to retain separate runs. Read a failure with
+`cat .session-artifacts/latest/failure/diagnostics.log`, then join its session/turn/append IDs to the
+journal in that directory. The fixture artifacts supplement, rather than replace, launcher logs.

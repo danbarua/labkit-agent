@@ -2,6 +2,7 @@ import { chmodSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { Database } from "bun:sqlite";
 
+import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
 import {
   AppendRequestSchema,
   BlobIdSchema,
@@ -79,9 +80,21 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
         .cwd !== root
     )
       throw new Error("Stored sessions belong to a different workspace cwd");
+  } catch (error) {
+    diagnostic("acp.storage", "error", "workspace.storage.open_failed", {
+      cwd: root,
+      path,
+      error: diagnosticError(error),
+    });
+    throw error;
   } finally {
     initial.close();
   }
+  diagnostic("acp.storage", "info", "workspace.storage.opened", {
+    cwd: root,
+    path,
+    synchronous: "FULL",
+  });
   return {
     lifetime:
       "workspace-local SQLite; retained until session deletion or removal of .labkit/sessions",
@@ -108,6 +121,18 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
             ON CONFLICT(session) DO UPDATE SET additional_directories=excluded.additional_directories`,
           ).run(sessionId, roots);
         }).immediate();
+        diagnostic("acp.storage", "info", "workspace.storage.scope_saved", {
+          sessionId,
+          path,
+          additionalDirectories: directories,
+        });
+      } catch (error) {
+        diagnostic("acp.storage", "error", "workspace.storage.setScope_failed", {
+          sessionId,
+          path,
+          error: diagnosticError(error),
+        });
+        throw error;
       } finally {
         db.close();
       }
@@ -125,11 +150,20 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
           db.query("DELETE FROM session_scope WHERE session=?").run(sessionId);
           db.query("DELETE FROM blobs WHERE session=?").run(sessionId);
         }).immediate();
+        diagnostic("acp.storage", "info", "workspace.storage.deleted", { sessionId, path });
+      } catch (error) {
+        diagnostic("acp.storage", "error", "workspace.storage.deleteSession_failed", {
+          sessionId,
+          path,
+          error: diagnosticError(error),
+        });
+        throw error;
       } finally {
         db.close();
       }
     },
     async load(rawId, signal) {
+      const started = performance.now();
       try {
         signal.throwIfAborted();
         const id = SessionIdSchema.parse(rawId);
@@ -149,18 +183,39 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
               throw new Error("Invalid journal continuity");
             revision = batch.revision;
           }
+          diagnostic("acp.storage", "debug", "workspace.storage.loaded", {
+            sessionId: id,
+            path,
+            batchCount: batches.length,
+            revision,
+            outcome: batches.length ? "loaded" : "not_found",
+            durationMs: performance.now() - started,
+          });
           return batches.length ? { kind: "loaded", revision, batches } : { kind: "not_found" };
         } finally {
           db.close();
         }
       } catch (error) {
+        diagnostic("acp.storage", "error", "workspace.storage.load_failed", {
+          sessionId: rawId,
+          path,
+          durationMs: performance.now() - started,
+          error: diagnosticError(error),
+        });
         return { kind: "failed", message: error instanceof Error ? error.message : "Load failed" };
       }
     },
     async append(raw, signal) {
       const parsed = AppendRequestSchema.safeParse(raw);
-      if (!parsed.success) return { kind: "rejected", message: parsed.error.message };
+      if (!parsed.success) {
+        diagnostic("acp.storage", "warning", "workspace.storage.append_rejected", {
+          path,
+          error: diagnosticError(parsed.error),
+        });
+        return { kind: "rejected", message: parsed.error.message };
+      }
       const request = parsed.data;
+      const started = performance.now();
       try {
         const db = database();
         try {
@@ -232,6 +287,15 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
           db.close();
         }
       } catch (error) {
+        diagnostic("acp.storage", "error", "workspace.storage.append_indeterminate", {
+          sessionId: request.sessionId,
+          appendId: request.appendId,
+          expectedRevision: request.expectedRevision,
+          path,
+          durationMs: performance.now() - started,
+          error: diagnosticError(error),
+          recovery: "Load and reconcile this append ID before retrying",
+        });
         return {
           kind: "indeterminate",
           message: error instanceof Error ? error.message : "Append failed",
@@ -272,6 +336,14 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
             return meta;
           })
           .immediate();
+      } catch (error) {
+        diagnostic("acp.storage", "error", "workspace.storage.blob_put_failed", {
+          sessionId,
+          blobId: id,
+          path,
+          error: diagnosticError(error),
+        });
+        throw error;
       } finally {
         db.close();
       }
@@ -291,6 +363,14 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
         if (meta.id !== id || meta.bytes !== bytes.length || hashBlob(bytes) !== id)
           throw new Error("Blob integrity failure");
         return { meta, bytes };
+      } catch (error) {
+        diagnostic("acp.storage", "error", "workspace.storage.blob_get_failed", {
+          sessionId,
+          blobId: id,
+          path,
+          error: diagnosticError(error),
+        });
+        throw error;
       } finally {
         db.close();
       }

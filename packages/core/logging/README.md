@@ -71,21 +71,65 @@ Debug carries routine operation detail. Info carries terminal/session lifecycle
 events. Warning carries failed children, unsuccessful storage outcomes, reconciliation,
 and recovery. Error reports failed session status/admission.
 
-Structured fields include sessionId, turnId, childId, appendId, requestId, batchId,
-callId, revision, expectedRevision, operation, outcome, status, and count where available.
-Host command dispatch links turnId to childId; standalone agent hosts may omit sessionId.
-Identifiers are caller supplied and must not encode secrets.
+### Common fields and correlation
 
-Only explicit scalar metadata is emitted. No snapshots, prompts, user/system text,
-tool arguments/results, credentials, URLs, raw errors, or provider bodies are logged.
-This is an allowlist at call sites, not a general-purpose redaction engine.
+Use the same field name for the same identity across modules. Include identities that
+exist at that boundary; omit unavailable values rather than inventing placeholder IDs.
+
+| Field                          | Meaning and join                                                                                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sessionId`                    | Durable conversation identity; joins ACP, session, host and provider records.                                                                                            |
+| `turnId`                       | Core turn identity within the session; joins preparation, completion, tools and settlement.                                                                              |
+| `childId`                      | Host operation identity; links command dispatch, provider transport, cancellation and child settlement.                                                                  |
+| `batchId`, `callId`            | Core tool batch and model-supplied call identities. Keep the batch/child context: a raw call ID alone need not be globally unique.                                       |
+| `toolCallId`                   | ACP tool identity exposed to the client; joins tool cards, permission requests and delegated client operations. Do not substitute a raw `callId` for this identity.      |
+| `requestId`                    | Core submission/admission request identity; joins receipt and append handling. It is not an HTTP or ACP request ID.                                                      |
+| `appendId`                     | Stable persistence attempt identity; joins append, receipt and uncertain-append reconciliation.                                                                          |
+| `rpcRequestId`                 | ACP JSON-RPC request identity, scoped to `connectionId`; distinct from a core submission.                                                                                |
+| `httpRequestId`                | Locally assigned provider HTTP attempt identity; joins transport start, response, decode and failure.                                                                    |
+| `providerRequestId`            | Provider-assigned response/request identity, when returned; retain it for provider support and server-side investigation.                                                |
+| `connectionId`                 | Adapter connection identity; disambiguates reused JSON-RPC request numbers and connection lifetime.                                                                      |
+| `durationMs`                   | Elapsed operation time in milliseconds. Use this name consistently, not `elapsedMs`; timeout limits remain `timeoutMs`.                                                  |
+| `revision`, `expectedRevision` | Observed and requested journal positions; diagnostic observations do not certify persistence.                                                                            |
+| `error`                        | Nested `diagnosticError(error)` object: `name`, `message`, `stack`, `code`, `cause`, and available custom metadata. Do not spread these into top-level lifecycle fields. |
+
+An ACP prompt record connects `connectionId`/`rpcRequestId` to `sessionId`; session
+admission connects that session to its core `requestId` and `turnId`. Host dispatch
+connects `turnId` to `childId`; provider records connect the child to `httpRequestId`
+and any `providerRequestId`. Tool records connect core batch/call identities to
+`toolCallId`. These are joins, not interchangeable names for one universal request ID.
+Standalone agent hosts may omit `sessionId`. Identifiers must not encode credentials.
+
+Add `operation`, `outcome`, `status`, `reason`, provider/profile version, configuration,
+limits and counts where they explain the lifecycle event. Preserve the actual failure
+cause under `error`; a status or generic message is not a replacement for that cause.
+
+Use `diagnostic(category, level, event, fields)` with a stable event name and structured
+fields. Each record has `properties.event`; its human message renders those same fields,
+so the default test reporter does not discard correlation or failure details. Supply
+`message` or `reason` to explain a decision or wait, not only an event label. Avoid
+repeating complete snapshots or successful response bodies on every transition.
+
+Use `diagnosticError(error, secretValues?)` to preserve error names, messages, stacks,
+nested causes, codes and custom provider metadata. `redactDiagnostics(value,
+secretValues?)` replaces credential fields (API keys, authorization, passwords and
+credential tokens), recognizable credential text, and supplied exact secret values.
+Transport adapters must pass configured API key values when a provider may echo them
+in a free-text error. Paths, provider error explanations, request IDs, token usage,
+limits and timings remain intact. Routine success events need no prompt or file body;
+this is not permission to suppress error evidence. Cycles are explicitly marked.
+
+`diagnosticContext(category, fields)` returns an immutable, explicitly bound logger
+function with signature `(level, event, extraFields?)`. Pass session and operation
+context across async boundaries; no global mutable current-session context exists.
+All helpers are browser-compatible and do not configure sinks.
 
 Logs run in adapters/runtime command handlers, outside pure decision functions.
 They are not the durable journal, do not enter policy or restored state, and may
 be dropped. Existing journal fixtures remain the behavioral contract.
 
 Tests use in-memory LogTape sinks to verify runtime reconfiguration, routing, sink
-failure isolation, shared lifetime, correlation, and payload exclusion:
+failure isolation, shared lifetime, correlation, and targeted credential redaction:
 
 ```sh
 bun test packages/core/logging
@@ -129,3 +173,21 @@ the async-local test configuration so subsequent wrapped tests still capture log
 This is a development-only dependency. It does not configure application logging
 or change journal records. See the [LogTape testing guide](https://logtape.org/manual/testing)
 for reporter customization.
+
+## Fixture diagnostic artifacts
+
+The Bun-only `fixture-capture.ts` helper exports
+`withFixtureDiagnostics(directory, fields, callback)`. It captures the real LogTape
+records at debug level in `diagnostics.jsonl` and a readable `diagnostics.log` beside
+the scenario journals. JSONL uses the same flat schema as launcher diagnostics: ISO `timestamp`, `level`,
+`category`, `event`, and structured event fields at the top level, including scenario/run
+metadata supplied by the caller. These files are diagnostic
+review artifacts, not approved journal baselines or evidence of a committed append.
+
+The environment must configure LogTape `contextLocalStorage` once; Bun's test autoload
+already does this. Capture uses scoped routing, does not reset global logging, and
+forwards records into the parent scope so normal test reporting still works. Concurrent
+scenarios remain isolated. Files are written as events arrive, so a failing scenario
+retains its evidence; an artifact write failure is reported after callback cleanup,
+rather than disappearing into best-effort diagnostic delivery. Re-running a scenario
+replaces its two diagnostic files. The fixture runner owns artifact retention.

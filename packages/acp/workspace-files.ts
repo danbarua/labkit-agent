@@ -2,6 +2,9 @@ import { constants } from "node:fs";
 import { lstat, open, opendir, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
+import type { ToolRunContext } from "@labkit-agent/core/host";
+import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
+
 export const MAX_FILE_BYTES = 256 * 1024;
 
 /** Cwd is resolved once. Reject traversal, symlink components, and non-regular files. */
@@ -171,26 +174,90 @@ export async function workspaceFiles(cwd: string, additionalDirectories: readonl
     }
     throw new Error("Path is outside the workspace or reserved for session storage");
   }
+  async function observed<T>(
+    action: string,
+    raw: string,
+    signal: AbortSignal,
+    run: (selection: ReturnType<typeof select>) => Promise<T>,
+    limitBytes = MAX_FILE_BYTES,
+    toolContext?: ToolRunContext,
+  ): Promise<T> {
+    const started = performance.now();
+    const operationId = crypto.randomUUID();
+    const context = {
+      operationId,
+      toolCallId: toolContext?.toolCallId,
+      action,
+      cwd: primary.root,
+      path: resolve(cwd, raw),
+      limitBytes,
+    };
+    diagnostic("acp.files", "debug", "workspace.file.started", context);
+    try {
+      const selected = select(raw);
+      context.path = selected.path;
+      const result = await run(selected);
+      diagnostic("acp.files", "debug", "workspace.file.completed", {
+        ...context,
+        path: selected.path,
+        durationMs: performance.now() - started,
+        ...(result instanceof Uint8Array
+          ? { bytes: result.byteLength }
+          : typeof result === "string"
+            ? { bytes: Buffer.byteLength(result) }
+            : {}),
+      });
+      return result;
+    } catch (error) {
+      diagnostic(
+        "acp.files",
+        signal.aborted ? "info" : "warning",
+        signal.aborted ? "workspace.file.cancelled" : "workspace.file.failed",
+        { ...context, durationMs: performance.now() - started, error: diagnosticError(error) },
+      );
+      throw error;
+    }
+  }
   return {
     root: primary.root,
     roots: Object.freeze([...new Set(roots.map((files) => files.root))]),
     path: (raw: string) => select(raw).path,
-    read: async (raw: string, signal: AbortSignal, limit?: number) => {
-      const { files, path } = select(raw);
-      return files.read(path, signal, limit);
-    },
-    readText: async (raw: string, signal: AbortSignal) => {
-      const { files, path } = select(raw);
-      return files.readText(path, signal);
-    },
-    write: async (raw: string, text: string, signal: AbortSignal) => {
-      const { files, path } = select(raw);
-      return files.write(path, text, signal);
-    },
-    list: async (raw: string, signal: AbortSignal) => {
-      const { files, path } = select(raw);
-      return files.list(path, signal);
-    },
+    read: (raw: string, signal: AbortSignal, limit?: number, context?: ToolRunContext) =>
+      observed(
+        "read",
+        raw,
+        signal,
+        ({ files, path }) => files.read(path, signal, limit),
+        limit,
+        context,
+      ),
+    readText: (raw: string, signal: AbortSignal, context?: ToolRunContext) =>
+      observed(
+        "read_text",
+        raw,
+        signal,
+        ({ files, path }) => files.readText(path, signal),
+        MAX_FILE_BYTES,
+        context,
+      ),
+    write: (raw: string, text: string, signal: AbortSignal, context?: ToolRunContext) =>
+      observed(
+        "write",
+        raw,
+        signal,
+        ({ files, path }) => files.write(path, text, signal),
+        MAX_FILE_BYTES,
+        context,
+      ),
+    list: (raw: string, signal: AbortSignal, context?: ToolRunContext) =>
+      observed(
+        "list",
+        raw,
+        signal,
+        ({ files, path }) => files.list(path, signal),
+        MAX_FILE_BYTES,
+        context,
+      ),
   };
 }
 export type WorkspaceFiles = Awaited<ReturnType<typeof workspaceFiles>>;

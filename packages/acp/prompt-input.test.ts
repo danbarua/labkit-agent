@@ -1,9 +1,9 @@
-import { expect, test } from "bun:test";
-
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import { MAX_BLOB_BYTES } from "@labkit-agent/core";
 import { createMemoryPersistence } from "@labkit-agent/core/testing";
 import { SessionIdSchema } from "@labkit-agent/core/types";
+import { withConfig, type LogRecord } from "@logtape/logtape";
+import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { promptInput } from "./prompt-input.ts";
 
@@ -148,4 +148,103 @@ test("resource links in additional roots become session blobs and removed roots 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("attachment diagnostics correlate stored refs and preserve ingestion failure causes", async () => {
+  const records: LogRecord[] = [];
+  await withConfig(
+    {
+      sinks: {
+        assertion: (record) => {
+          records.push(record);
+        },
+      },
+      loggers: [{ category: ["labkit", "acp"], lowestLevel: "debug", sinks: ["assertion"] }],
+    },
+    async () => {
+      const persistence = createMemoryPersistence();
+      const result = await promptInput(
+        [
+          {
+            type: "resource",
+            resource: {
+              uri: "draft.md",
+              mimeType: "text/markdown",
+              text: "private-document-content",
+            },
+          },
+        ],
+        "/tmp",
+        persistence,
+        sessionId,
+        signal,
+      );
+      expect(
+        records
+          .filter((record) => record.level === "debug")
+          .map((record) => [record.properties.event, record.properties]),
+      ).toContainEqual([
+        "attachment.stored",
+        expect.objectContaining({
+          sessionId,
+          blobId: result.attachments![0]!.id,
+          media: "text/markdown",
+          bytes: 24,
+        }),
+      ]);
+      const failing = {
+        ...persistence,
+        putBlob: async () => {
+          throw new Error("Disk full on blob volume");
+        },
+      };
+      await expect(
+        promptInput(
+          [{ type: "image", mimeType: "image/png", data: "AQID" }],
+          "/tmp",
+          failing,
+          sessionId,
+          signal,
+        ),
+      ).rejects.toThrow("Disk full");
+      expect(
+        records
+          .filter((record) => record.level === "warning")
+          .map((record) => [record.properties.event, record.properties]),
+      ).toContainEqual([
+        "prompt.ingest.failed",
+        expect.objectContaining({
+          sessionId,
+          stage: "put_blob",
+          error: expect.objectContaining({ message: "Disk full on blob volume" }),
+        }),
+      ]);
+      const cancelled = new AbortController();
+      cancelled.abort(new Error("Prompt cancelled before admission"));
+      await expect(
+        promptInput(
+          [{ type: "text", text: "unused" }],
+          "/tmp",
+          persistence,
+          sessionId,
+          cancelled.signal,
+        ),
+      ).rejects.toThrow("Prompt cancelled");
+      expect(
+        records
+          .filter((record) => record.level === "info")
+          .map((record) => [record.properties.event, record.properties]),
+      ).toContainEqual([
+        "prompt.ingest.cancelled",
+        expect.objectContaining({ sessionId, stage: "validate" }),
+      ]);
+      expect(
+        JSON.stringify(
+          records
+            .filter((record) => record.level === "debug")
+            .map((record) => [record.properties.event, record.properties]),
+        ),
+      ).not.toContain("private-document-content");
+    },
+  );
 });

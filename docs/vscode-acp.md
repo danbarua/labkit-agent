@@ -195,3 +195,52 @@ Labkit connects and exchanges MCP messages over the existing ACP channel; the ho
 These tools use the same approval cards and durable results as external MCP tools. This requires
 host support for `mcp/connect`, bidirectional `mcp/message`, and `mcp/disconnect`; no ACP Client UI
 support is implied. Connection IDs are live resources and are never restored from the journal.
+
+## Runtime diagnostics
+
+The CLI enables structured JSONL diagnostics **before importing the configuration**. The default
+location is `~/.labkit/logs/acp-<pid>-<launcherId>.jsonl`, independent of the workspace or session.
+Each launch prints its exact diagnostic path to stderr; ACP stdout contains protocol frames only.
+A restart creates a new log, retaining the old evidence. Every record carries `timestamp`, `level`,
+`category`, `event`, `processId`, and `launcherId`, plus runtime correlation fields such as
+`connectionId`, `sessionId`, `turnId`, `childId`, `callId`, and `appendId` where applicable.
+
+Launch environment settings:
+
+| Variable                   | Default          | Meaning                                                                       |
+| -------------------------- | ---------------- | ----------------------------------------------------------------------------- |
+| `LABKIT_ACP_LOG_DIR`       | `~/.labkit/logs` | Directory created before any session is opened                                |
+| `LABKIT_ACP_LOG_LEVEL`     | `debug`          | Minimum LogTape level (`trace`, `debug`, `info`, `warning`, `error`, `fatal`) |
+| `LABKIT_ACP_LOG_MAX_BYTES` | `10485760`       | Rotation size per file                                                        |
+| `LABKIT_ACP_LOG_BACKUPS`   | `4`              | Rotated files retained per launch                                             |
+
+An individual oversized JSON record is split into `diagnostic.record_chunk` entries. Group by
+`recordId`, sort by `index`, concatenate `serializedFragment`, then parse that JSON to recover the
+original record. `total` detects fragments lost to the documented retention limit.
+
+Files use owner-only permissions. Rotation retains the current file and `.1` through `.4` by
+default; `.1` is the most recent backup. Startup removes older groups beyond the newest 20 stopped
+launches. Logs belonging to live processes are not pruned. File writes are synchronous, so there is
+no unbounded asynchronous queue; rotation and graceful shutdown flush data to disk. Abrupt power
+loss can still lose filesystem cache contents. If directory creation, rotation, or writing fails,
+the launcher explicitly reports the cause and emits structured records on stderr instead of
+silently discarding them. That degraded mode cannot promise durable storage.
+
+To follow the path printed at startup:
+
+```sh
+tail -f "$HOME/.labkit/logs/acp-PID-LAUNCHER_ID.jsonl"
+```
+
+To find a session across restarts and rotated files:
+
+```sh
+rg 'SESSION_ID' "$HOME/.labkit/logs" --glob '*.jsonl*'
+```
+
+Inspect `launcher.failed` for configuration/import failures and follow the same session, operation,
+and request identifiers across ACP, host, provider, and persistence events. Logs retain error
+messages, stacks, causes, provider rejection details, and operation outcomes. Credential fields and
+known credential values from the launch environment are redacted; redaction does not replace
+failure causes with a generic status. Runtime diagnostics are separate from the authoritative
+session journal in `<workspace>/.labkit/sessions/store.sqlite`.

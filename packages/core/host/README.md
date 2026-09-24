@@ -122,3 +122,18 @@ approval. Parsers and location callbacks must not perform tool effects. Location
 metadata, not a filesystem sandbox. Runtime functions, parsed inputs and grants never enter the
 journal. Abort/close revoke grants and signal the pending callback; late responses cannot run tools.
 The port receives a frozen request. Unlike display sinks, its response is awaited and validated.
+
+## Runtime diagnostics
+
+Host diagnostics identify the session, operation child and dispatching turn. Completion calls
+forward that correlation to the provider transport as an optional fifth port argument. Tool events
+include batch/provider call IDs, host tool call ID, tool name, status changes and resolved paths.
+`permission.waiting` means the whole batch is blocked on the named request; `permission.decided`
+records the once-only choice and elapsed time. `tool.awaiting_release` identifies a finished tool
+whose result still awaits the caller's release gate, rather than implying a journal commit.
+
+`child.failed` preserves the original error and cause before the operation actor converts it into
+its domain failure, with the failing validation/execution phase and elapsed time. Cancellation and
+terminal outcomes remain independently visible. Diagnostics are best effort and never decide or
+release work. Configure sinks at the environment boundary; use debug test capture to inspect these
+same runtime events (`LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/session/observability.test.ts`).

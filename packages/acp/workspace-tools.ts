@@ -17,9 +17,11 @@ export function workspaceTools(files: WorkspaceFiles, client: ClientFiles = {}) 
         input: z.object({ path }),
         kind: "read",
         locations: ({ path }) => [{ path }],
-        run: async ({ path }, signal) => ({
+        run: async ({ path }, signal, context) => ({
           path,
-          text: await (client.readText ?? files.readText)(path, signal),
+          text: client.readText
+            ? await client.readText(path, signal, context)
+            : await files.readText(path, signal, context),
         }),
       }),
     ],
@@ -40,7 +42,10 @@ export function workspaceTools(files: WorkspaceFiles, client: ClientFiles = {}) 
         }),
         kind: "edit",
         locations: ({ path }) => [{ path }],
-        run: ({ path, text }, signal) => (client.write ?? files.write)(path, text, signal),
+        run: ({ path, text }, signal, context) =>
+          client.write
+            ? client.write(path, text, signal, context)
+            : files.write(path, text, signal, context),
       }),
     ],
     [
@@ -52,7 +57,7 @@ export function workspaceTools(files: WorkspaceFiles, client: ClientFiles = {}) 
         input: z.object({ path }),
         kind: "search",
         locations: ({ path }) => [{ path }],
-        run: ({ path }, signal) => files.list(path, signal),
+        run: ({ path }, signal, context) => files.list(path, signal, context),
       }),
     ],
   ]);

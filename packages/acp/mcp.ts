@@ -8,6 +8,7 @@ import {
   CallToolResultSchema,
   ElicitationCompleteNotificationSchema,
   ElicitRequestSchema,
+  ErrorCode,
   ListRootsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type {
@@ -21,6 +22,7 @@ import { Ajv2019 } from "ajv/dist/2019.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
+import { diagnostic, diagnosticError } from "../core/logging/index.ts";
 import type { ClientElicitation } from "./client-elicitation.ts";
 import { mcpTransport, validateMcpTransport } from "./mcp-transport.ts";
 import { waitForBoundary } from "./session-config.ts";
@@ -60,6 +62,7 @@ export function mcpConnections(
   additionalDirectories: readonly string[] = [],
   proxy?: (serverId: string) => Transport,
   elicitation: ClientElicitation = {},
+  context: { sessionId?: string } = {},
 ) {
   if (servers.length > 32) throw new Error("At most 32 MCP servers are supported per session");
   const names = new Set<string>();
@@ -69,17 +72,48 @@ export function mcpConnections(
       throw new Error("MCP server names must be nonempty and unique");
     names.add(server.name);
   }
+  const secrets = servers.flatMap((server) =>
+    !("type" in server)
+      ? server.env
+          .filter(({ name }) => /key|token|secret|auth|password/i.test(name))
+          .map(({ value }) => value)
+      : server.type === "acp"
+        ? []
+        : server.headers
+            .filter(({ name }) => /key|token|secret|auth|cookie/i.test(name))
+            .flatMap(({ value }) => [value, value.replace(/^(Bearer|Basic)\s+/i, "")]),
+  );
+  // Errors leave this credential-owning boundary for host diagnostics and journal outcomes.
+  // Sanitize the thrown value as well as this module's own diagnostic record.
+  const boundaryError = (error: unknown): Error => {
+    const detail = diagnosticError(error, secrets);
+    return Object.assign(
+      new Error(typeof detail.message === "string" ? detail.message : JSON.stringify(detail)),
+      detail,
+    );
+  };
   const clients: (() => Promise<void>)[] = [];
   let closed = false;
   let closing: Promise<void> | undefined;
   const close = () => {
     closed = true;
-    closing ??= Promise.allSettled(clients.map((closeClient) => closeClient())).then(() => {});
+    closing ??= Promise.allSettled(clients.map((closeClient) => closeClient())).then((results) => {
+      for (const result of results)
+        if (result.status === "rejected")
+          diagnostic("acp", "warning", "mcp.close.failed", {
+            ...context,
+            error: diagnosticError(result.reason, secrets),
+          });
+      diagnostic("acp", "debug", "mcp.closed", { ...context, count: clients.length });
+    });
     return closing;
   };
   return {
     close,
     async open(signal: AbortSignal): Promise<ReadonlyMap<string, Tool>> {
+      const started = performance.now();
+      let serverName: string | undefined;
+      let stage = "connect";
       const tools = new Map<string, Tool>();
       const abort = () => {
         void close();
@@ -90,6 +124,15 @@ export function mcpConnections(
         for (const server of [...servers].sort((a, b) =>
           a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
         )) {
+          serverName = server.name;
+          stage = "connect";
+          diagnostic("acp", "debug", "mcp.connect.started", {
+            ...context,
+            serverName,
+            transport: "type" in server ? server.type : "stdio",
+            cwd,
+            timeoutMs: 15000,
+          });
           signal.throwIfAborted();
           if (closed) throw new Error("MCP session closed");
           const validator = new SchemaValidator();
@@ -153,7 +196,7 @@ export function mcpConnections(
                 return { action: response.action };
               } catch (error) {
                 urls.delete(params.elicitationId);
-                throw error;
+                throw boundaryError(error);
               }
             });
           if (elicitation.url)
@@ -187,10 +230,19 @@ export function mcpConnections(
               client.connect(transport, { signal: deadline, timeout: 15000 }),
               deadline,
             );
-          } catch {
-            throw new Error(`Failed to connect to MCP server ${server.name}`);
+          } catch (cause) {
+            throw new Error(`Failed to connect to MCP server ${server.name}`, { cause });
           }
-          if (!client.getServerCapabilities()?.tools) continue;
+          diagnostic("acp", "debug", "mcp.connect.completed", { ...context, serverName });
+          stage = "catalog";
+          if (!client.getServerCapabilities()?.tools) {
+            diagnostic("acp", "debug", "mcp.catalog.skipped", {
+              ...context,
+              serverName,
+              reason: "Server does not advertise tools capability",
+            });
+            continue;
+          }
           const catalog = [];
           const cursors = new Set<string>();
           let cursor: string | undefined;
@@ -200,6 +252,13 @@ export function mcpConnections(
               timeout: 15000,
             });
             catalog.push(...page.tools);
+            diagnostic("acp", "debug", "mcp.catalog.page", {
+              ...context,
+              serverName,
+              count: page.tools.length,
+              totalCount: catalog.length,
+              hasNextPage: !!page.nextCursor,
+            });
             if (catalog.length > MAX_TOOLS) throw new Error("MCP tool catalog exceeds 256 tools");
             cursor = page.nextCursor;
             if (cursor && cursors.has(cursor))
@@ -207,6 +266,11 @@ export function mcpConnections(
             if (cursor) cursors.add(cursor);
             if (cursors.size > MAX_TOOLS) throw new Error("MCP tool catalog has too many pages");
           } while (cursor);
+          diagnostic("acp", "info", "mcp.catalog.loaded", {
+            ...context,
+            serverName,
+            count: catalog.length,
+          });
           for (const entry of catalog.sort((a, b) =>
             a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
           )) {
@@ -222,53 +286,101 @@ export function mcpConnections(
               kind: entry.annotations?.readOnlyHint === true ? "read" : "other",
               parameters: structuredClone(entry.inputSchema),
               async parseInput(raw) {
-                const json = z.json().parse(raw);
-                const result = validate(json);
-                if (!result.valid)
-                  throw new Error(`Invalid MCP tool arguments: ${result.errorMessage}`);
-                return json;
-              },
-              async run(input, toolSignal) {
-                toolSignal.throwIfAborted();
-                if (closed) throw new Error("MCP session closed");
-                activeCalls.add(toolSignal);
-                let rawResult: unknown;
                 try {
-                  rawResult = await client.callTool(
-                    { name: entry.name, arguments: input as Record<string, unknown> },
-                    undefined,
-                    { signal: toolSignal, timeout: 60000 },
-                  );
-                } finally {
-                  activeCalls.delete(toolSignal);
+                  const json = z.json().parse(raw);
+                  const result = validate(json);
+                  if (!result.valid) {
+                    throw new Error(`Invalid MCP tool arguments: ${result.errorMessage}`);
+                  }
+                  return json;
+                } catch (error) {
+                  const failure = boundaryError(error);
+                  diagnostic("acp", "warning", "mcp.input.rejected", {
+                    ...context,
+                    serverName: server.name,
+                    toolName: name,
+                    error: diagnosticError(failure),
+                  });
+                  throw failure;
                 }
-                const result = CallToolResultSchema.parse(rawResult);
-                if (result.isError)
-                  throw new Error(
-                    `MCP tool failed: ${result.content
-                      .filter((block) => block.type === "text")
-                      .map((block) => block.text)
-                      .join("\n")
-                      .slice(0, 4096)}`,
-                  );
-                if (
-                  result.content.some(
-                    (block) =>
-                      block.type === "image" ||
-                      block.type === "audio" ||
-                      (block.type === "resource" && !("text" in block.resource)),
-                  )
-                )
-                  throw new Error("Binary MCP tool results are not supported");
-                const output = {
-                  content: result.content,
-                  ...(result.structuredContent
-                    ? { structuredContent: result.structuredContent }
-                    : {}),
+              },
+              async run(input, toolSignal, toolContext) {
+                const callStarted = performance.now();
+                const fields = {
+                  ...context,
+                  serverName: server.name,
+                  toolName: name,
+                  remoteToolName: entry.name,
+                  toolCallId: toolContext?.toolCallId,
                 };
-                if (Buffer.byteLength(JSON.stringify(output)) > MAX_BYTES)
-                  throw new Error("MCP tool result exceeds 256 KiB; narrow the request");
-                return output;
+                diagnostic("acp", "debug", "mcp.call.started", { ...fields, timeoutMs: 60000 });
+                try {
+                  toolSignal.throwIfAborted();
+                  if (closed) throw new Error("MCP session closed");
+                  activeCalls.add(toolSignal);
+                  let rawResult: unknown;
+                  try {
+                    rawResult = await client.callTool(
+                      { name: entry.name, arguments: input as Record<string, unknown> },
+                      undefined,
+                      { signal: toolSignal, timeout: 60000 },
+                    );
+                  } finally {
+                    activeCalls.delete(toolSignal);
+                  }
+                  const result = CallToolResultSchema.parse(rawResult);
+                  if (result.isError)
+                    throw new Error(
+                      `MCP tool failed: ${result.content
+                        .filter((block) => block.type === "text")
+                        .map((block) => block.text)
+                        .join("\n")
+                        .slice(0, 4096)}`,
+                    );
+                  if (
+                    result.content.some(
+                      (block) =>
+                        block.type === "image" ||
+                        block.type === "audio" ||
+                        (block.type === "resource" && !("text" in block.resource)),
+                    )
+                  )
+                    throw new Error("Binary MCP tool results are not supported");
+                  const output = {
+                    content: result.content,
+                    ...(result.structuredContent
+                      ? { structuredContent: result.structuredContent }
+                      : {}),
+                  };
+                  if (Buffer.byteLength(JSON.stringify(output)) > MAX_BYTES)
+                    throw new Error("MCP tool result exceeds 256 KiB; narrow the request");
+                  diagnostic("acp", "debug", "mcp.call.completed", {
+                    ...fields,
+                    durationMs: performance.now() - callStarted,
+                    bytes: Buffer.byteLength(JSON.stringify(output)),
+                    count: result.content.length,
+                  });
+                  return output;
+                } catch (error) {
+                  const timedOut =
+                    error instanceof Error &&
+                    (error.name === "TimeoutError" ||
+                      ("code" in error && error.code === ErrorCode.RequestTimeout));
+                  const cancelled = toolSignal.aborted && !timedOut;
+                  diagnostic(
+                    "acp",
+                    cancelled ? "info" : "warning",
+                    cancelled ? "mcp.call.cancelled" : "mcp.call.failed",
+                    {
+                      ...fields,
+                      durationMs: performance.now() - callStarted,
+                      timeoutMs: 60000,
+                      outcome: timedOut ? "timed_out" : cancelled ? "cancelled" : "failed",
+                      error: diagnosticError(error, secrets),
+                    },
+                  );
+                  throw boundaryError(error);
+                }
               },
             });
           }
@@ -277,8 +389,20 @@ export function mcpConnections(
         if (closed) throw new Error("MCP session closed");
         return tools;
       } catch (error) {
+        diagnostic(
+          "acp",
+          signal.aborted ? "info" : "warning",
+          signal.aborted ? "mcp.open.cancelled" : "mcp.open.failed",
+          {
+            ...context,
+            serverName,
+            stage,
+            durationMs: performance.now() - started,
+            error: diagnosticError(error, secrets),
+          },
+        );
         await close();
-        throw error;
+        throw boundaryError(error);
       } finally {
         signal.removeEventListener("abort", abort);
       }

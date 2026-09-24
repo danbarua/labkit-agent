@@ -145,8 +145,9 @@ never publish a successful partial completion or continuation. Closing/barge-in 
 Rejected Anthropic stop reasons produce an explicit failure with the bounded stop-reason identifier
 and available numeric input/output token counts. `max_tokens` reports output truncation;
 `model_context_window_exceeded` reports context exhaustion. These messages survive as the ordinary
-failed completion error in the journal and ACP response. Provider content is excluded. This does not
-enable a diagnostic file sink or retain raw HTTP bodies, and cannot recover evidence from old errors.
+failed completion error in the journal and ACP response. Generated content is excluded from routine success events. Transport retains HTTP error bodies,
+provider request IDs, status and nested failure causes; configured credential values are redacted.
+Historical errors that discarded these details cannot be reconstructed.
 
 The host emits completed only after final decode, completion admission and continuation storage;
 the journal still commits one model_settled event per operation. The display status can precede its
@@ -179,7 +180,7 @@ replaying effects, and independent fork/compaction streams remain unchanged.
 Legacy createChatCompletion and completionTransport remain convenience wrappers around
 openai-chat@1 and the shared HTTP transport. Only that compatibility wrapper accepts
 the old custom-server message.handoff field and retains the old HTTP error-body message.
-New profiles use the reserved tool and status-only HTTP errors. Legacy callback connection
+New profiles use the reserved tool and retain HTTP error details and provider request IDs. Legacy callback connection
 fields exist only at the callback adapter boundary, not in prepared snapshots.
 
 ## Thinking and continuation envelopes
@@ -310,3 +311,21 @@ text-only encode vectors remain unchanged.
 Preparation checks media and existence after projection; completion reloads immutable bytes after
 the prepared record commits. Canonical requests and all journal records store refs only. Blob
 storage is session-scoped, content-addressed and owned by the persistence adapter.
+
+## Provider diagnostics
+
+Transport emits `provider.completion.started/completed/failed/cancelled`,
+`provider.http.started/received/completed/rejected/failed/cancelled`, and
+`provider.stream.started/completed/failed/cancelled`. The host supplies session, turn, child
+and generation identities. `httpRequestId` identifies the single HTTP attempt independently
+of any host request ID; `providerRequestId` is the upstream response header. Profile/model,
+thinking/stream settings, output limit, message/tool counts, phase and integer `durationMs`
+make failures attributable to the actual operation. Success includes numeric usage and terminal
+reasons without dumping response text. Stream summaries include byte/frame/delta counts and
+last event; failures include buffered characters and the assembler's actual terminal-evidence error.
+
+HTTP rejection diagnostics and propagated errors preserve the provider error body, status and
+request ID. Actual bound authorization/API-key values are scrubbed even when echoed in prose;
+error identity, stack and causes survive translation. Provider code owns no sink: retrieve these
+events from the launcher's configured diagnostic file. Inspect real test output with
+`LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/providers`.

@@ -61,6 +61,57 @@ The codebase contains compile-time assertions that the test runner alone cannot
 validate. Run the build for frontend or bundling changes. Documentation-only changes
 need formatting and diff review rather than application tests.
 
+## Definition of done: observability and traceability
+
+A feature or behavior change is not done until it can be diagnosed from its runtime
+logs. Passing functional tests, producing journal fixtures, or writing files under
+`session_artefacts` / `.session-artifacts` does not satisfy this requirement. Users
+must not need to copy protocol traffic from a UI or reproduce a failure under a
+debugger to discover why an operation stopped.
+
+- Include observability in the feature's acceptance criteria and implementation,
+  not as follow-up work. Instrument meaningful lifecycle events: admission, dispatch,
+  waiting and its reason, state transitions, completion, failure, cancellation, and
+  recovery where applicable. Successful execution must also leave useful evidence.
+- Make events traceable across boundaries. Use stable event names and structured
+  fields with the applicable session, turn, operation/child, tool call, request, and
+  append IDs. Include relevant provider/profile versions, configuration changes,
+  statuses, limits, and timing so an operator can reconstruct what happened.
+- Preserve diagnostic causes through error translation. Record the actual provider
+  stop reason, HTTP status, provider request ID, error code, and useful error details
+  when available. Do not replace this evidence with only "Internal error", "Agent
+  turn failed", a list of allowed schema values, or an unexplained status code.
+  Distinguish exhausted limits, rejected permissions, cancellation, invalid input,
+  missing bindings, and transport/provider failures.
+- Protect secrets through targeted field exclusion or redaction. Do not use
+  "security", "privacy", or "safe logging" as a reason to swallow exceptions,
+  discard causes, or remove the evidence needed to debug the system. Routine
+  diagnostics do not require prompts, file contents, credentials, or authorization
+  headers. Preserve useful error metadata and explanations without those payloads.
+- Environment launchers must provide durable, bounded diagnostic output with a
+  documented location, levels, rotation/retention, and retrieval procedure. Stderr
+  or a transient UI Output channel alone is insufficient for a launched agent.
+  Keep ACP stdout exclusively for protocol traffic. Core must not configure global
+  logging or own file sinks; log at runtime/adapter boundaries, keeping decisions pure.
+- Add tests that assert the feature's expected diagnostic events and correlation
+  fields on successful and relevant failed/cancelled paths. Exercise the real
+  instrumentation, not test-only print statements. Verify sensitive fields are
+  excluded without erasing diagnostic causes.
+- Run the affected tests with debug logging enabled and inspect the emitted output:
+
+  ```sh
+  LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test path/to/affected.test.ts
+  ```
+
+  Check that the new behavior produces the expected new events or meaningful fields
+  in existing events. Unchanged log output across newly implemented lifecycle paths
+  is a gap to investigate, not evidence of success. Test capture must show the logs
+  that runtime instrumentation emits when the feature works and when it fails.
+
+Completion reports must state what diagnostic evidence was verified and where an
+operator can retrieve it. If instrumentation or durable launcher logging is missing,
+report the work as incomplete; do not claim that passing tests makes it done.
+
 ## Runtime conventions
 
 - Keep decisions pure and synchronous. Return the complete next state and commands;
