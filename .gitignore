@@ -144,3 +144,9 @@ vite.config.ts.timestamp-*
 
 # Generated session inspection runs; approved fixtures remain tracked
 .session-artifacts/
+
+
+# Jetbrains crap
+.junie/
+.idea/
+.air/
