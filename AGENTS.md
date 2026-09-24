@@ -42,14 +42,17 @@ Run commands from the repository root:
 
 ```sh
 bun install
-bun run dev
-bun run start
+bun run dev                     # hot-reload web server workflow
+bun run start                   # web server from source with production env var
 bun run build
-bun test packages/core
-bun test path/to/file.test.ts
+bun test packages/core          # scope tests to a package
+bun test path/to/file.test.ts   # scope tests to a file
+bun run test:with-logs          # test suite with verbose logging
 bunx tsc --noEmit
 bunx biome check
-bun run format:check
+bun run format:check            # check but don't format
+bun run format                  # reformat files
+bun pm pkg get scripts          # README goes stale, this command does not
 ```
 
 Use Bun rather than Node.js, npm, pnpm, or Yarn. Use `bun:test` for tests and prefer
@@ -112,6 +115,34 @@ Completion reports must state what diagnostic evidence was verified and where an
 operator can retrieve it. If instrumentation or durable launcher logging is missing,
 report the work as incomplete; do not claim that passing tests makes it done.
 
+## Meaningful Failure Reports
+
+- Make failure reports self-contained. State which operation failed, what it was
+  trying to do, what prevented it, and the consequence. Include relevant tool names,
+  paths, arguments, configuration values, or limits. `outcome="failed"` alone is
+  not an explanation.
+- Preserve the original error and its cause. Distinguish observed facts from
+  inference; if the cause is unknown, say so. Do not replace specific errors with
+  generic messages such as "operation failed".
+- Use stable event names and consistent fields. Include correlation IDs to connect
+  the report to surrounding events; IDs supplement an explanation, not replace it.
+- Choose severity for the event's meaning. Routine lifecycle events belong at
+  DEBUG or INFO. Warnings must identify a condition or intervention worth
+  investigating—for example, a user refusing a model-requested tool action.
+  Explain its consequence, such as blocking the entire tool batch.
+- Log the cause where it is known and the resulting outcome where it is committed.
+  Make their relationship explicit. Do not force readers to infer the cause from
+  an unrelated operation's generic failure.
+- Test diagnostic usefulness, not just event presence. Inspect persisted output:
+  a WARNING/ERROR-only scan must expose the important exception or intervention;
+  surrounding INFO/DEBUG records must explain the sequence. Assert meaningful
+  context and severity, including the absence of warnings during routine success.
+- Redact API keys without discarding the evidence needed to diagnose the problem.
+
+The central rule is: **a reader should need surrounding logs to understand the sequence, 
+not to discover what the warning means.**
+
+
 ## Runtime conventions
 
 - Keep decisions pure and synchronous. Return the complete next state and commands;
@@ -168,3 +199,10 @@ Preserve strict TypeScript behavior, including `noUncheckedIndexedAccess` and
 `verbatimModuleSyntax`. Avoid unrelated formatting changes. Do not edit generated
 output in `dist/`, dependencies in `node_modules/`, or ignored session inspection
 artifacts.
+
+- Separate top-level declarations with exactly one blank line. This includes
+  functions, classes, types, interfaces, and module-level variables.
+- Separate function declarations—including nested functions and functions assigned
+  to variables—from adjacent statements or declarations with one blank line.
+  No blank line is needed at the beginning or end of a scope.
+- Check this spacing during diff review; formatter output does not waive the rule.
