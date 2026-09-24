@@ -303,4 +303,5 @@ Host-owned parsed inputs and grants are never persisted. Interrupted permission 
 an approval committed before execution, restore through ordinary failed recovery without reasking
 or running tools. Lost approval receipts use normal reconciliation. Forks/compaction inherit policy
 and the captured callback, but each new call needs a fresh choice. Idle restore emits no prompts.
-Remembered approvals and the JSON-RPC ACP adapter remain unimplemented.
+Remembered approvals remain unimplemented. The separate [ACP stdio adapter](../../acp/README.md)
+translates session and permission operations without changing journal semantics.

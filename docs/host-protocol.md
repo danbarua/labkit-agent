@@ -80,8 +80,10 @@ See [host contract](../packages/core/host/README.md#tool-display-notifications).
 
 - **No remembered permissions.** The in-process permission port supports allow_once/reject_once and
   cancellation. Persistent per-tool/path choices require a separate policy design.
-- **No JSON-RPC transport.** The sinks are in-process callbacks; an ACP host needs them serialised as
-  `session/update` notifications and the permission request as a call.
+- **Partial ACP surface.** The JSON-RPC stdio adapter implements session lifecycle, updates and
+  permission calls. Client MCP connections (including the full ACP baseline's stdio MCP), rich
+  prompt content, client filesystem/terminal delegation and mode switching remain unimplemented.
+  See the [adapter contract](../packages/acp/README.md).
 
 ## The context surface
 
@@ -102,7 +104,8 @@ agent's proposal; a file-keyed read of session narration did not.
    one model_settled outcome; incomplete streams fail/cancel without partial settlement.
 4. **Implemented:** once-only `request_permission` as a new phase between admitted tools and run_tools.
    Both intent and approval receipts gate dependent work; rejection stops the entire batch.
-5. A JSON-RPC ACP adapter carrying notifications and permission requests across the process boundary.
+5. **Implemented:** an ACP JSON-RPC stdio session adapter carrying notifications and permission
+   requests across the process boundary. Full ACP conformance still requires the surfaces listed above.
 
 These core slices are sequential because they share the host, ports and sink list. Attachment
 preview is independent UI work: journaled BlobRefs plus getBlob already support markdown/image/PDF
@@ -122,3 +125,16 @@ Rejection yields a failed terminal with no invented execution results. Journal v
 policy gate and each decision against its admitted owner/call. Parsed input is kept only in the host
 and reused after approval. Restore recovers interrupted work without asking or executing, and fork
 inherits policy but no grants. See the [session contract](../packages/core/session/README.md#permission-requests-and-journal-v6).
+
+## JSON-RPC adapter
+
+`packages/acp` is a separate Bun package using the official TypeScript SDK. Its launcher loads
+application-owned session bindings; it does not select credentials, persistence, tools or a global
+working directory. Text/resource-link prompts enter the public session API, notifications leave
+through existing callbacks, and permission responses return through the authoritative port.
+Cancellation and disconnect close/cancel owned work without changing journal v6 semantics.
+
+Opt-in session/load replays committed history before responding and uses ordinary recovery for
+interrupted sessions. Stream chunks are keyed by completion ID; committed nonstream text fills the
+same output path without duplicating streamed text. Usage, signatures and continuation bytes are
+not exposed as arbitrary ACP updates. See [launch and capability details](../packages/acp/README.md).

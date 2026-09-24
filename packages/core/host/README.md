@@ -75,7 +75,8 @@ The completed notification can arrive before the result append commits; only `to
 suppresses further notifications; cancellation while open emits one terminal update, ignoring late
 validation/output. Consumers should use session snapshots for authoritative state.
 
-ACP tool notifications and once-only permission requests are implemented in process. JSON-RPC is not implemented.
+ACP tool notifications and once-only permission requests are implemented in process.
+The separate [ACP stdio adapter](../../acp/README.md) carries them over JSON-RPC.
 Streaming uses the same notification-only helper through a fourth sink, `streamUpdate`.
 It receives frozen `HostStreamNotification` values with sessionId, turnId, completionId (child ID),
 generation, and `sessionUpdate: "completion" | "completion_update"`. Status transitions are
