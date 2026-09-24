@@ -189,10 +189,12 @@ export function Console() {
 
   function addFiles(list: FileList | null) {
     if (!list?.length) return;
+    const picked = [...list];
+    if (fileRef.current) fileRef.current.value = "";
     setFiles((current) => {
       const next = [...current];
       const seen = new Set(current.map((entry) => entry.key));
-      for (const file of list) {
+      for (const file of picked) {
         const key = fileKey(file);
         if (seen.has(key)) continue;
         seen.add(key);
@@ -200,7 +202,6 @@ export function Console() {
       }
       return next;
     });
-    if (fileRef.current) fileRef.current.value = "";
   }
 
   async function startSession(event: FormEvent) {
