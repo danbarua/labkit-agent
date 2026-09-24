@@ -6,6 +6,9 @@ import {
 } from "@labkit-agent/core/providers";
 
 import type { AcpOptions } from "../adapter.ts";
+import { terminalTool } from "../client-terminal.ts";
+import { planTool } from "../plan.ts";
+import type { AcpConfigBinding } from "../session-config.ts";
 import { workspaceDirectory } from "../workspace-directory.ts";
 import { workspaceFiles } from "../workspace-files.ts";
 import { workspacePersistence } from "../workspace-persistence.ts";
@@ -22,6 +25,22 @@ export function workspaceAgent(
   if (!profile) throw new Error("LABKIT_ACP_PROVIDER must name a supported streaming profile");
   const model = env.LABKIT_ACP_MODEL;
   if (!model) throw new Error("Set LABKIT_ACP_MODEL to your provider's model ID");
+  const models = [
+    ...new Set([
+      model,
+      ...(env.LABKIT_ACP_MODELS ?? "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ]),
+  ];
+  const capability = profile.capabilities.thinking;
+  const thinking =
+    capability.mode === "effort"
+      ? ["off" as const, ...capability.values.filter((value) => value !== "none")]
+      : capability.mode === "off"
+        ? ["off" as const]
+        : ["off" as const, "adaptive" as const];
   const anthropic = id.startsWith("anthropic");
   const google = id.startsWith("google");
   const keyName = anthropic ? "ANTHROPIC_API_KEY" : google ? "GOOGLE_API_KEY" : "OPENAI_API_KEY";
@@ -41,14 +60,90 @@ export function workspaceAgent(
       : { Authorization: `Bearer ${key}` };
   return {
     loadSession: true,
+    forkSession: true,
     listSessions: (params, signal) => directory.list(params, signal),
-    async sessionOptions({ cwd, signal }) {
+    deleteSession: (params, signal) => directory.deleteSession(params, signal),
+    sessionInfo: (params, signal) => directory.info(params, signal),
+    async sessionOptions({ cwd, signal, mcpTools, clientFiles, terminal, publishPlan }) {
       signal.throwIfAborted();
       const files = await workspaceFiles(cwd);
       signal.throwIfAborted();
       directory.remember(files.root);
-      const tools = workspaceTools(files);
+      const tools = new Map([...workspaceTools(files, clientFiles), ...(mcpTools ?? [])]);
+      if (publishPlan) tools.set("update_plan", planTool(publishPlan));
+      if (env.LABKIT_ACP_TERMINAL === "1" && terminal)
+        tools.set("run_command", terminalTool(terminal, files.root));
+      const config: AcpConfigBinding[] = [
+        {
+          id: "mode",
+          name: "File access",
+          category: "mode",
+          current: (policy) =>
+            policy.tools.workspace?.some((name) => name === "write_file") ? "edit" : "read-only",
+          options: [
+            {
+              value: "read-only",
+              name: "Read only",
+              description: "Read and list workspace files; tool permission is still required",
+              patch: {
+                tools: {
+                  workspace: ["read_file", "list_dir", ...(publishPlan ? ["update_plan"] : [])],
+                },
+              },
+            },
+            {
+              value: "edit",
+              name: "Edit",
+              description: "Read, list, and write workspace files with approval",
+              patch: { tools: { workspace: [...tools.keys()] } },
+            },
+          ],
+        },
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          current: (policy) => policy.model ?? model,
+          options: models.map((value) => ({ value, name: value, patch: { model: value } })),
+        },
+        {
+          id: "thinking",
+          name: "Thinking",
+          category: "thought_level",
+          current: (policy) => policy.thinking ?? "off",
+          options: thinking.map((value) => ({
+            value,
+            name:
+              value === "off" ? "Off" : value === "adaptive" ? "Adaptive / provider budget" : value,
+            patch: { thinking: value },
+          })),
+        },
+      ];
       return {
+        config,
+        commands: [
+          {
+            name: "review",
+            description: "Review workspace files or supplied attachments",
+            input: { hint: "files or review focus" },
+            prompt:
+              "Review the requested workspace files or supplied attachments. Ground findings in actual content; report concrete problems with file locations. Use file tools when content has not been supplied. Do not change files unless explicitly requested.",
+          },
+          {
+            name: "explain",
+            description: "Explain code using workspace evidence",
+            input: { hint: "file, symbol, or question" },
+            prompt:
+              "Explain the requested code or design using the supplied attachments and workspace file tools. Cite relevant file paths. State what you could not verify.",
+          },
+          {
+            name: "plan",
+            description: "Plan a workspace task without implementing it",
+            input: { hint: "task to plan" },
+            prompt:
+              "Inspect the relevant workspace content, then propose a concrete plan for the requested task. Publish the complete plan with update_plan when available. Do not implement the plan or run commands in this turn.",
+          },
+        ],
         persistence: workspacePersistence(files.root),
         configuration: {
           agent: "workspace",
@@ -60,7 +155,7 @@ export function workspaceAgent(
                 tools: [...tools.keys()],
                 // Omitting successors permits handoff to all registered agents, including self.
                 successors: [],
-                systemPrompt: `You are a workspace file assistant rooted at ${files.root}. Use read_file to ground answers in actual file contents. Use only the provided workspace tools. Do not claim to have read a file without a tool result or supplied attachment. Never use shell commands. Ask before writing; file tools require user approval.`,
+                systemPrompt: `You are a workspace file assistant rooted at ${files.root}. Use read_file to ground answers in actual file contents. Use only the provided workspace tools. Do not claim to have read a file without a tool result or supplied attachment. For complex tasks, use update_plan when available to publish and update the complete plan. Only run commands if run_command is available. Ask before writing; file tools require user approval.`,
               },
             ],
           ]),
@@ -91,6 +186,9 @@ function discovery() {
 }
 export default {
   loadSession: true,
+  forkSession: true,
+  deleteSession: (params, signal) => discovery().deleteSession(params, signal),
+  sessionInfo: (params, signal) => discovery().info(params, signal),
   listSessions: (params, signal) => {
     return discovery().list(params, signal);
   },

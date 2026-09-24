@@ -169,6 +169,7 @@ test("workspace example validates environment, enables load and disables self-ha
       const agent = workspaceAgent({
         LABKIT_ACP_PROVIDER: provider,
         LABKIT_ACP_MODEL: "m",
+        LABKIT_ACP_MODELS: "m2, m",
         [key!]: "TEST_SECRET",
       });
       expect(agent.loadSession).toBe(true);
@@ -179,7 +180,50 @@ test("workspace example validates environment, enables load and disables self-ha
         stream: true,
         provider,
       });
+      expect(
+        options.config
+          ?.find((binding) => binding.id === "model")
+          ?.options.map((option) => option.value),
+      ).toEqual(["m", "m2"]);
+      expect(
+        options.config
+          ?.find((binding) => binding.id === "thinking")
+          ?.options.map((option) => option.value),
+      ).toEqual(
+        provider!.startsWith("openai") ? ["off", "low", "medium", "high"] : ["off", "adaptive"],
+      );
       expect(JSON.stringify(options.configuration)).not.toContain("TEST_SECRET");
+    }
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("workspace terminal tool requires explicit opt-in and client capability and is excluded by read-only mode", async () => {
+  const f = await fixture();
+  const terminal = {
+    run: async () => ({ output: "", truncated: false, exitCode: 0, signal: null }),
+  };
+  try {
+    for (const enabled of [false, true]) {
+      const agent = workspaceAgent({
+        LABKIT_ACP_MODEL: "m",
+        ANTHROPIC_API_KEY: "TEST",
+        ...(enabled ? { LABKIT_ACP_TERMINAL: "1" } : {}),
+      });
+      for (const supported of [false, true]) {
+        const options = await agent.sessionOptions({
+          cwd: f.cwd,
+          signal: signal(),
+          ...(supported ? { terminal } : {}),
+        });
+        expect(options.bindings.tools?.has("run_command")).toBe(enabled && supported);
+        const readOnly = options.config
+          ?.find((binding) => binding.id === "mode")
+          ?.options.find((option) => option.value === "read-only");
+        expect(readOnly?.patch.tools?.workspace).not.toContain("run_command");
+        expect(options.configuration.policy?.permissions).toBe("ask");
+      }
     }
   } finally {
     await f.cleanup();

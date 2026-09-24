@@ -1,4 +1,4 @@
-import { isAbsolute } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
 import {
   agent,
@@ -6,9 +6,12 @@ import {
   RequestError,
   type AgentConnection,
   type AgentContext,
+  type ClientCapabilities,
   type ListSessionsRequest,
   type ListSessionsResponse,
+  type McpServer,
   type NewSessionRequest,
+  type SessionInfoUpdate,
   type SessionUpdate,
   type Stream,
 } from "@agentclientprotocol/sdk";
@@ -17,46 +20,91 @@ import {
   restoreSession,
   type BoundSessionOptions,
   type JournalState,
+  type MediaKind,
   type SessionPersistence,
   type SessionRuntime,
   type SessionState,
 } from "@labkit-agent/core";
-import type { HostToolNotification } from "@labkit-agent/core/host";
+import type { HostToolNotification, Tool } from "@labkit-agent/core/host";
 import type { AgentMessage } from "@labkit-agent/core/types";
 
+import { clientFiles, type ClientFiles } from "./client-files.ts";
+import { clientTerminal, type ClientTerminal } from "./client-terminal.ts";
+import { availableCommands, bindCommands, expandCommand, type AcpCommand } from "./commands.ts";
+import { mcpConnections } from "./mcp.ts";
+import { PlanEntriesSchema, type PlanSink } from "./plan.ts";
 import { promptInput } from "./prompt-input.ts";
+import {
+  bindConfig,
+  configState,
+  waitForBoundary,
+  type AcpConfigBinding,
+} from "./session-config.ts";
+import { parseSessionInfo } from "./session-info.ts";
 
 export type SessionOptionsContext = Readonly<{
   cwd: string;
   sessionId?: string;
+  mcpTools?: ReadonlyMap<string, Tool>;
+  clientFiles?: ClientFiles;
+  terminal?: ClientTerminal;
+  publishPlan?: PlanSink;
   signal: AbortSignal;
 }>;
+export type AcpSessionOptions = BoundSessionOptions & {
+  config?: readonly AcpConfigBinding[];
+  commands?: readonly AcpCommand[];
+};
 export type AcpOptions = Readonly<{
   /** Bind tools to cwd without changing process.cwd(). On load, validate cwd against saved ownership. */
   sessionOptions: (
     context: SessionOptionsContext,
-  ) => BoundSessionOptions | Promise<BoundSessionOptions>;
+  ) => AcpSessionOptions | Promise<AcpSessionOptions>;
   /** Enable only when sessionOptions can resolve compatible persistence/configuration for saved IDs. */
   loadSession?: boolean;
+  /** Experimental session/fork; requires loadSession and compatible child persistence lookup. */
+  forkSession?: boolean;
+  /** End persisted lifetime; return only after deletion commits. cwd is supplied for live sessions. */
+  deleteSession?: (
+    params: { sessionId: string; cwd?: string },
+    signal: AbortSignal,
+  ) => void | Promise<void>;
   /** Discovery only: do not restore sessions or read blob bytes. */
   listSessions?: (
     params: ListSessionsRequest,
     signal: AbortSignal,
   ) => ListSessionsResponse | Promise<ListSessionsResponse>;
+  /** Read persisted display metadata. Errors and pending replies never block session execution. */
+  sessionInfo?: (
+    params: { sessionId: string; cwd: string },
+    signal: AbortSignal,
+  ) => SessionInfoUpdate | undefined | Promise<SessionInfoUpdate | undefined>;
   agentInfo?: { name: string; version: string; title?: string };
 }>;
 type Session = {
   runtime: SessionRuntime;
+  dispose: () => Promise<void>;
   persistence: SessionPersistence;
+  media: (provider: string | undefined) => readonly MediaKind[];
   promptController?: AbortController;
   cwd: string;
+  mcpServers: readonly McpServer[];
   busy: boolean;
+  promptDone: Promise<void>;
+  configurationTail: Promise<void>;
+  config: readonly AcpConfigBinding[];
+  commands: readonly AcpCommand[];
+  configSignature: string;
+  infoSignature: string;
+  infoEpoch: number;
+  modeId?: string;
   acceptingUpdates: boolean;
   revision: number;
   streamed: Map<string, string>;
+  terminals: Map<string, string[]>;
 };
 
-function toolUpdate(event: HostToolNotification): SessionUpdate {
+function toolUpdate(event: HostToolNotification, terminals: readonly string[] = []): SessionUpdate {
   if (event.sessionUpdate === "tool_call")
     return {
       sessionUpdate: "tool_call",
@@ -76,6 +124,7 @@ function toolUpdate(event: HostToolNotification): SessionUpdate {
       ? {
           rawOutput: event.rawOutput,
           content: [
+            ...terminals.map((terminalId) => ({ type: "terminal" as const, terminalId })),
             {
               type: "content",
               content: {
@@ -147,8 +196,14 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
   const opening = new Set<string>();
   const sessionOptions = options.sessionOptions;
   const loadSession = options.loadSession === true;
+  const forkSession = options.forkSession === true;
+  if (forkSession && !loadSession) throw new Error("ACP forking requires loadSession");
   const agentInfo = { ...(options.agentInfo ?? { name: "labkit-agent", version: "0.1.0" }) };
+  const resources = new Set<() => Promise<void>>();
+  const borrowedParents = new Set<string>();
+  const deleting = new Set<string>();
   let initialized = false;
+  let clientCapabilities: ClientCapabilities = {};
   let closing = false;
   let connection: AgentConnection;
   let writes: Promise<void> = Promise.resolve();
@@ -160,12 +215,44 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         connection.close(error);
       });
   };
+  const refreshInfo = (entry: Session, client: AgentContext) => {
+    if (!options.sessionInfo || !entry.acceptingUpdates || closing) return;
+    const sessionId = entry.runtime.snapshot.durable.conversation.sessionId;
+    const revision = entry.runtime.snapshot.durable.revision;
+    const epoch = ++entry.infoEpoch;
+    try {
+      const result = options.sessionInfo({ sessionId, cwd: entry.cwd }, connection.signal);
+      void Promise.resolve(result)
+        .then((value) => {
+          if (
+            closing ||
+            sessions.get(sessionId) !== entry ||
+            !entry.acceptingUpdates ||
+            epoch !== entry.infoEpoch ||
+            entry.runtime.snapshot.durable.revision !== revision
+          )
+            return;
+          const info = parseSessionInfo(value);
+          if (!info) return;
+          const signature = JSON.stringify(info);
+          if (signature === entry.infoSignature) return;
+          entry.infoSignature = signature;
+          send(client, sessionId, { sessionUpdate: "session_info_update", ...info });
+        })
+        .catch(() => {});
+    } catch {
+      /* Display metadata cannot decide session execution. */
+    }
+  };
   const requireInitialized = () => {
     if (!initialized) throw new RequestError(-32002, "Initialize the connection first");
     if (closing) throw new RequestError(-32000, "Connection closed");
   };
   const lookup = (id: string) => {
     requireInitialized();
+    if (deleting.has(id)) throw RequestError.invalidParams(undefined, "Session is being deleted");
+    if (borrowedParents.has(id))
+      throw RequestError.invalidParams(undefined, "Session is being forked privately");
     const session = sessions.get(id);
     if (!session) throw RequestError.invalidParams(undefined, "Unknown session");
     return session;
@@ -191,6 +278,20 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
   ) => {
     if (!entry.acceptingUpdates) return;
     const id = snapshot.durable.conversation.sessionId;
+    const configuration = configState(entry.config, snapshot.durable.policy);
+    const signature = JSON.stringify(configuration);
+    if (signature !== entry.configSignature) {
+      entry.configSignature = signature;
+      if (configuration.configOptions)
+        send(client, id, {
+          sessionUpdate: "config_option_update",
+          configOptions: configuration.configOptions,
+        });
+      if (configuration.modes && configuration.modes.currentModeId !== entry.modeId) {
+        entry.modeId = configuration.modes.currentModeId;
+        send(client, id, { sessionUpdate: "current_mode_update", currentModeId: entry.modeId });
+      }
+    }
     for (const record of snapshot.durable.records.slice(entry.revision)) {
       entry.revision = record.revision;
       const body = record.body;
@@ -275,39 +376,151 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     client: AgentContext,
     signal: AbortSignal,
     replay = true,
+    visible = true,
   ) {
     requireInitialized();
     if (!isAbsolute(params.cwd))
       throw RequestError.invalidParams(undefined, "cwd must be absolute");
-    if (params.mcpServers.length)
-      throw RequestError.invalidParams(undefined, "MCP server connections are not implemented");
     if (params.additionalDirectories?.length)
       throw RequestError.invalidParams(undefined, "Additional directories are not supported");
-    if (params.sessionId && (sessions.has(params.sessionId) || opening.has(params.sessionId)))
+    if (
+      params.sessionId &&
+      (sessions.has(params.sessionId) ||
+        opening.has(params.sessionId) ||
+        deleting.has(params.sessionId))
+    )
       throw RequestError.invalidParams(undefined, "Session is already loaded");
     const id = params.sessionId;
     if (id) opening.add(id);
+    signal = AbortSignal.any([signal, connection.signal]);
+    let dispose: (() => Promise<void>) | undefined;
+    let published = false;
+    let cancelOpening: (() => void) | undefined;
     try {
+      let mcp: ReturnType<typeof mcpConnections>;
+      try {
+        mcp = mcpConnections(params.mcpServers, params.cwd);
+      } catch (error) {
+        throw RequestError.invalidParams(
+          undefined,
+          error instanceof Error ? error.message : "Invalid MCP servers",
+        );
+      }
+      const cleanup = async () => {
+        try {
+          await mcp.close();
+        } finally {
+          resources.delete(cleanup);
+        }
+      };
+      dispose = cleanup;
+      resources.add(cleanup);
+      cancelOpening = () => {
+        void cleanup();
+      };
+      signal.addEventListener("abort", cancelOpening, { once: true });
+      let mcpTools: ReadonlyMap<string, Tool>;
+      try {
+        mcpTools = await mcp.open(signal);
+      } catch (error) {
+        throw RequestError.invalidParams(
+          undefined,
+          error instanceof Error ? error.message : "MCP connection failed",
+        );
+      }
+      let boundSessionId: string | undefined;
+      const sessionIdentity = () => {
+        if (!boundSessionId || !sessions.has(boundSessionId))
+          throw new Error("Session is not open");
+        return boundSessionId;
+      };
+      const filesystem = clientFiles(
+        client,
+        clientCapabilities,
+        sessionIdentity,
+        connection.signal,
+      );
+      const terminal =
+        clientCapabilities.terminal === true
+          ? clientTerminal(
+              client,
+              sessionIdentity,
+              params.cwd,
+              connection.signal,
+              (toolCallId, terminalId) => {
+                const sessionId = sessionIdentity();
+                const active = sessions.get(sessionId);
+                if (!active?.acceptingUpdates) return;
+                const ids = active.terminals.get(toolCallId) ?? [];
+                if (!ids.includes(terminalId)) ids.push(terminalId);
+                active.terminals.set(toolCallId, ids);
+                send(client, sessionId, {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId,
+                  content: ids.map((terminalId) => ({ type: "terminal", terminalId })),
+                });
+              },
+            )
+          : undefined;
       const original = await sessionOptions({
         cwd: params.cwd,
         ...(id ? { sessionId: id } : {}),
+        mcpTools,
+        clientFiles: filesystem,
+        publishPlan: (entries, operationSignal) => {
+          if (operationSignal.aborted || connection.signal.aborted) return;
+          const sessionId = sessionIdentity();
+          if (!sessions.get(sessionId)?.acceptingUpdates) return;
+          send(client, sessionId, {
+            sessionUpdate: "plan",
+            entries: PlanEntriesSchema.parse(entries),
+          });
+        },
+        ...(terminal ? { terminal } : {}),
         signal,
       });
+      const tools = new Map(original.bindings.tools);
+      for (const [name, tool] of mcpTools) {
+        if (tools.has(name) && tools.get(name) !== tool)
+          throw new Error("MCP tool collides with a bound tool");
+        tools.set(name, tool);
+      }
       const subscribers = { ...original.bindings };
       signal.throwIfAborted();
       if (closing) throw new Error("Connection closed");
       const entry = {
         cwd: params.cwd,
+        mcpServers: structuredClone(params.mcpServers),
+        dispose: cleanup,
         persistence: original.persistence,
+        media: (provider: string | undefined): readonly MediaKind[] =>
+          (provider
+            ? original.bindings.providers?.get(provider)?.profile.capabilities.media
+            : undefined) ?? [],
         busy: false,
+        promptDone: Promise.resolve(),
+        configurationTail: Promise.resolve(),
+        config: bindConfig(original.config),
+        commands: bindCommands(original.commands),
+        configSignature: "",
+        infoSignature: "",
+        infoEpoch: 0,
+        modeId: undefined as string | undefined,
         acceptingUpdates: false,
         revision: 0,
         streamed: new Map(),
+        terminals: new Map<string, string[]>(),
       };
       const bound: BoundSessionOptions = {
         ...original,
         configuration: {
           ...original.configuration,
+          agents: new Map(
+            [...original.configuration.agents].map(([name, agent]) => [
+              name,
+              { ...agent, tools: [...new Set([...(agent.tools ?? []), ...mcpTools.keys()])] },
+            ]),
+          ),
           policy: {
             ...original.configuration.policy,
             permissions: original.configuration.policy?.permissions ?? "ask",
@@ -315,13 +528,21 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         },
         bindings: {
           ...original.bindings,
+          tools,
           observe: (snapshot) => {
-            observe(entry, client, snapshot);
+            if (!boundSessionId || snapshot.durable.conversation.sessionId === boundSessionId)
+              observe(entry, client, snapshot);
             observeSafely(subscribers.observe, snapshot);
           },
           toolUpdate: (event) => {
             if (entry.acceptingUpdates && event.sessionId)
-              send(client, event.sessionId, toolUpdate(event));
+              send(
+                client,
+                event.sessionId,
+                toolUpdate(event, entry.terminals.get(event.toolCallId)),
+              );
+            if (event.status === "completed" || event.status === "failed")
+              entry.terminals.delete(event.toolCallId);
             observeSafely(subscribers.toolUpdate, event);
           },
           streamUpdate: (event) => {
@@ -378,6 +599,15 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         await runtime.close();
         throw new Error("Duplicate session identity");
       }
+      let configuration: ReturnType<typeof configState>;
+      try {
+        configuration = configState(entry.config, runtime.snapshot.durable.policy);
+      } catch (error) {
+        await runtime.close();
+        throw error;
+      }
+      entry.configSignature = JSON.stringify(configuration);
+      entry.modeId = configuration.modes?.currentModeId;
       sessions.set(sessionId, Object.assign(entry, { runtime }));
       entry.revision = runtime.snapshot.durable.revision;
       if (id && replay) {
@@ -389,29 +619,79 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           replayMessages(client, id, record.messages, `${id}/history/${index}`, evidence);
         });
       }
-      entry.acceptingUpdates = true;
+      boundSessionId = sessionId;
+      entry.acceptingUpdates = visible;
+      published = true;
+      if (visible) refreshInfo(sessions.get(sessionId)!, client);
+      if (visible && entry.commands.length)
+        send(client, sessionId, {
+          sessionUpdate: "available_commands_update",
+          availableCommands: availableCommands(entry.commands),
+        });
       await writes;
-      return { sessionId };
+      return { sessionId, ...configuration };
     } finally {
+      if (cancelOpening) signal.removeEventListener("abort", cancelOpening);
+      if (!published) await dispose?.();
       if (id) opening.delete(id);
     }
   }
+  function setConfig(
+    id: string,
+    configId: string,
+    value: unknown,
+    client: AgentContext,
+    signal: AbortSignal,
+  ) {
+    const entry = lookup(id);
+    const binding = entry.config.find((binding) => binding.id === configId);
+    const choice = binding?.options.find((option) => option.value === value);
+    if (!binding || !choice)
+      throw RequestError.invalidParams(undefined, "Unknown config option or value");
+    const cancellation = AbortSignal.any([signal, connection.signal]);
+    const operation = entry.configurationTail.then(async () => {
+      await waitForBoundary(entry.promptDone, cancellation);
+      cancellation.throwIfAborted();
+      if (closing || sessions.get(id) !== entry || !entry.acceptingUpdates)
+        throw new RequestError(-32000, "Session closed");
+      const policy = entry.runtime.snapshot.durable.policy;
+      if (!policy) throw new RequestError(-32000, "Session has no journaled policy");
+      if (binding.current(policy) !== value) {
+        const receipt = await entry.runtime.updatePolicy(structuredClone(choice.patch));
+        if (receipt.kind !== "accepted")
+          throw new RequestError(-32000, "Configuration change was not committed", receipt);
+      }
+      const state = configState(entry.config, entry.runtime.snapshot.durable.policy);
+      observe(entry, client, entry.runtime.snapshot);
+      refreshInfo(entry, client);
+      await writes;
+      return { configOptions: state.configOptions ?? [] };
+    });
+    entry.configurationTail = operation.then(
+      () => {},
+      () => {},
+    );
+    return waitForBoundary(operation, cancellation).then(() => operation);
+  }
   const app = agent()
-    .onRequest("initialize", () => {
+    .onRequest("initialize", ({ params }) => {
       if (initialized)
         throw RequestError.invalidRequest(undefined, "Connection already initialized");
       initialized = true;
+      clientCapabilities = structuredClone(params.clientCapabilities ?? {});
       return {
         protocolVersion: PROTOCOL_VERSION,
         agentInfo,
         authMethods: [],
         agentCapabilities: {
           loadSession,
-          promptCapabilities: { image: false, audio: false, embeddedContext: false },
-          mcpCapabilities: { http: false, sse: false },
+          promptCapabilities: { image: true, audio: false, embeddedContext: true },
+          mcpCapabilities: { http: true, sse: true },
           sessionCapabilities: {
             close: {},
             ...(loadSession ? { resume: {} } : {}),
+            ...(forkSession ? { fork: {} } : {}),
+            ...(options.deleteSession ? { delete: {} } : {}),
             ...(options.listSessions ? { list: {} } : {}),
           },
         },
@@ -420,13 +700,145 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     .onRequest("session/new", ({ params, client, signal }) => open(params, client, signal))
     .onRequest("session/load", async ({ params, client, signal }) => {
       if (!loadSession) throw RequestError.methodNotFound("session/load");
-      await open(params, client, signal);
-      return {};
+      const { sessionId: _, ...configuration } = await open(params, client, signal);
+      return configuration;
     })
     .onRequest("session/resume", async ({ params, client, signal }) => {
       if (!loadSession) throw RequestError.methodNotFound("session/resume");
-      await open({ ...params, mcpServers: params.mcpServers ?? [] }, client, signal, false);
-      return {};
+      const { sessionId: _, ...configuration } = await open(
+        { ...params, mcpServers: params.mcpServers ?? [] },
+        client,
+        signal,
+        false,
+      );
+      return configuration;
+    })
+    .onRequest("session/fork", async ({ params, client, signal }) => {
+      if (!forkSession) throw RequestError.methodNotFound("session/fork");
+      requireInitialized();
+      if (deleting.has(params.sessionId))
+        throw RequestError.invalidParams(undefined, "Session is being deleted");
+      if (borrowedParents.has(params.sessionId))
+        throw RequestError.invalidParams(undefined, "Session is already being forked privately");
+      if (!isAbsolute(params.cwd))
+        throw RequestError.invalidParams(undefined, "cwd must be absolute");
+      if (params.additionalDirectories?.length)
+        throw RequestError.invalidParams(undefined, "Additional directories are not supported");
+      const cancellation = AbortSignal.any([signal, connection.signal]);
+      const borrowed = !sessions.has(params.sessionId);
+      let entry: Session | undefined;
+      if (borrowed) borrowedParents.add(params.sessionId);
+      try {
+        if (borrowed)
+          await waitForBoundary(
+            open(
+              { ...params, mcpServers: params.mcpServers ?? [] },
+              client,
+              cancellation,
+              false,
+              false,
+            ),
+            cancellation,
+          );
+        entry = sessions.get(params.sessionId);
+        if (!entry) throw RequestError.invalidParams(undefined, "Unknown parent session");
+        const parent = entry;
+        if (resolve(params.cwd) !== resolve(parent.cwd))
+          throw RequestError.invalidParams(undefined, "Fork cwd must match the parent workspace");
+        const mcpServers = params.mcpServers ?? [...parent.mcpServers];
+        if (JSON.stringify(mcpServers) !== JSON.stringify(parent.mcpServers))
+          throw RequestError.invalidParams(
+            undefined,
+            "Fork must retain the parent's MCP server bindings",
+          );
+        const operation = parent.configurationTail.then(async () => {
+          await waitForBoundary(parent.promptDone, cancellation);
+          cancellation.throwIfAborted();
+          if (sessions.get(params.sessionId) !== parent || (!borrowed && !parent.acceptingUpdates))
+            throw new RequestError(-32000, "Parent session closed");
+          const child = await parent.runtime.fork();
+          const childId = child.snapshot.durable.conversation.sessionId;
+          // Fork inherits core bindings. Rebind ACP resources before allowing any child input.
+          await child.close();
+          refreshInfo(parent, client);
+          try {
+            cancellation.throwIfAborted();
+            return await open(
+              {
+                cwd: parent.cwd,
+                sessionId: childId,
+                mcpServers,
+              },
+              client,
+              cancellation,
+              false,
+            );
+          } catch (error) {
+            throw new RequestError(-32000, "Fork was committed but could not be opened", {
+              sessionId: childId,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+        });
+        parent.configurationTail = operation.then(
+          () => {},
+          () => {},
+        );
+        return await waitForBoundary(operation, cancellation);
+      } finally {
+        if (borrowed) {
+          try {
+            if (entry) {
+              entry.acceptingUpdates = false;
+              try {
+                await entry.runtime.close();
+              } finally {
+                await entry.dispose();
+              }
+              if (sessions.get(params.sessionId) === entry) sessions.delete(params.sessionId);
+            }
+          } finally {
+            borrowedParents.delete(params.sessionId);
+          }
+        }
+      }
+    })
+    .onRequest("session/delete", async ({ params, signal }) => {
+      requireInitialized();
+      if (!options.deleteSession) throw RequestError.methodNotFound("session/delete");
+      if (
+        opening.has(params.sessionId) ||
+        borrowedParents.has(params.sessionId) ||
+        deleting.has(params.sessionId)
+      )
+        throw RequestError.invalidParams(
+          undefined,
+          "Session lifecycle operation is already pending",
+        );
+      const cancellation = AbortSignal.any([signal, connection.signal]);
+      cancellation.throwIfAborted();
+      const entry = sessions.get(params.sessionId);
+      deleting.add(params.sessionId);
+      const remove = options.deleteSession;
+      const operation = (async () => {
+        if (entry) {
+          entry.acceptingUpdates = false;
+          entry.promptController?.abort();
+          try {
+            await entry.runtime.close();
+          } finally {
+            await entry.dispose();
+            sessions.delete(params.sessionId);
+          }
+        }
+        cancellation.throwIfAborted();
+        await remove(
+          { sessionId: params.sessionId, ...(entry ? { cwd: entry.cwd } : {}) },
+          cancellation,
+        );
+        return {};
+      })().finally(() => deleting.delete(params.sessionId));
+      return waitForBoundary(operation, cancellation);
     })
     .onRequest("session/list", async ({ params, signal }) => {
       requireInitialized();
@@ -435,10 +847,32 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         throw RequestError.invalidParams(undefined, "cwd must be absolute");
       return options.listSessions(params, signal);
     })
+    .onRequest("session/set_config_option", ({ params, client, signal }) =>
+      setConfig(params.sessionId, params.configId, params.value, client, signal),
+    )
+    .onRequest("session/set_mode", async ({ params, client, signal }) => {
+      const entry = lookup(params.sessionId);
+      const mode = entry.config.find((binding) => binding.category === "mode");
+      if (!mode) throw RequestError.methodNotFound("session/set_mode");
+      await setConfig(params.sessionId, mode.id, params.modeId, client, signal);
+      return {};
+    })
     .onRequest("session/prompt", async ({ params, client, signal }) => {
       const entry = lookup(params.sessionId);
       if (entry.busy) throw new RequestError(-32000, "Session already has an active prompt");
+      let barrier: Promise<void>;
+      do {
+        barrier = entry.configurationTail;
+        await waitForBoundary(barrier, AbortSignal.any([signal, connection.signal]));
+      } while (barrier !== entry.configurationTail);
+      if (sessions.get(params.sessionId) !== entry || !entry.acceptingUpdates)
+        throw new RequestError(-32000, "Session closed");
+      if (entry.busy) throw new RequestError(-32000, "Session already has an active prompt");
       entry.busy = true;
+      let finishPrompt!: () => void;
+      entry.promptDone = new Promise((resolve) => {
+        finishPrompt = resolve;
+      });
       const controller = new AbortController();
       entry.promptController = controller;
       const promptSignal = AbortSignal.any([signal, controller.signal, connection.signal]);
@@ -451,11 +885,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       promptSignal.addEventListener("abort", abort, { once: true });
       try {
         const input = await promptInput(
-          params.prompt,
+          expandCommand(params.prompt, entry.commands),
           entry.cwd,
           entry.persistence,
           entry.runtime.snapshot.durable.conversation.sessionId,
           promptSignal,
+          entry.media(entry.runtime.snapshot.durable.policy?.provider),
         );
         promptSignal.throwIfAborted();
         const turn = entry.runtime.input(input);
@@ -466,6 +901,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           throw new RequestError(-32000, "Prompt admission failed", receipt);
         const result = await turn.settled;
         observe(entry, client, entry.runtime.snapshot);
+        refreshInfo(entry, client);
         await writes;
         if (aborted || result.kind === "closed") return { stopReason: "cancelled" };
         if (result.kind !== "terminal")
@@ -501,7 +937,9 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         promptSignal.removeEventListener("abort", abort);
         entry.promptController = undefined;
         entry.busy = false;
+        finishPrompt();
         entry.streamed.clear();
+        entry.terminals.clear();
       }
     })
     .onNotification("session/cancel", async ({ params }) => {
@@ -513,7 +951,11 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       // Close is terminal for this runtime, even if the client never answers permission requests.
       entry.acceptingUpdates = false;
       entry.promptController?.abort();
-      await entry.runtime.close();
+      try {
+        await entry.runtime.close();
+      } finally {
+        await entry.dispose();
+      }
       sessions.delete(params.sessionId);
       await writes;
       return {};
@@ -522,7 +964,8 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
   const closed = connection.closed.then(async () => {
     closing = true;
     for (const entry of sessions.values()) entry.acceptingUpdates = false;
-    await Promise.all([...sessions.values()].map((entry) => entry.runtime.close()));
+    await Promise.allSettled([...sessions.values()].map((entry) => entry.runtime.close()));
+    await Promise.allSettled([...resources].map((dispose) => dispose()));
     sessions.clear();
   });
   return {

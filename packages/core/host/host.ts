@@ -582,7 +582,8 @@ export function createHost(
                     }
                     return input;
                   },
-                  run: tool.run,
+                  run: (input, signal) =>
+                    tool.run(input, signal, Object.freeze({ toolCallId: identity.toolCallId })),
                   parseOutput: (value) => {
                     const parsed = z.json().safeParse(value);
                     if (!parsed.success)

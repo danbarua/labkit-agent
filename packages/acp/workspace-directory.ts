@@ -10,7 +10,9 @@ import {
 } from "@agentclientprotocol/sdk";
 import { SessionIdSchema } from "@labkit-agent/core/types";
 
-/** Discovery scope is the launch cwd plus workspaces seen by this factory; no global disk scan. */
+import { workspacePersistence } from "./workspace-persistence.ts";
+
+/** Discovery scope is the launch cwd plus opened or explicitly discovered workspaces; no global disk scan. */
 export function workspaceDirectory(initialCwd = process.cwd()) {
   const roots = new Set([realpathSync(initialCwd)]);
   type Page = { filter: string | null; roots: string[]; afterRoot: string; afterId: string };
@@ -18,7 +20,7 @@ export function workspaceDirectory(initialCwd = process.cwd()) {
   function remember(cwd: string) {
     roots.add(realpathSync(cwd));
   }
-  function rows(cwd: string, afterId: string, limit: number): SessionInfo[] {
+  function rows(cwd: string, afterId: string, limit: number, onlyId?: string): SessionInfo[] {
     const path = join(cwd, ".labkit/sessions/store.sqlite");
     try {
       for (const directory of [join(cwd, ".labkit"), join(cwd, ".labkit/sessions")]) {
@@ -55,10 +57,10 @@ export function workspaceDirectory(initialCwd = process.cwd()) {
       const result = db
         .query(
           metadata
-            ? `SELECT DISTINCT b.session, i.title, i.updated_at FROM batches b LEFT JOIN session_info i ON i.session=b.session WHERE b.session > ? ORDER BY b.session LIMIT ?`
-            : `SELECT DISTINCT session, NULL AS title, NULL AS updated_at FROM batches WHERE session > ? ORDER BY session LIMIT ?`,
+            ? `SELECT DISTINCT b.session, i.title, i.updated_at FROM batches b LEFT JOIN session_info i ON i.session=b.session WHERE b.session > ? AND (? IS NULL OR b.session=?) ORDER BY b.session LIMIT ?`
+            : `SELECT DISTINCT session, NULL AS title, NULL AS updated_at FROM batches WHERE session > ? AND (? IS NULL OR session=?) ORDER BY session LIMIT ?`,
         )
-        .all(afterId, limit) as {
+        .all(afterId, onlyId ?? null, onlyId ?? null, limit) as {
         session: string;
         title: string | null;
         updated_at: string | null;
@@ -75,12 +77,30 @@ export function workspaceDirectory(initialCwd = process.cwd()) {
   }
   return {
     remember,
+    info(params: { sessionId: string; cwd: string }, signal: AbortSignal) {
+      signal.throwIfAborted();
+      const id = SessionIdSchema.parse(params.sessionId);
+      const row = rows(realpathSync(params.cwd), "", 1, id)[0];
+      return row ? { title: row.title ?? null, updatedAt: row.updatedAt ?? null } : undefined;
+    },
+    async deleteSession(params: { sessionId: string; cwd?: string }, signal: AbortSignal) {
+      signal.throwIfAborted();
+      const id = SessionIdSchema.parse(params.sessionId);
+      const selected = params.cwd ? [realpathSync(params.cwd)] : [...roots];
+      const matches = selected.filter((cwd) => rows(cwd, "", 1, id).length > 0);
+      if (matches.length > 1) throw new Error("Session ID is ambiguous across workspaces");
+      if (!matches.length) return; // Idempotent, without creating a missing store.
+      signal.throwIfAborted();
+      await workspacePersistence(matches[0]!).deleteSession(id, signal);
+      cursors.clear();
+    },
     list(params: ListSessionsRequest, signal: AbortSignal): ListSessionsResponse {
       signal.throwIfAborted();
       let filter: string | null = null;
       if (params.cwd != null) {
         try {
           filter = realpathSync(params.cwd);
+          roots.add(filter);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "ENOENT" && params.cursor == null)
             return { sessions: [] };

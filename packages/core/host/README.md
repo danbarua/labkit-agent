@@ -68,6 +68,13 @@ turnId, batchId, the provider's callId, and toolCallId (the unique operation chi
 - Terminal updates supply rawOutput: the validated, normalized tool-result string on success,
   or `{ error: message }` for failure/cancellation. Updates omit unchanged fields.
 
+Tool callbacks may also accept a third optional `ToolRunContext` argument. The host supplies a
+frozen `{ toolCallId }` containing the same operation child ID as these notifications. `defineTool`
+forwards it without adding it to input schemas or journal records. Direct two-argument calls remain
+valid and have no context. This identity lets adapters associate operation-owned display resources
+(such as an ACP terminal) without guessing from the tool name, arguments, or provider call ID.
+It is not an approval grant or a journal receipt.
+
 This is best-effort display data, not a journal event or permission gate. Callback exceptions,
 rejected promises, and pending promises do not affect operation results or delay dependent work.
 The completed notification can arrive before the result append commits; only `tool` and

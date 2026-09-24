@@ -80,3 +80,32 @@ test("read-only discovery paginates known workspaces, validates cursors, and sur
     rmSync(other, { recursive: true, force: true });
   }
 });
+
+test("deletion resolves discovered workspaces, hides removed sessions, and leaves unknown stores absent", async () => {
+  const root = mkdtempSync(join(tmpdir(), "labkit-delete-directory-"));
+  const other = mkdtempSync(join(tmpdir(), "labkit-delete-other-"));
+  try {
+    const directory = workspaceDirectory(root);
+    await directory.deleteSession({ sessionId: crypto.randomUUID() }, signal());
+    expect(existsSync(join(root, ".labkit"))).toBe(false);
+    const store = workspacePersistence(other);
+    const id = SessionIdSchema.parse(crypto.randomUUID());
+    await store.append(
+      {
+        sessionId: id,
+        appendId: AppendIdSchema.parse("init"),
+        expectedRevision: INITIAL_REVISION,
+        records: ["data"],
+      },
+      signal(),
+    );
+    expect(directory.list({ cwd: other }, signal()).sessions).toHaveLength(1);
+    await directory.deleteSession({ sessionId: id }, signal());
+    expect(directory.list({ cwd: other }, signal()).sessions).toHaveLength(0);
+    expect(await store.load(id, signal())).toEqual({ kind: "not_found" });
+    await directory.deleteSession({ sessionId: id }, signal());
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(other, { recursive: true, force: true });
+  }
+});

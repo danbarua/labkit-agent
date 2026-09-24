@@ -137,3 +137,51 @@ test("separate processes contend atomically; cancelled retry preserves its commi
     await store.append({ ...request, appendId: committed.receipt.appendId }, controller.signal),
   ).toEqual(committed);
 });
+
+test("session deletion atomically removes journal/blob data and permanently rejects stale writers", async () => {
+  const cwd = directory();
+  const store = workspacePersistence(cwd);
+  const stale = workspacePersistence(cwd);
+  await store.append(request, signal());
+  const blob = await store.putBlob(
+    sessionId,
+    new TextEncoder().encode("deleted bytes"),
+    { media: "text/plain" },
+    signal(),
+  );
+  const child = SessionIdSchema.parse(crypto.randomUUID());
+  await store.append({ ...request, sessionId: child }, signal());
+  await store.putBlob(
+    child,
+    new TextEncoder().encode("deleted bytes"),
+    { media: "text/plain" },
+    signal(),
+  );
+  const cancelled = new AbortController();
+  cancelled.abort();
+  await expect(store.deleteSession(sessionId, cancelled.signal)).rejects.toThrow();
+  expect((await store.load(sessionId, signal())).kind).toBe("loaded");
+  await store.deleteSession(sessionId, signal());
+  await store.deleteSession(sessionId, signal());
+  expect(await stale.load(sessionId, signal())).toEqual({ kind: "not_found" });
+  expect(await stale.getBlob(sessionId, blob.id, signal())).toEqual({ kind: "not_found" });
+  expect((await stale.append(request, signal())).kind).toBe("rejected");
+  await expect(
+    stale.putBlob(sessionId, new Uint8Array([1]), { media: "text/plain" }, signal()),
+  ).rejects.toThrow("deleted");
+  expect((await workspacePersistence(cwd).append(request, signal())).kind).toBe("rejected");
+  expect((await store.load(child, signal())).kind).toBe("loaded");
+  expect(await store.getBlob(child, blob.id, signal())).toHaveProperty("bytes");
+  const db = new Database(join(cwd, ".labkit/sessions/store.sqlite"), { readonly: true });
+  try {
+    for (const table of ["batches", "blobs", "session_info"])
+      expect(
+        db.query(`SELECT COUNT(*) AS count FROM ${table} WHERE session=?`).get(sessionId),
+      ).toEqual({ count: 0 });
+    expect(db.query("SELECT session FROM deleted_sessions").all()).toEqual([
+      { session: sessionId },
+    ]);
+  } finally {
+    db.close();
+  }
+});

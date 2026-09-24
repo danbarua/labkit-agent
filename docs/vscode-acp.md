@@ -47,8 +47,18 @@ the opened workspace. Other provider profiles and credentials are listed in the
    Use **ACP: Cancel Current Turn** to interrupt an active turn, including one awaiting permission.
 
 All three file tools require approval. They provide absolute file locations before execution.
-Only workspace files are accessible; there is no shell or client filesystem/terminal delegation.
-Client MCP servers remain rejected. Remembered approvals and model/mode controls are not implemented.
+File tools check workspace paths. Advertised client filesystem methods enable editor-aware reads
+and writes. Command execution is disabled by default.
+Client-supplied stdio, HTTP, and SSE MCP servers are connected. Remote servers use supplied
+authentication headers; OAuth and ACP-proxied MCP remain unsupported. MCP tool
+calls use the same once-only permission picker and journaled results. External servers execute
+with their own process access; the workspace file sandbox does not constrain them. Read-only
+mode excludes MCP tools. Remembered approvals are not implemented. **ACP: Set Agent Mode** switches between read-only
+and edit access; both still require approval. Hosts with configuration-selector support also expose
+model and thinking choices. Set `LABKIT_ACP_MODELS` to a comma-separated list of additional model
+IDs for the same provider before launch. Configuration changes during a turn wait for settlement,
+and replies are sent only after the policy journal commit. The installed client's older model UI
+may not expose the newer `session/set_config_option` method; mode selection has the legacy alias.
 
 The example now persists journals and blobs in `.labkit/sessions/store.sqlite` inside the opened
 workspace and advertises session loading. Restart the agent to pick up this configuration change;
@@ -67,7 +77,10 @@ must remain absent (or unchanged if it already exists). The exact refusal render
 ## Attachments and validation
 
 The adapter accepts local `resource_link` prompt blocks as session attachments, rejecting outside
-paths and never fetching HTTP URLs. Direct image/audio/embedded blocks remain unsupported. ACP
+paths and never fetching HTTP URLs. It also accepts PNG/JPEG images and embedded text or binary
+resources supported by the selected provider, storing supplied bytes as session blobs. Embedded
+URIs are labels and need not point inside the workspace; they are never read or fetched. Audio
+remains unsupported. ACP
 Client 0.2.0 lists file attachment UI as not yet functional; local resource ingestion can be exercised
 by another ACP host or the adapter tests until that client exposes it. In the installed client,
 `Attach File to Prompt` posts a `file-attached` message with no receiving webview handler; it does
@@ -108,3 +121,59 @@ A follow-up live stdio check with `claude-sonnet-5` passed local resource-link i
 process exit/restart plus `session/load` after deleting the source attachment, and rejection of a
 `write_file` call. The denied prompt returned `refusal` and created no file. These were protocol
 checks; the client attachment UI limitation and manual refusal-rendering check remain separate.
+
+A live configuration check also passed: the host selected read-only mode and an alternate
+Anthropic model, completed an attachment prompt, restarted the agent, and received the same
+mode/model in `session/load`. Switching back to edit mode then reached the write permission
+request, whose rejection still returned `refusal` without creating a file.
+
+Stdio MCP was also verified with a live Anthropic turn and a local fixture server supplied in
+`session/new`: the model selected the namespaced echo tool, requested once-only approval, and
+returned the actual server result. The server confirmed that the provider API key was absent from
+its environment. Automated tests cover refusal before remote invocation, invalid arguments,
+reconnect without replaying calls, cancellation, and subprocess cleanup on failed/disconnected opens.
+
+When ACP Client advertises filesystem capabilities, `read_file` uses `fs/read_text_file`
+(including unsaved editor text), and `write_file` uses `fs/write_text_file`. Each method falls
+back to local files only when its capability is absent. Permission cards still precede access;
+client errors do not trigger a second local write. The client controls delegated file resolution
+and editor write semantics. Directory listings and resource-link attachment reads remain local.
+
+To enable client terminal commands, add `"LABKIT_ACP_TERMINAL": "1"` to the agent environment.
+`run_command` is offered only when the client advertises terminal support, and only in edit mode.
+Approval precedes terminal creation. Commands use the workspace cwd but can access resources
+outside it; this is not a command sandbox. The client owns process execution. Each operation
+releases its terminal, with kill/release on cancellation and no local shell fallback. Commands
+have a 120-second limit and 256 KiB of retained output. Live terminals attach to their own tool
+cards; final content keeps that reference alongside captured output. Reload shows journaled
+output without recreating terminals. Preserve opt-in and client capability when
+reloading a session, since they affect the immutable tool manifest.
+
+For multi-step tasks, the workspace agent can call `update_plan` to publish task status to hosts
+that render ACP plans. Each update replaces the entire list, including an empty list to clear it.
+The tool remains available in read-only mode and uses the existing permission policy. Plans are
+display data, not execution instructions or commit receipts. On reload, prior plan tool output is
+replayed as history; the plan panel is established by the next plan update.
+
+The agent advertises `/review`, `/explain`, and `/plan` to clients with command pickers. You can
+also type them directly, followed by a file, question, or task. Attached context is retained.
+These are prompt shortcuts through the same journaled, permission-gated flow; they do not execute
+commands or grant file access on their own. Reload preserves the already-expanded prompt history.
+
+The example also advertises experimental `session/fork` for live or saved sessions. A fork waits for
+an active turn to finish, inherits committed history/configuration and copied attachment blobs,
+and then runs independently. It does not rerun historical tools. Use the same cwd and MCP
+bindings. A saved parent is restored privately and released without replaying its history into
+the client; supply its original MCP descriptors when applicable. Hosts without a fork UI can call the protocol method directly.
+Cancellation after publication is not rollback: a durable branch may remain in session discovery.
+
+`session/delete` is also advertised. It closes active work before deleting the workspace session's
+journal, metadata, and blobs in one transaction. A tombstone blocks stale writes to that ID; forked
+children remain independent. Saved IDs can be deleted within the launch workspace or workspaces
+already opened/discovered by this agent process. Unknown IDs are no-ops, with no new store created.
+Cancellation after dispatch is not rollback, and the session stays unavailable while deletion is
+unsettled. SQLite row deletion does not securely erase underlying disk pages.
+
+Session titles and activity timestamps also arrive as ACP `session_info_update` notifications
+after committed changes. They match session-list metadata; the title comes from the first
+committed user text. Metadata failures do not interrupt chat, and stale async replies are ignored.

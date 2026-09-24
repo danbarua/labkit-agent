@@ -1,9 +1,10 @@
 import { defineTool } from "@labkit-agent/core";
 import { z } from "zod";
 
+import type { ClientFiles } from "./client-files.ts";
 import { MAX_FILE_BYTES, type WorkspaceFiles } from "./workspace-files.ts";
 
-export function workspaceTools(files: WorkspaceFiles) {
+export function workspaceTools(files: WorkspaceFiles, client: ClientFiles = {}) {
   const path = z.string().min(1).transform(files.path);
   return new Map([
     [
@@ -14,7 +15,10 @@ export function workspaceTools(files: WorkspaceFiles) {
         input: z.object({ path }),
         kind: "read",
         locations: ({ path }) => [{ path }],
-        run: async ({ path }, signal) => ({ path, text: await files.readText(path, signal) }),
+        run: async ({ path }, signal) => ({
+          path,
+          text: await (client.readText ?? files.readText)(path, signal),
+        }),
       }),
     ],
     [
@@ -33,7 +37,7 @@ export function workspaceTools(files: WorkspaceFiles) {
         }),
         kind: "edit",
         locations: ({ path }) => [{ path }],
-        run: ({ path, text }, signal) => files.write(path, text, signal),
+        run: ({ path, text }, signal) => (client.write ?? files.write)(path, text, signal),
       }),
     ],
     [

@@ -80,7 +80,9 @@ test("tool locations use parsed input and arrive before run; display completion 
       args.path = "changed only in metadata copy";
       return [{ path, line: args.line }];
     },
-    run: (args) => {
+    run: (args, _signal, context) => {
+      expect(context).toEqual({ toolCallId: updates[0]!.toolCallId });
+      expect(Object.isFrozen(context)).toBe(true);
       order.push("run");
       expect(args).toEqual({ path: "/tmp/DESIGN.md", line: 4 });
       return { reviewed: true };

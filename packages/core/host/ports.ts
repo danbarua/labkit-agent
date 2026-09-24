@@ -35,13 +35,19 @@ export type ToolLocation = z.infer<typeof ToolLocationSchema>;
  * functions and other non-JSON values as correlated failed tool outcomes. Return null for no value.
  * Strings pass through; other JSON values are serialized for model tool messages.
  */
+/** Ephemeral display identity for this live invocation; never journaled or an authorization grant. */
+export type ToolRunContext = Readonly<{ toolCallId: string }>;
 export type Tool = Readonly<{
   description?: string;
   kind?: ToolKind;
   locations?: (input: unknown) => readonly ToolLocation[];
   parameters: Record<string, unknown>;
   parseInput: (raw: unknown) => Promise<unknown>;
-  run: (input: unknown, signal: AbortSignal) => unknown | Promise<unknown>;
+  run: (
+    input: unknown,
+    signal: AbortSignal,
+    context?: ToolRunContext,
+  ) => unknown | Promise<unknown>;
 }>;
 export function defineTool<S extends z.ZodType>(definition: {
   input: S;
@@ -49,7 +55,11 @@ export function defineTool<S extends z.ZodType>(definition: {
   kind?: ToolKind;
   /** Pure display metadata derived from parsed input; no I/O or execution authorization. */
   locations?: (input: z.output<S>) => readonly ToolLocation[];
-  run: (input: z.output<S>, signal: AbortSignal) => unknown | Promise<unknown>;
+  run: (
+    input: z.output<S>,
+    signal: AbortSignal,
+    context?: ToolRunContext,
+  ) => unknown | Promise<unknown>;
 }): Tool {
   const { input, description, locations, run } = definition;
   const kind = ToolKindSchema.parse(definition.kind ?? "other");
@@ -59,7 +69,8 @@ export function defineTool<S extends z.ZodType>(definition: {
     ...(locations ? { locations: (value: unknown) => locations(value as z.output<S>) } : {}),
     parameters: z.toJSONSchema(input, { io: "input" }),
     parseInput: (raw: unknown) => input.parseAsync(raw),
-    run: (value: unknown, signal: AbortSignal) => run(value as z.output<S>, signal),
+    run: (value: unknown, signal: AbortSignal, context?: ToolRunContext) =>
+      run(value as z.output<S>, signal, context),
   });
 }
 

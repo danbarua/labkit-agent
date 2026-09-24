@@ -17,8 +17,12 @@ import {
 } from "@labkit-agent/core/session";
 import { SessionIdSchema } from "@labkit-agent/core/types";
 
+export type WorkspacePersistence = SessionPersistence & {
+  deleteSession: (sessionId: string, signal: AbortSignal) => Promise<void>;
+};
+
 /** Local SQLite transactions, with no database handles retained between operations. */
-export function workspacePersistence(cwd: string): SessionPersistence {
+export function workspacePersistence(cwd: string): WorkspacePersistence {
   const root = realpathSync(cwd);
   for (const directory of [join(root, ".labkit"), join(root, ".labkit/sessions")]) {
     try {
@@ -60,6 +64,7 @@ export function workspacePersistence(cwd: string): SessionPersistence {
       CREATE TABLE IF NOT EXISTS workspace (singleton INTEGER PRIMARY KEY CHECK(singleton=1), cwd TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS batches (session TEXT NOT NULL, append_id TEXT NOT NULL, revision INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(session, append_id), UNIQUE(session, revision));
       CREATE TABLE IF NOT EXISTS session_info (session TEXT PRIMARY KEY, title TEXT, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS deleted_sessions (session TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS blobs (session TEXT NOT NULL, id TEXT NOT NULL, meta TEXT NOT NULL, bytes BLOB NOT NULL, PRIMARY KEY(session, id));
     `);
     initial.query("INSERT OR IGNORE INTO workspace VALUES (1, ?)").run(root);
@@ -72,7 +77,24 @@ export function workspacePersistence(cwd: string): SessionPersistence {
     initial.close();
   }
   return {
-    lifetime: "workspace-local SQLite; retained until .labkit/sessions is deleted",
+    lifetime:
+      "workspace-local SQLite; retained until session deletion or removal of .labkit/sessions",
+    async deleteSession(rawId, signal) {
+      signal.throwIfAborted();
+      const sessionId = SessionIdSchema.parse(rawId);
+      const db = database();
+      try {
+        db.transaction(() => {
+          signal.throwIfAborted();
+          db.query("INSERT OR IGNORE INTO deleted_sessions VALUES (?)").run(sessionId);
+          db.query("DELETE FROM batches WHERE session=?").run(sessionId);
+          db.query("DELETE FROM session_info WHERE session=?").run(sessionId);
+          db.query("DELETE FROM blobs WHERE session=?").run(sessionId);
+        }).immediate();
+      } finally {
+        db.close();
+      }
+    },
     async load(rawId, signal) {
       try {
         signal.throwIfAborted();
@@ -110,6 +132,8 @@ export function workspacePersistence(cwd: string): SessionPersistence {
         try {
           return db
             .transaction((): AppendResult => {
+              if (db.query("SELECT 1 FROM deleted_sessions WHERE session=?").get(request.sessionId))
+                return { kind: "rejected", message: "Session was deleted" };
               const old = db
                 .query("SELECT body FROM batches WHERE session=? AND append_id=?")
                 .get(request.sessionId, request.appendId) as { body: string } | null;
@@ -193,6 +217,9 @@ export function workspacePersistence(cwd: string): SessionPersistence {
       try {
         return db
           .transaction(() => {
+            if (db.query("SELECT 1 FROM deleted_sessions WHERE session=?").get(sessionId))
+              throw new Error("Session was deleted");
+            signal.throwIfAborted();
             const old = db
               .query("SELECT meta FROM blobs WHERE session=? AND id=?")
               .get(sessionId, id) as { meta: string } | null;
