@@ -75,13 +75,16 @@ host reports a failed tool result containing the validation cause; the invalid c
 Valid siblings still require approval. The model receives all committed results to choose its next
 action. `tool.input_rejected` explains the invalid call and consequence in diagnostics. Return `allow-once`, `allow-session`, `reject-once`, or a
 cancelled outcome. Every call must be allowed before the batch runs. A malformed response or callback
-failure fails closed; cancellation revokes in-memory grants, and late approval cannot start a tool.
+failure fails closed; cancellation discards uncommitted grants, and late approval cannot start a tool.
 `allow-session` approves the named tool for all arguments in this host's live session. The host
 installs that grant only when the committed permission outcome releases the batch. Later calls
 still validate inputs and commit permission outcomes, with the original grant ID and `remembered`
 source. Other tools still need approval. Rejection/cancellation discards uncommitted grants.
-Closing the host or a committed policy change clears remembered grants; restore does not resurrect
+Closing the host, explicitly committing permission mode, or changing allowed tools clears remembered grants; restore does not resurrect
 them. `permission.granted`, `permission.reused`, and `permission.grants_cleared` explain this at INFO.
+Model, thinking, and limit changes retain approvals. Direct host consumers call `resetPermissions`
+after committing an explicit permission reset or changed tool scope; dispatch does not infer
+authorization changes from a general policy revision.
 An existing committed grant survives cancellation of a later turn; cancellation stops work rather
 than changing the user's authorization. Select Ask in ACP Tool approvals to revoke remembered grants.
 

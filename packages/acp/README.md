@@ -119,7 +119,7 @@ call in the batch must be approved before any tool runs. A refusal blocks the ba
 dialog aborts the turn. The picker also offers approval of the named tool for all arguments until
 the live session closes. Other tools remain unapproved. Each reuse is logged and journaled with its
 grant identity; input validation and persistence gates still apply. Closing/reloading a session or
-committing configuration changes clears these approvals. Under Tool approvals, select Ask to clear
+committing a permission reset or tool scope change clears these approvals. Under Tool approvals, select Ask to clear
 remembered grants or explicitly allow all enabled tools without asking. The adapter maps the typed core refusal directly to ACP `refusal`.
 
 Stream text is provisional. It can be visible before EOF exposes a malformed response, and a tool

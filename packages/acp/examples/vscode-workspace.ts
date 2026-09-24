@@ -126,7 +126,7 @@ export function workspaceAgent(
           id: "permissions",
           name: "Tool approvals",
           description:
-            "Remembered approvals cover one tool and all its arguments until the session closes or configuration changes. Select Ask to clear approvals.",
+            "Remembered approvals cover one tool and all its arguments until the session closes or tool scope changes or permissions are explicitly reset. Select Ask to clear approvals.",
           current: (policy) => policy.permissions ?? "off",
           options: [
             {

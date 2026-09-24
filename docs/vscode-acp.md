@@ -66,7 +66,7 @@ authentication headers; OAuth remains unsupported. ACP-proxied MCP servers use t
 calls use the same permission picker and journaled results. External servers execute
 with their own process access; the workspace file sandbox does not constrain them. Read-only
 mode excludes MCP tools. The picker can remember approval for the named tool, across all arguments,
-until the live session closes or configuration changes. Tool approvals → Ask clears remembered
+until the live session closes or tool scope changes or permissions are explicitly reset. Tool approvals → Ask clears remembered
 grants; the other option explicitly allows all enabled tools without asking. Reopening a session
 requires fresh grants, without replaying old tools. **ACP: Set Agent Mode** switches between read-only
 and edit access; both still require approval. Hosts with configuration-selector support also expose

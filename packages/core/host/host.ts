@@ -152,7 +152,6 @@ export function createHost(
   >();
   const requestPermission = bindings.requestPermission;
   const remembered = new Map<string, string>();
-  let permissionPolicyVersion: number | undefined;
 
   const grants = new Map<
     ActorId,
@@ -299,18 +298,6 @@ export function createHost(
     context: ExecutionContext,
   ): undefined => {
     if (closed) throw new Error("Host closed");
-    if (permissionPolicyVersion !== context.policyVersion) {
-      if (remembered.size)
-        diagnostic("host", "info", "permission.grants_cleared", {
-          sessionId: bindings.sessionId,
-          reason: "Committed policy changed; previous tool approvals no longer apply",
-          previousPolicyVersion: permissionPolicyVersion,
-          policyVersion: context.policyVersion,
-          toolNames: [...remembered.keys()],
-        });
-      remembered.clear();
-      permissionPolicyVersion = context.policyVersion;
-    }
     context = freeze({
       ...context,
       prompt: context.prompt ? structuredClone(context.prompt) : undefined,
@@ -818,7 +805,7 @@ export function createHost(
             scope: "live-session-tool",
             policyVersion: context.policyVersion,
             reason:
-              "User approved this tool for all arguments until this session closes or its policy changes",
+              "User approved this tool for all arguments until this session closes, tool scope changes, or permissions are explicitly reset",
           });
         }
         if (command.permission) grants.delete(command.permission.id);
@@ -1013,6 +1000,15 @@ export function createHost(
 
   return {
     dispatch,
+    resetPermissions(reason: string, correlation: { policyVersion: number; appendId: string }) {
+      diagnostic("host", "info", "permission.grants_cleared", {
+        sessionId: bindings.sessionId,
+        reason,
+        ...correlation,
+        toolNames: [...remembered.keys()],
+      });
+      remembered.clear();
+    },
     releaseTool(outcome: HostToolOutcome) {
       const key = `${outcome.batchId}/${outcome.callId}`;
       const pending = pendingTools.get(key);

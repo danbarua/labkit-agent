@@ -526,6 +526,7 @@ function configure(raw: SessionOptions, restoring = false) {
           break;
         }
         case "dispatch": {
+          const previousPolicy = dispatchBoundary.policy;
           dispatchBoundary = command.durable;
           const terminal = command.durable.records.at(-1)?.body;
           const newBodies = command.durable.records
@@ -544,7 +545,21 @@ function configure(raw: SessionOptions, restoring = false) {
               }
             }
           for (const body of newBodies) {
-            if (body.kind === "policy")
+            if (body.kind === "policy") {
+              const toolsChanged = Object.entries(body.policy.tools).some(([agent, tools]) => {
+                const previous = previousPolicy?.tools[agent] ?? [];
+                return (
+                  tools.some((tool) => !previous.includes(tool)) ||
+                  previous.some((tool) => !tools.includes(tool))
+                );
+              });
+              if (body.patch.permissions !== undefined || toolsChanged)
+                host.resetPermissions(
+                  body.patch.permissions !== undefined
+                    ? "Permission mode explicitly committed; remembered tool approvals revoked"
+                    : "Allowed tool scope changed; remembered tool approvals revoked",
+                  { policyVersion: body.policy.version, appendId: command.submission.appendId },
+                );
               diagnostic("session", "info", "policy.committed", {
                 sessionId,
                 appendId: command.submission.appendId,
@@ -552,6 +567,7 @@ function configure(raw: SessionOptions, restoring = false) {
                 revision: command.durable.revision,
                 policy: body.policy,
               });
+            }
           }
           const admission = admissions.get(command.submission.id);
           if (admission) {
