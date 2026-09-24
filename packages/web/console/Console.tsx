@@ -41,16 +41,37 @@ function hashPrefix(id: string) {
   return id.slice(0, 8);
 }
 
-async function readError(response: Response) {
-  const body = (await response.json().catch(() => null)) as { error?: string } | null;
-  return body?.error ?? response.statusText;
+function outcomeText(outcome: { kind: string; failure?: PublicReceipt["failure"] }) {
+  const failure = outcome.failure;
+  const headline = [outcome.kind, failure?.classification].filter(Boolean).join(" · ");
+  const operation = failure?.operation
+    ? [failure.operation.kind, failure.operation.toolName, failure.operation.callId]
+        .filter(Boolean)
+        .join(" ")
+    : undefined;
+  return [
+    headline,
+    failure?.message,
+    operation,
+    failure?.phase ? `phase ${failure.phase}` : undefined,
+    failure?.timeoutMs ? `deadline ${failure.timeoutMs} ms` : undefined,
+    failure?.cause,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function receiptText(receipt: PublicReceipt) {
+  if (receipt.failure) return outcomeText({ kind: receipt.kind, failure: receipt.failure });
   if (receipt.kind === "failed") return receipt.message ?? "Rejected";
   if (receipt.kind === "busy")
     return "Busy. Abort the turn before changing policy or sending during tools.";
   return receipt.kind;
+}
+
+async function readError(response: Response) {
+  const body = (await response.json().catch(() => null)) as { error?: string } | null;
+  return body?.error ?? response.statusText;
 }
 
 export function Console() {
@@ -69,6 +90,8 @@ export function Console() {
   const [model, setModel] = useState("");
   const [thinking, setThinking] = useState("off");
   const [stream, setStream] = useState(false);
+  const [completionTimeoutMs, setCompletionTimeoutMs] = useState("");
+  const [toolTimeoutMs, setToolTimeoutMs] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
 
@@ -110,6 +133,13 @@ export function Console() {
       } else if (event.kind === "receipt") {
         setAwaitingReceipt(false);
         setNotice(event.receipt.kind === "accepted" ? "" : receiptText(event.receipt));
+      } else if (event.kind === "settled" && event.settlement.kind !== "terminal") {
+        const settlement = event.settlement;
+        setNotice(
+          settlement.failure
+            ? outcomeText({ kind: settlement.kind, failure: settlement.failure })
+            : (settlement.message ?? settlement.kind),
+        );
       } else if (event.kind === "permission") {
         setPermission(event.request);
       } else if (event.kind === "permission_clear") {
@@ -135,9 +165,7 @@ export function Console() {
               key: `${turnIndex}:outcome`,
               message: {
                 role: "system" as const,
-                text: turn.outcome.message
-                  ? `${turn.outcome.kind}: ${turn.outcome.message}`
-                  : turn.outcome.kind,
+                text: outcomeText(turn.outcome),
               },
             },
           ]),
@@ -254,6 +282,18 @@ export function Console() {
     };
     if (providerId) patch.provider = providerId;
     if (model.trim()) patch.model = model.trim();
+    const completionTimeout = Number(completionTimeoutMs);
+    const toolTimeout = Number(toolTimeoutMs);
+    if (completionTimeoutMs.trim()) {
+      if (!Number.isInteger(completionTimeout) || completionTimeout < 1)
+        return setNotice("Completion deadline must be a positive number of milliseconds");
+      patch.completionTimeoutMs = completionTimeout;
+    }
+    if (toolTimeoutMs.trim()) {
+      if (!Number.isInteger(toolTimeout) || toolTimeout < 1)
+        return setNotice("Tool deadline must be a positive number of milliseconds");
+      patch.toolTimeoutMs = toolTimeout;
+    }
     const response = await fetch(`/api/session/${view.sessionId}/event`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -464,10 +504,20 @@ export function Console() {
             >
               <h2 className="text-[11px] font-semibold tracking-[0.18em] uppercase">Policy</h2>
               <p className="font-mono text-xs text-muted-foreground">
-                {view.policy.provider ?? "fixture"} · {view.policy.model ?? "fixture"} ·{" "}
+                {view.resolved?.profile ?? view.policy.provider ?? "fixture"} ·{" "}
+                {view.resolved?.wireModel ?? view.policy.model ?? "fixture"} ·{" "}
                 {view.policy.thinking ?? "off"} · stream {view.policy.stream ? "on" : "off"} ·
                 permissions {view.policy.permissions ?? "off"}
+                {view.policy.completionTimeoutMs
+                  ? ` · completion ${view.policy.completionTimeoutMs} ms`
+                  : ""}
+                {view.policy.toolTimeoutMs ? ` · tool ${view.policy.toolTimeoutMs} ms` : ""}
               </p>
+              {view.sessionError ? (
+                <p className="text-sm text-ink">
+                  {outcomeText({ kind: "failed", failure: view.sessionError })}
+                </p>
+              ) : null}
               <PolicyFields
                 host={host}
                 providerId={providerId || view.policy.provider || ""}
@@ -479,6 +529,32 @@ export function Console() {
                 onThinking={setThinking}
                 onStream={setStream}
               />
+              <label className="grid gap-1 text-sm">
+                Completion deadline ms
+                <input
+                  className="h-9 rounded-md border border-border bg-paper px-2"
+                  inputMode="numeric"
+                  placeholder={
+                    view.policy.completionTimeoutMs
+                      ? String(view.policy.completionTimeoutMs)
+                      : "none"
+                  }
+                  value={completionTimeoutMs}
+                  onChange={(event) => setCompletionTimeoutMs(event.target.value)}
+                />
+              </label>
+              <label className="grid gap-1 text-sm">
+                Tool deadline ms
+                <input
+                  className="h-9 rounded-md border border-border bg-paper px-2"
+                  inputMode="numeric"
+                  placeholder={
+                    view.policy.toolTimeoutMs ? String(view.policy.toolTimeoutMs) : "none"
+                  }
+                  value={toolTimeoutMs}
+                  onChange={(event) => setToolTimeoutMs(event.target.value)}
+                />
+              </label>
               <Button type="submit" variant="outline" className="w-fit">
                 Apply at idle
               </Button>

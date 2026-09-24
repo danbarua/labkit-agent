@@ -29,9 +29,28 @@ export type MessageView = {
   attachments?: BlobChip[];
 };
 
+export type FailureView = {
+  message: string;
+  classification?: string;
+  phase?: string;
+  timeoutMs?: number;
+  operation?: {
+    id: string;
+    kind: string;
+    toolName?: string;
+    callId?: string;
+  };
+  cause?: string;
+};
+
+export type OutcomeView = {
+  kind: string;
+  failure?: FailureView;
+};
+
 export type TurnView = {
   agent: string;
-  outcome: { kind: string; message?: string };
+  outcome: OutcomeView;
   messages: MessageView[];
 };
 
@@ -53,12 +72,22 @@ export type SessionView = {
   sessionId: string;
   sessionStatus: string;
   phase: string;
+  sessionError?: FailureView;
+  resolved?: {
+    provider: string;
+    model: string;
+    wireModel: string;
+    profile: string;
+    stream: boolean;
+  };
   policy: {
     provider?: string;
     model?: string;
     thinking?: string;
     stream?: boolean;
     permissions?: string;
+    completionTimeoutMs?: number | null;
+    toolTimeoutMs?: number | null;
   };
   log: TurnView[];
   live: MessageView[];
@@ -67,6 +96,7 @@ export type SessionView = {
 export type PublicReceipt = {
   kind: string;
   message?: string;
+  failure?: FailureView;
 };
 
 export type PermissionPrompt = {
@@ -92,7 +122,13 @@ export type ConsoleEvent =
   | { kind: "receipt"; receipt: PublicReceipt }
   | {
       kind: "settled";
-      settlement: { kind: string; turnId?: string; outcome?: string; message?: string };
+      settlement: {
+        kind: string;
+        turnId?: string;
+        outcome?: OutcomeView;
+        message?: string;
+        failure?: FailureView;
+      };
     }
   | {
       kind: "delta";

@@ -37,8 +37,10 @@ import { createMemoryPersistence } from "../../core/session/testing/memory-persi
 import type {
   ConsoleEvent,
   CreateSessionBody,
+  FailureView,
   HostInfo,
   MessageView,
+  OutcomeView,
   PermissionPrompt,
   ProviderOption,
   PublicReceipt,
@@ -195,26 +197,89 @@ function liveMessages(turn: Exclude<TurnState, { status: "done" }>) {
   return turn.turn.messages.map(messageView);
 }
 
-export function project(snapshot: SessionState, model: string): SessionView {
+function failureView(error: {
+  message: string;
+  classification?: string;
+  phase?: string;
+  timeoutMs?: number;
+  operation?: { id: string; kind: string; toolName?: string; callId?: string };
+  cause?: unknown;
+}): FailureView {
+  let cause: string | undefined;
+  if (typeof error.cause === "string") cause = error.cause;
+  else if (error.cause && typeof error.cause === "object" && "message" in error.cause) {
+    const message = error.cause.message;
+    if (typeof message === "string" && message !== error.message) cause = message;
+  }
+  return {
+    message: error.message,
+    ...(error.classification ? { classification: error.classification } : {}),
+    ...(error.phase ? { phase: error.phase } : {}),
+    ...(error.timeoutMs ? { timeoutMs: error.timeoutMs } : {}),
+    ...(error.operation
+      ? {
+          operation: {
+            id: error.operation.id,
+            kind: error.operation.kind,
+            ...(error.operation.toolName ? { toolName: error.operation.toolName } : {}),
+            ...(error.operation.callId ? { callId: error.operation.callId } : {}),
+          },
+        }
+      : {}),
+    ...(cause ? { cause } : {}),
+  };
+}
+
+function outcomeView(outcome: {
+  kind: string;
+  error?: Parameters<typeof failureView>[0];
+  reason?: Parameters<typeof failureView>[0];
+}): OutcomeView {
+  const failure = outcome.kind === "failed" ? outcome.error : outcome.reason;
+  return { kind: outcome.kind, ...(failure ? { failure: failureView(failure) } : {}) };
+}
+
+export function project(
+  snapshot: SessionState,
+  fallbackModel: string,
+  resolved?: {
+    provider: string;
+    model: string;
+    wireModel: string;
+    profile: string;
+    capabilities: { stream: boolean };
+  },
+): SessionView {
   const conversation = snapshot.durable.conversation;
   const policy = snapshot.durable.policy;
   return {
     sessionId: conversation.sessionId,
     sessionStatus: snapshot.status,
     phase: conversation.turn.status,
+    ...(snapshot.status === "failed" ? { sessionError: failureView(snapshot.error) } : {}),
+    ...(resolved
+      ? {
+          resolved: {
+            provider: resolved.provider,
+            model: resolved.model,
+            wireModel: resolved.wireModel,
+            profile: resolved.profile,
+            stream: resolved.capabilities.stream,
+          },
+        }
+      : {}),
     policy: {
       provider: policy?.provider,
-      model: policy?.model ?? model,
+      model: policy?.model ?? resolved?.model ?? fallbackModel,
       thinking: policy?.thinking,
       stream: policy?.stream,
       permissions: policy?.permissions,
+      completionTimeoutMs: policy?.completionTimeoutMs,
+      toolTimeoutMs: policy?.toolTimeoutMs,
     },
     log: conversation.log.map((turn) => ({
       agent: turn.agent,
-      outcome:
-        turn.outcome.kind === "failed"
-          ? { kind: turn.outcome.kind, message: turn.outcome.error.message }
-          : { kind: turn.outcome.kind },
+      outcome: outcomeView(turn.outcome),
       messages: turn.messages.map(messageView),
     })),
     live: liveMessages(conversation.turn),
@@ -222,7 +287,13 @@ export function project(snapshot: SessionState, model: string): SessionView {
 }
 
 function publicReceipt(receipt: EnvReceipt): PublicReceipt {
-  if (receipt.kind === "failed") return { kind: "failed", message: receipt.message };
+  if (receipt.kind === "failed") {
+    return {
+      kind: "failed",
+      message: receipt.error?.message ?? receipt.message,
+      ...(receipt.error ? { failure: failureView(receipt.error) } : {}),
+    };
+  }
   return { kind: receipt.kind };
 }
 
@@ -231,12 +302,17 @@ function publicSettlement(settlement: EnvSettlement) {
     return {
       kind: "terminal",
       turnId: settlement.turnId,
-      outcome: settlement.record.outcome.kind,
+      outcome: outcomeView(settlement.record.outcome),
     };
   }
-  if (settlement.kind === "failed" || settlement.kind === "closed") {
-    return { kind: settlement.kind, message: settlement.message };
+  if (settlement.kind === "failed") {
+    return {
+      kind: settlement.kind,
+      message: settlement.error?.message ?? settlement.message,
+      ...(settlement.error ? { failure: failureView(settlement.error) } : {}),
+    };
   }
+  if (settlement.kind === "closed") return { kind: settlement.kind, message: settlement.message };
   if (settlement.kind === "acknowledged") return { kind: "acknowledged" };
   return { kind: "branch" };
 }
@@ -424,7 +500,10 @@ export async function openSession(input: CreateSessionBody = {}) {
       }
       hosted.pendingPermissions.clear();
     }
-    publish(hosted, { kind: "snapshot", view: project(snapshot, hosted.model) });
+    publish(hosted, {
+      kind: "snapshot",
+      view: project(snapshot, hosted.model, hosted.runtime?.model),
+    });
   };
   const streamUpdate = (notification: HostStreamNotification) => {
     publish(hosted, {
@@ -516,7 +595,11 @@ export async function openSession(input: CreateSessionBody = {}) {
       });
   const sessionId = hosted.runtime.snapshot.durable.conversation.sessionId;
   sessions.set(sessionId, hosted);
-  return { sessionId, view: project(hosted.runtime.snapshot, model), host: hostInfo() };
+  return {
+    sessionId,
+    view: project(hosted.runtime.snapshot, model, hosted.runtime.model),
+    host: hostInfo(),
+  };
 }
 
 export async function admit(sessionId: string, event: unknown) {
@@ -615,7 +698,10 @@ export function eventResponse(sessionId: string, signal: AbortSignal) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
       hosted.subscribers.add(subscriber);
-      subscriber({ kind: "snapshot", view: project(hosted.runtime.snapshot, hosted.model) });
+      subscriber({
+        kind: "snapshot",
+        view: project(hosted.runtime.snapshot, hosted.model, hosted.runtime.model),
+      });
       for (const pending of hosted.pendingPermissions.values()) {
         subscriber({ kind: "permission", request: permissionPrompt(pending.request) });
       }
