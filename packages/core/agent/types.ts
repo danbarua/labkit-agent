@@ -1,6 +1,9 @@
 import { z } from "zod";
 
 import { freeze } from "../fsm/fsm.ts";
+import { ContentPartsSchema, partsText } from "./content.ts";
+
+export * from "./content.ts";
 
 export const AgentIdSchema = z.string().min(1).brand<"AgentId">();
 export const ToolNameSchema = z.string().min(1).brand<"ToolName">();
@@ -51,16 +54,30 @@ export type Completion = z.infer<typeof CompletionSchema>;
 
 export const MessageSchema = z
   .discriminatedUnion("role", [
-    z.strictObject({ role: z.literal("system"), text: z.string() }),
-    z.strictObject({ role: z.literal("user"), text: z.string() }),
+    z.strictObject({
+      role: z.literal("system"),
+      text: z.string(),
+      parts: ContentPartsSchema.optional(),
+    }),
+    z.strictObject({
+      role: z.literal("user"),
+      text: z.string(),
+      parts: ContentPartsSchema.optional(),
+    }),
     z.strictObject({
       role: z.literal("assistant"),
       text: z.string(),
       calls: ToolCallsSchema.optional(),
       owner: CompletionOwnerSchema.optional(),
+      parts: ContentPartsSchema.optional(),
     }),
     z.strictObject({ role: z.literal("tool"), text: z.string(), callId: ToolCallIdSchema }),
   ])
+  .refine(
+    (message) =>
+      message.role === "tool" || !message.parts || message.text === partsText(message.parts),
+    "Message text must equal its text parts",
+  )
   .readonly();
 export type AgentMessage = z.infer<typeof MessageSchema>;
 export const MessagesSchema = z

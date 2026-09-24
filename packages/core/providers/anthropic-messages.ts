@@ -1,7 +1,13 @@
 import { z } from "zod";
 
 import { ToolCallSchema } from "../agent/types.ts";
-import { advertisements, completion, responseBody, systemAndMessages } from "./shared.ts";
+import {
+  advertisements,
+  completion,
+  messageText,
+  responseBody,
+  systemAndMessages,
+} from "./shared.ts";
 import { parseRequest, validateThinking, type CompletionProfile } from "./types.ts";
 
 const block = z.discriminatedUnion("type", [
@@ -15,19 +21,24 @@ const block = z.discriminatedUnion("type", [
 ]);
 export const anthropicMessages: CompletionProfile = {
   id: "anthropic-messages@1",
-  capabilities: { thinking: { mode: "off" }, stream: false },
-  encode(raw) {
+  capabilities: {
+    thinking: { mode: "off" },
+    stream: false,
+    media: ["text/plain", "text/markdown"],
+  },
+  encode(raw, blobs) {
     const request = parseRequest(raw, "anthropic-messages@1");
     validateThinking(request.thinking, this.capabilities.thinking);
-    const split = systemAndMessages(request);
+    const split = systemAndMessages(request, blobs);
     const messages: { role: string; content: unknown[] }[] = [];
     for (const message of split.messages) {
+      const text = messageText(message, blobs);
       const role = message.role === "assistant" ? "assistant" : "user";
       const content: unknown[] =
         message.role === "tool"
-          ? [{ type: "tool_result", tool_use_id: message.callId, content: message.text }]
+          ? [{ type: "tool_result", tool_use_id: message.callId, content: text }]
           : [
-              ...(message.text ? [{ type: "text", text: message.text }] : []),
+              ...(text ? [{ type: "text", text: text }] : []),
               ...(message.role === "assistant"
                 ? (message.calls ?? []).map((call) => ({
                     type: "tool_use",

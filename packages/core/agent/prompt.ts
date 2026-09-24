@@ -56,6 +56,7 @@ function completedExchanges(
         : {
             role: "assistant",
             text: message.text,
+            ...(message.parts ? { parts: message.parts } : {}),
             ...(message.owner ? { owner: message.owner } : {}),
           },
     );
@@ -101,6 +102,7 @@ export function projectConversationPrompt({
         return {
           role: "assistant",
           content: message.text,
+          ...(message.parts ? { parts: message.parts } : {}),
           ...(message.owner ? { owner: message.owner } : {}),
           tool_calls: message.calls.map((call) => ({
             id: call.id,
@@ -111,6 +113,7 @@ export function projectConversationPrompt({
       return {
         role: message.role,
         content: message.text,
+        ...(message.parts ? { parts: message.parts } : {}),
         ...(message.role === "assistant" && message.owner ? { owner: message.owner } : {}),
       };
     }),

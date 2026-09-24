@@ -8,6 +8,7 @@ import {
   PreparedModelSchema,
   type ChatCompletionRequest,
 } from "../agent/agent.ts";
+import { blobRefs } from "../agent/content.ts";
 import { parseSessionContext, type PromptInput } from "../agent/prompt.ts";
 import {
   ActorIdSchema,
@@ -33,6 +34,7 @@ import {
   type PolicyResolvers,
 } from "../policy/policy.ts";
 import { bindProviders, type ProviderBindings } from "../providers/transport.ts";
+import { copyBranchBlobs, resolveRequestBlobs } from "./blobs.ts";
 import { EnvEventSchema, type EnvEvent } from "./events.ts";
 import { AppendIdSchema, type AppendId, type SessionPersistence } from "./persistence.ts";
 import {
@@ -87,7 +89,14 @@ export type BoundSessionOptions = Readonly<{
 export type SessionOptions = LegacySessionOptions | BoundSessionOptions;
 function normalizeOptions(options: SessionOptions, restoring = false) {
   if (!("configuration" in options))
-    return { options, resolvers: copyResolvers(), initialPolicy: undefined, observe: undefined };
+    return {
+      options,
+      resolvers: copyResolvers(),
+      initialPolicy: undefined,
+      observe: undefined,
+      completePort: undefined,
+      providerMedia: undefined,
+    };
   const { configuration, bindings } = options;
   const capabilities = {
     agents: [...configuration.agents].map(
@@ -121,7 +130,14 @@ function normalizeOptions(options: SessionOptions, restoring = false) {
       return completePort(PreparedModelSchema.parse(prepared), signal!);
     },
   };
-  return { options: normalized, resolvers, initialPolicy, observe: bindings.observe };
+  return {
+    options: normalized,
+    resolvers,
+    initialPolicy,
+    observe: bindings.observe,
+    completePort,
+    providerMedia: providers?.media,
+  };
 }
 export type TerminalResult =
   | Readonly<{ kind: "terminal"; turnId: ActorId; record: TurnRecord }>
@@ -139,7 +155,10 @@ export type SessionRuntime = {
   readonly snapshot: SessionState;
   fire(event: unknown): Promise<EnvReceipt>;
   dispatch(event: unknown): EnvCommandHandle;
-  input(text: string): { accepted: Promise<CommandReceipt>; settled: Promise<TerminalResult> };
+  input(input: string | Omit<Extract<EnvEvent, { type: "user" }>, "type">): {
+    accepted: Promise<CommandReceipt>;
+    settled: Promise<TerminalResult>;
+  };
   updateSystem(inputs: readonly string[]): Promise<CommandReceipt>;
   updatePolicy(patch: PolicyPatch): Promise<CommandReceipt>;
   fork(): Promise<SessionRuntime>;
@@ -148,7 +167,8 @@ export type SessionRuntime = {
 };
 
 function configure(raw: SessionOptions, restoring = false) {
-  const { options, resolvers, initialPolicy, observe } = normalizeOptions(raw, restoring);
+  const { options, resolvers, initialPolicy, observe, completePort, providerMedia } =
+    normalizeOptions(raw, restoring);
   const agentId = AgentIdSchema.parse(options.agent);
   const steps = StepsSchema.parse(options.steps);
   const baseUrl = z.url({ protocol: /^https?$/ }).parse(options.baseUrl);
@@ -243,7 +263,8 @@ function configure(raw: SessionOptions, restoring = false) {
         agents,
         tools,
         sessionId,
-        complete: (request, signal) => complete({ ...request, baseUrl, apiKey, signal }),
+        complete:
+          completePort ?? ((request, signal) => complete({ ...request, baseUrl, apiKey, signal })),
       },
       {
         turn: post,
@@ -252,11 +273,29 @@ function configure(raw: SessionOptions, restoring = false) {
         },
       },
     );
+    async function initializeBranch(seed: Seed) {
+      const controller = new AbortController();
+      const owned = { cancel: async () => controller.abort() };
+      storage.add(owned);
+      try {
+        await copyBranchBlobs(
+          port,
+          sessionId,
+          seed.sessionId,
+          blobRefs([...seed.context, ...seed.log.flatMap((record) => record.messages)]),
+          controller.signal,
+        );
+        controller.signal.throwIfAborted();
+        return await initialize(seed);
+      } finally {
+        storage.delete(owned);
+      }
+    }
     const execute = (effect: ConversationCommand): undefined => {
       if (effect.type === "reply") {
         const reply = branchReplies.get(effect.requestId);
         if (reply)
-          void initialize(toSeed(dispatchBoundary, effect.result.state)).then(
+          void initializeBranch(toSeed(dispatchBoundary, effect.result.state)).then(
             (child) => {
               branchReplies.delete(effect.requestId);
               if (session.snapshot.status === "closed" || session.snapshot.status === "failed") {
@@ -280,6 +319,14 @@ function configure(raw: SessionOptions, restoring = false) {
         toolFailure: policy?.toolFailure,
         provider: policy,
         continuations: durable.continuations,
+        loadBlobs: (request, signal) =>
+          resolveRequestBlobs(
+            port,
+            sessionId,
+            request,
+            providerMedia?.get(request.provider ?? "") ?? [],
+            signal,
+          ),
         projectPrompt: (value) =>
           policy
             ? projectPolicy(value, durable.systemInputs, policy, resolvers)
@@ -568,7 +615,10 @@ function configure(raw: SessionOptions, restoring = false) {
       },
       dispatch,
       fire: (raw) => dispatch(raw).accepted,
-      input: (text) => dispatch({ type: "user", text }),
+      input: (input) =>
+        dispatch(
+          typeof input === "string" ? { type: "user", text: input } : { ...input, type: "user" },
+        ),
       updateSystem: (inputs) => dispatch({ type: "system", inputs }).accepted,
       updatePolicy: (patch) => dispatch({ type: "policy", patch }).accepted,
       fork: () => publishBranch({ type: "fork" }),

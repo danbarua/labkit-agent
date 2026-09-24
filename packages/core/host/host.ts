@@ -2,7 +2,8 @@ import { z } from "zod";
 
 import type { ConversationCommand } from "../agent/agent-conversation.ts";
 import { admittedCompletionSchema, type TurnEvent } from "../agent/agent-fsm.ts";
-import { PreparedModelSchema } from "../agent/agent.ts";
+import { PreparedModelSchema, type PreparedModel } from "../agent/agent.ts";
+import type { BlobResolver } from "../agent/content.ts";
 import {
   createOperationActor,
   type Operation,
@@ -42,6 +43,7 @@ export type HostToolOutcome = Readonly<{
 }>;
 export type ExecutionContext = Readonly<{
   prompt?: PromptInput;
+  loadBlobs?: (request: PreparedModel, signal: AbortSignal) => Promise<BlobResolver>;
   continuations?: readonly Continuation[];
   allowedTools?: readonly string[];
   toolFailure?: Policy["toolFailure"];
@@ -144,27 +146,31 @@ export function createHost(
           {
             input: null,
             parseInput: z.null().parse,
-            run: async (_, signal) => ({
-              model: context.provider?.model ?? agent.model,
-              ...(context.provider?.provider
-                ? {
-                    provider: context.provider.provider,
-                    thinking: context.provider.thinking,
-                    stream: context.provider.stream,
-                    maxOutputTokens: context.provider.maxOutputTokens,
-                    successors: agent.successors ?? [...agents.keys()],
-                  }
-                : {}),
-              messages: await context.projectPrompt(prompt, signal),
-              tools: agent.tools.map((name) => ({
-                type: "function",
-                function: {
-                  name,
-                  description: tools.get(ToolNameSchema.parse(name))!.description,
-                  parameters: tools.get(ToolNameSchema.parse(name))!.parameters,
-                },
-              })),
-            }),
+            run: async (_, signal) => {
+              const prepared = PreparedModelSchema.parse({
+                model: context.provider?.model ?? agent.model,
+                ...(context.provider?.provider
+                  ? {
+                      provider: context.provider.provider,
+                      thinking: context.provider.thinking,
+                      stream: context.provider.stream,
+                      maxOutputTokens: context.provider.maxOutputTokens,
+                      successors: agent.successors ?? [...agents.keys()],
+                    }
+                  : {}),
+                messages: await context.projectPrompt(prompt, signal),
+                tools: agent.tools.map((name) => ({
+                  type: "function",
+                  function: {
+                    name,
+                    description: tools.get(ToolNameSchema.parse(name))!.description,
+                    parameters: tools.get(ToolNameSchema.parse(name))!.parameters,
+                  },
+                })),
+              });
+              await context.loadBlobs?.(prepared, signal);
+              return prepared;
+            },
             parseOutput: (raw) => {
               const prepared = PreparedModelSchema.parse(raw);
               const continuations = matchingContinuations(
@@ -196,7 +202,11 @@ export function createHost(
           {
             input: command.request,
             parseInput: PreparedModelSchema.parseAsync,
-            run: (request, signal) => bindings.complete(request, signal),
+            run: async (request, signal) => {
+              const blobs = await context.loadBlobs?.(request, signal);
+              signal.throwIfAborted();
+              return bindings.complete(request, signal, blobs);
+            },
             parseOutput: async (raw) => {
               const wrapped = raw !== null && typeof raw === "object" && "completion" in raw;
               const output = wrapped

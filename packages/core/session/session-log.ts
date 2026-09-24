@@ -6,6 +6,7 @@ import {
   type ConversationState,
 } from "../agent/agent-conversation.ts";
 import { PreparedModelSchema } from "../agent/agent.ts";
+import type { BlobRef, ContentPart } from "../agent/content.ts";
 import { projectConversationPrompt } from "../agent/prompt.ts";
 import { completeResults } from "../agent/tool-batch.ts";
 import {
@@ -41,6 +42,7 @@ import {
 } from "./persistence.ts";
 import { projectSessionPrompt } from "./session-prompt.ts";
 import {
+  bodyHasBlobs,
   JournalRecordSchema,
   SeedSchema,
   WireEventSchema,
@@ -61,6 +63,7 @@ export type JournalState = Readonly<{
   pendingInputs?: readonly Readonly<{
     inputId: ReturnType<typeof ActorIdSchema.parse>;
     text: string;
+    attachments?: readonly BlobRef[];
   }>[];
   configuration: Configuration;
   systemInputs: readonly string[];
@@ -393,6 +396,69 @@ function domainEvent(
     },
   };
 }
+function replaceLastMessage(
+  decision: ReturnType<typeof decideConversation>,
+  update: (message: AgentMessage) => AgentMessage,
+): ReturnType<typeof decideConversation> {
+  const c = decision.state;
+  const messages = c.turn.status === "idle" ? c.log.at(-1)!.messages : c.turn.turn.messages;
+  const target = messages.at(-1)!;
+  const attachMessages = (items: readonly AgentMessage[]) =>
+    items.map((message) => (message === target ? update(message) : message));
+  const attachTurn = (turn: TurnData): TurnData => ({
+    ...turn,
+    messages: attachMessages(turn.messages),
+    view:
+      turn.view.kind === "handoff"
+        ? { ...turn.view, messages: attachMessages(turn.view.messages) }
+        : turn.view,
+  });
+  const attachLog = (log: readonly TurnRecord[]) =>
+    log.map((record) => ({ ...record, messages: attachMessages(record.messages) }));
+  // Keep the decorated message in history, handoff views and pending branch commands.
+  return {
+    state: {
+      ...c,
+      log: attachLog(c.log),
+      turn:
+        c.turn.status === "idle"
+          ? c.turn
+          : ({ ...c.turn, turn: attachTurn(c.turn.turn) } as typeof c.turn),
+    },
+    commands: decision.commands.map((effect): ConversationCommand =>
+      effect.type === "reply"
+        ? {
+            ...effect,
+            result: {
+              ...effect.result,
+              state: { ...effect.result.state, log: attachLog(effect.result.state.log) },
+            },
+          }
+        : {
+            ...effect,
+            command:
+              "turn" in effect.command
+                ? { ...effect.command, turn: attachTurn(effect.command.turn) }
+                : effect.command,
+          },
+    ),
+  };
+}
+function withUserParts(
+  decision: ReturnType<typeof decideConversation>,
+  text: string,
+  attachments?: readonly BlobRef[],
+) {
+  if (!attachments) return decision;
+  const parts: readonly ContentPart[] = [
+    ...(text ? [{ type: "text" as const, text }] : []),
+    ...attachments.map((ref) => ({ type: "blob" as const, ref })),
+  ];
+  return replaceLastMessage(decision, (message) => {
+    if (message.role !== "user") throw new Error("Input did not produce a user message");
+    return { ...message, parts };
+  });
+}
 function reduce(
   state: JournalState,
   input: Exclude<JournalBody, { kind: "created" | "terminal" }>,
@@ -450,7 +516,11 @@ function reduce(
         ...state,
         pendingInputs: [
           ...(state.pendingInputs ?? []),
-          { inputId: input.inputId, text: input.text },
+          {
+            inputId: input.inputId,
+            text: input.text,
+            ...(input.attachments ? { attachments: input.attachments } : {}),
+          },
         ],
       },
       commands: [],
@@ -476,7 +546,11 @@ function reduce(
       input.policyVersion !== state.policy?.version
     )
       throw new Error("Invalid dequeue boundary");
-    const decision = decideConversation(state.conversation, { type: "user", text: pending.text });
+    const decision = withUserParts(
+      decideConversation(state.conversation, { type: "user", text: pending.text }),
+      pending.text,
+      pending.attachments,
+    );
     return {
       state: {
         ...state,
@@ -562,54 +636,13 @@ function reduce(
       throw new Error("Continuation owner/provider mismatch");
   }
   let decision = decideConversation(state.conversation, domainEvent(state, input.event, resolvers));
-  if (envelope) {
-    const c = decision.state;
-    const messages = c.turn.status === "idle" ? c.log.at(-1)!.messages : c.turn.turn.messages;
-    const target = messages.at(-1)!;
-    if (target.role !== "assistant") throw new Error("Completion did not produce an assistant");
-    const attachMessages = (items: readonly AgentMessage[]) =>
-      items.map((message) =>
-        message === target ? { ...message, owner: envelope.owner } : message,
-      );
-    const attachTurn = (turn: TurnData): TurnData => ({
-      ...turn,
-      messages: attachMessages(turn.messages),
-      view:
-        turn.view.kind === "handoff"
-          ? { ...turn.view, messages: attachMessages(turn.view.messages) }
-          : turn.view,
+  if (input.event.type === "user")
+    decision = withUserParts(decision, input.event.text, input.event.attachments);
+  if (envelope)
+    decision = replaceLastMessage(decision, (message) => {
+      if (message.role !== "assistant") throw new Error("Completion did not produce an assistant");
+      return { ...message, owner: envelope.owner };
     });
-    const attachLog = (log: readonly TurnRecord[]) =>
-      log.map((record) => ({ ...record, messages: attachMessages(record.messages) }));
-    // Preserve the owner's assistant in committed history and pending branch/handoff commands.
-    decision = {
-      state: {
-        ...c,
-        log: attachLog(c.log),
-        turn:
-          c.turn.status === "idle"
-            ? c.turn
-            : ({ ...c.turn, turn: attachTurn(c.turn.turn) } as typeof c.turn),
-      },
-      commands: decision.commands.map((effect): ConversationCommand =>
-        effect.type === "reply"
-          ? {
-              ...effect,
-              result: {
-                ...effect.result,
-                state: { ...effect.result.state, log: attachLog(effect.result.state.log) },
-              },
-            }
-          : {
-              ...effect,
-              command:
-                "turn" in effect.command
-                  ? { ...effect.command, turn: attachTurn(effect.command.turn) }
-                  : effect.command,
-            },
-      ),
-    };
-  }
   return {
     state: {
       ...state,
@@ -662,6 +695,11 @@ export function stage(
         record: next.conversation.log.at(-1)!,
       });
   };
+  if (input.kind !== "policy" && bodyHasBlobs(input) && !next.policy)
+    apply({
+      kind: "upgrade",
+      policy: defaultPolicy(next.configuration, next.conversation.allowance),
+    });
   if (input.kind === "policy") {
     if (!next.policy)
       apply({
@@ -682,7 +720,13 @@ export function stage(
       (next.policy.admission === "abort-tools-on-user" &&
         ["executing_tools", "cancelling_tools"].includes(next.conversation.turn.status)))
   ) {
-    apply({ kind: "queued", inputId, text: input.event.text, policyVersion: next.policy.version });
+    apply({
+      kind: "queued",
+      inputId,
+      text: input.event.text,
+      ...(input.event.attachments ? { attachments: input.event.attachments } : {}),
+      policyVersion: next.policy.version,
+    });
     if (
       next.policy!.admission === "abort-tools-on-user" &&
       next.conversation.turn.status === "executing_tools"
@@ -720,6 +764,7 @@ function packageRecords(
 ) {
   let version = previous.policy?.provider ? 3 : previous.policy ? 2 : 1;
   const records = bodies.map((body, index) => {
+    const precedingVersion = version;
     if (body.kind === "upgrade") version = 2;
     if (body.kind === "policy" && body.policy.provider) version = 3;
     if (body.kind === "created")
@@ -736,6 +781,8 @@ function packageRecords(
       previous.records.at(-1)?.version === 4
     )
       version = 4;
+    if (bodyHasBlobs(body) || previous.records.at(-1)?.version === 5) version = 5;
+    version = Math.max(version, precedingVersion, previous.records.at(-1)?.version ?? 1);
     return JournalRecordSchema.parse({
       version,
       sessionId: previous.conversation.sessionId,
@@ -794,14 +841,16 @@ export function replay(
           throw new Error("Missing creation record");
         if (
           record.version !==
-          (body.seed.continuations !== undefined ||
-          (body.seed.policy?.thinking !== undefined && body.seed.policy.thinking !== "off")
-            ? 4
-            : body.seed.policy?.provider
-              ? 3
-              : body.seed.policy
-                ? 2
-                : 1)
+          (bodyHasBlobs(body)
+            ? 5
+            : body.seed.continuations !== undefined ||
+                (body.seed.policy?.thinking !== undefined && body.seed.policy.thinking !== "off")
+              ? 4
+              : body.seed.policy?.provider
+                ? 3
+                : body.seed.policy
+                  ? 2
+                  : 1)
         )
           throw new Error("Creation version does not match policy");
         state = seedConversation(body.seed, resolvers);
@@ -810,20 +859,22 @@ export function replay(
           throw new Error("Invalid session identity");
         if (
           record.version !==
-          (state.records.at(-1)?.version === 4 ||
-          (body.kind === "policy" &&
-            body.policy.thinking !== undefined &&
-            body.policy.thinking !== "off") ||
-          (body.kind === "event" &&
-            body.event.type === "child" &&
-            body.event.event.type === "model_settled" &&
-            body.event.event.continuation)
-            ? 4
-            : state.policy?.provider || (body.kind === "policy" && body.policy.provider)
-              ? 3
-              : state.policy || body.kind === "upgrade"
-                ? 2
-                : 1)
+          (state.records.at(-1)?.version === 5 || bodyHasBlobs(body)
+            ? 5
+            : state.records.at(-1)?.version === 4 ||
+                (body.kind === "policy" &&
+                  body.policy.thinking !== undefined &&
+                  body.policy.thinking !== "off") ||
+                (body.kind === "event" &&
+                  body.event.type === "child" &&
+                  body.event.event.type === "model_settled" &&
+                  body.event.event.continuation)
+              ? 4
+              : state.policy?.provider || (body.kind === "policy" && body.policy.provider)
+                ? 3
+                : state.policy || body.kind === "upgrade"
+                  ? 2
+                  : 1)
         )
           throw new Error("Invalid journal upgrade boundary");
         if (expectedTerminal) {

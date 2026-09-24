@@ -1,7 +1,15 @@
 import { z } from "zod";
 
-import { ToolCallSchema } from "../agent/types.ts";
-import { advertisements, completion, responseBody, systemAndMessages } from "./shared.ts";
+import type { BlobResolver } from "../agent/content.ts";
+import { ToolCallSchema, type AgentMessage } from "../agent/types.ts";
+import {
+  advertisements,
+  attachmentBytes,
+  attachmentText,
+  completion,
+  responseBody,
+  systemAndMessages,
+} from "./shared.ts";
 import {
   ContinuationPayloadSchema,
   matchingContinuations,
@@ -29,10 +37,36 @@ const block = z.discriminatedUnion("type", [
     input: z.record(z.string(), z.json()),
   }),
 ]);
+function messageBlocks(
+  message: Exclude<AgentMessage, { role: "tool" }>,
+  blobs?: BlobResolver,
+): unknown[] {
+  if (!message.parts) return message.text ? [{ type: "text", text: message.text }] : [];
+  return message.parts.map((part) => {
+    if (part.type === "text") return { type: "text", text: part.text };
+    if (part.ref.media === "image/png" || part.ref.media === "image/jpeg") {
+      if (message.role !== "user")
+        throw new Error("Anthropic image attachments require a user message");
+      return {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: part.ref.media,
+          data: Buffer.from(attachmentBytes(part.ref, blobs)).toString("base64"),
+        },
+      };
+    }
+    return { type: "text", text: attachmentText(part.ref, blobs) };
+  });
+}
 export const anthropicMessagesV2: CompletionProfile = {
   id: "anthropic-messages@2",
-  capabilities: { thinking: { mode: "adaptive" }, stream: false },
-  encode(raw) {
+  capabilities: {
+    thinking: { mode: "adaptive" },
+    stream: false,
+    media: ["text/plain", "text/markdown", "image/png", "image/jpeg"],
+  },
+  encode(raw, blobs) {
     const request = parseRequest(raw, "anthropic-messages@2");
     validateThinking(request.thinking, this.capabilities.thinking);
     if (
@@ -40,7 +74,7 @@ export const anthropicMessagesV2: CompletionProfile = {
       (request.maxOutputTokens === undefined || request.maxOutputTokens <= 1024)
     )
       throw new Error("Adaptive thinking requires maxOutputTokens > 1024");
-    const split = systemAndMessages(request);
+    const split = systemAndMessages(request, blobs);
     const messages: { role: string; content: unknown[] }[] = [];
     for (const message of split.messages) {
       const role = message.role === "assistant" ? "assistant" : "user";
@@ -53,7 +87,7 @@ export const anthropicMessagesV2: CompletionProfile = {
                 request.continuations ?? [],
                 "anthropic-messages@2",
               ).flatMap((entry) => payloadSchema.parse(entry.payload).blocks),
-              ...(message.text ? [{ type: "text", text: message.text }] : []),
+              ...messageBlocks(message, blobs),
               ...(message.role === "assistant"
                 ? (message.calls ?? []).map((call) => ({
                     type: "tool_use",

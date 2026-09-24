@@ -1,0 +1,32 @@
+# Journal and blob persistence
+
+`SessionPersistence` has independent journal (`load`, `append`) and object-store (`putBlob`,
+`getBlob`) operations. Every operation takes an AbortSignal. Journal receipts and stable append-ID
+reconciliation retain their existing semantics. Blob operations do not advance journal revisions.
+
+Blobs are session-scoped and immutable. `BlobId` is the lowercase hex SHA-256 of raw bytes.
+`putBlob` accepts a Uint8Array and `{ media, name? }`, rejects more than 8 MiB before writing,
+and copies caller bytes before returning control. Identical bytes return the same ID and stored
+metadata on retry. The first optional name is retained; attempting to change the media type for
+already-stored bytes is rejected. Zero-byte blobs are valid. Metadata is immutable and get returns
+an independent byte buffer. A cancelled call rejects; an absent get returns `{ kind: "not_found" }`.
+
+Supported ref media types are text/plain, text/markdown, image/png, image/jpeg and application/pdf.
+The ref schema admitting a media type does not imply a profile can encode it. Current provider
+capabilities intentionally exclude PDF. Session preparation checks media and verifies stored size,
+media and hash against the ref before completion can start. Ref names are display labels, not paths.
+
+The environment puts bytes before admitting a user ref. Journal v5 stores refs and content parts,
+never the raw bytes. Replay validates refs structurally and does not read the object store. Idle
+restoration therefore succeeds without blob access; missing bytes fail the next preparation.
+
+Branch publication copies only blobs cited by inherited history/context, using get/put through the
+same port. Compaction copies the replacement-context subset. Copies finish before child creation
+is published; no parent objects are removed. Content-addressing makes copying retryable, but there
+is no atomic transaction spanning child blob writes and journal creation, nor garbage collection.
+
+`createMemoryBacking` shares journal streams and session blob maps across independent memory
+adapter instances. It has process-local lifetime only and provides no crash durability. The reusable
+`testing/persistence-contract.ts` suite checks hashing, scope, retries, absent IDs, cancellation,
+size limits and alias safety in addition to the existing append/load contract. Durable adapters
+must add storage-specific process-crash tests and preserve both methods' lifetime guarantees.

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { ToolCallSchema } from "../agent/types.ts";
-import { advertisements, completion, jsonArguments, responseBody } from "./shared.ts";
+import { advertisements, completion, jsonArguments, messageText, responseBody } from "./shared.ts";
 import { parseRequest, validateThinking, type CompletionProfile } from "./types.ts";
 
 const response = z.object({
@@ -34,8 +34,9 @@ export const openaiChat: CompletionProfile = {
   capabilities: {
     thinking: { mode: "effort", values: ["none", "low", "medium", "high"] },
     stream: false,
+    media: ["text/plain", "text/markdown"],
   },
-  encode(raw) {
+  encode(raw, blobs) {
     const request = parseRequest(raw, "openai-chat@1");
     validateThinking(request.thinking, this.capabilities.thinking);
     const tools = advertisements(request);
@@ -46,19 +47,20 @@ export const openaiChat: CompletionProfile = {
       body: {
         model: request.model,
         messages: request.messages.map((message) => {
+          const text = messageText(message, blobs);
           if (message.role === "tool")
-            return { role: "tool", content: message.text, tool_call_id: message.callId };
+            return { role: "tool", content: text, tool_call_id: message.callId };
           if (message.role === "assistant" && message.calls)
             return {
               role: "assistant",
-              content: message.text,
+              content: text,
               tool_calls: message.calls.map((call) => ({
                 id: call.id,
                 type: "function",
                 function: { name: call.name, arguments: JSON.stringify(call.args) },
               })),
             };
-          return { role: message.role, content: message.text };
+          return { role: message.role, content: text };
         }),
         ...(tools.length
           ? { tools: tools.map((tool) => ({ type: "function", function: tool })) }

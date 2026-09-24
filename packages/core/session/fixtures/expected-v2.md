@@ -478,3 +478,84 @@ Outcome: {"kind":"completed"}
 
 - user: {"role":"user","text":"Fresh context"}
 - assistant: {"role":"assistant","text":"Done","owner":{"turnId":"00000000-0000-4000-8000-000000000020/turn/1","generation":2}}
+
+---
+
+# markdown-attachment-restore-fork-compact: root
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"openai-chat@1","steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Review this","parts":[{"type":"text","text":"Review this"},{"type":"blob","ref":{"id":"b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833","media":"text/markdown","bytes":40,"name":"DESIGN.md"}}]}
+- assistant: {"role":"assistant","text":"Reviewed"}
+
+# markdown-attachment-restore-fork-compact: restored
+
+# Session 00000000-0000-4000-8000-000000000001
+
+Origin: {"kind":"root"}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"openai-chat@1","steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Review this","parts":[{"type":"text","text":"Review this"},{"type":"blob","ref":{"id":"b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833","media":"text/markdown","bytes":40,"name":"DESIGN.md"}}]}
+- assistant: {"role":"assistant","text":"Reviewed"}
+
+# markdown-attachment-restore-fork-compact: fork
+
+# Session 00000000-0000-4000-8000-000000000006
+
+Origin: {"kind":"fork","parent":"00000000-0000-4000-8000-000000000001","sequence":2}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"openai-chat@1","steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: []
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Review this","parts":[{"type":"text","text":"Review this"},{"type":"blob","ref":{"id":"b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833","media":"text/markdown","bytes":40,"name":"DESIGN.md"}}]}
+- assistant: {"role":"assistant","text":"Reviewed"}
+
+## Turn 2: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Review again"}
+- assistant: {"role":"assistant","text":"Fork review"}
+
+# markdown-attachment-restore-fork-compact: compact
+
+# Session 00000000-0000-4000-8000-000000000012
+
+Origin: {"kind":"compaction","parent":"00000000-0000-4000-8000-000000000001","sequence":2}
+System version: 0
+System inputs: []
+Policy: {"id":"default@1","version":0,"provider":"openai-chat@1","steps":4,"admission":"reject-during-tools","bargeIn":true,"toolFailure":"fail-turn","project":"history@1","handoff":"handoff-slim@1","tools":{"a":["echo"],"b":["echo"]}}
+Pending inputs: []
+Context: [{"role":"user","text":"","parts":[{"type":"blob","ref":{"id":"b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833","media":"text/markdown","bytes":40,"name":"DESIGN.md"}}]}]
+
+## Turn 1: completed (a)
+
+Outcome: {"kind":"completed"}
+
+- user: {"role":"user","text":"Review replacement context"}
+- assistant: {"role":"assistant","text":"Compact review"}

@@ -13015,5 +13015,1898 @@
         ]
       }
     }
+  },
+  {
+    "name": "markdown-attachment-restore-fork-compact",
+    "inputs": {
+      "format": 2,
+      "providerResponses": true,
+      "blobs": {
+        "design": {
+          "media": "text/markdown",
+          "name": "DESIGN.md",
+          "text": "# DESIGN\nPinned fixture review document."
+        }
+      },
+      "policy": {
+        "provider": "openai-chat@1"
+      },
+      "name": "markdown-attachment-restore-fork-compact",
+      "allowance": 4,
+      "completions": [
+        {
+          "choices": [
+            {
+              "message": {
+                "content": "Reviewed"
+              }
+            }
+          ]
+        },
+        {
+          "choices": [
+            {
+              "message": {
+                "content": "Fork review"
+              }
+            }
+          ]
+        },
+        {
+          "choices": [
+            {
+              "message": {
+                "content": "Compact review"
+              }
+            }
+          ]
+        }
+      ],
+      "steps": [
+        {
+          "op": "input",
+          "session": "root",
+          "text": "Review this",
+          "attachments": ["design"],
+          "wait": true
+        },
+        {
+          "op": "restore",
+          "session": "root",
+          "target": "restored",
+          "wait": true
+        },
+        {
+          "op": "fork",
+          "session": "root",
+          "target": "fork",
+          "wait": true
+        },
+        {
+          "op": "input",
+          "session": "fork",
+          "text": "Review again",
+          "wait": true
+        },
+        {
+          "op": "compact",
+          "session": "root",
+          "target": "compact",
+          "context": [
+            {
+              "role": "user",
+              "text": "",
+              "parts": [
+                {
+                  "type": "blob",
+                  "ref": {
+                    "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                    "media": "text/markdown",
+                    "bytes": 40,
+                    "name": "DESIGN.md"
+                  }
+                }
+              ]
+            }
+          ],
+          "wait": true
+        },
+        {
+          "op": "input",
+          "session": "compact",
+          "text": "Review replacement context",
+          "wait": true
+        }
+      ]
+    },
+    "requests": [
+      {
+        "model": "test-model",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Agent A"
+          },
+          {
+            "role": "user",
+            "content": "Review this\n# DESIGN\nPinned fixture review document."
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "echo",
+              "parameters": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["text"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "handoff_to",
+              "description": "Transfer the conversation to an allowed successor agent.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "type": "string",
+                    "enum": ["a", "b"]
+                  }
+                },
+                "required": ["agent"],
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "model": "test-model",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Agent A"
+          },
+          {
+            "role": "user",
+            "content": "Review this\n# DESIGN\nPinned fixture review document."
+          },
+          {
+            "role": "assistant",
+            "content": "Reviewed"
+          },
+          {
+            "role": "user",
+            "content": "Review again"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "echo",
+              "parameters": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["text"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "handoff_to",
+              "description": "Transfer the conversation to an allowed successor agent.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "type": "string",
+                    "enum": ["a", "b"]
+                  }
+                },
+                "required": ["agent"],
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "model": "test-model",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Agent A"
+          },
+          {
+            "role": "user",
+            "content": "# DESIGN\nPinned fixture review document."
+          },
+          {
+            "role": "user",
+            "content": "Review replacement context"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "echo",
+              "parameters": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["text"]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "handoff_to",
+              "description": "Transfer the conversation to an allowed successor agent.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "type": "string",
+                    "enum": ["a", "b"]
+                  }
+                },
+                "required": ["agent"],
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "results": [
+      {
+        "op": "input",
+        "session": "root",
+        "accepted": {
+          "kind": "accepted",
+          "receipt": {
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
+            "revision": 2
+          }
+        }
+      },
+      {
+        "session": "root",
+        "terminal": {
+          "kind": "terminal",
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "record": {
+            "agent": "a",
+            "messages": [
+              {
+                "role": "user",
+                "text": "Review this",
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "Review this"
+                  },
+                  {
+                    "type": "blob",
+                    "ref": {
+                      "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                      "media": "text/markdown",
+                      "bytes": 40,
+                      "name": "DESIGN.md"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "text": "Reviewed"
+              }
+            ],
+            "outcome": {
+              "kind": "completed"
+            }
+          }
+        }
+      },
+      {
+        "op": "input",
+        "session": "fork",
+        "accepted": {
+          "kind": "accepted",
+          "receipt": {
+            "sessionId": "00000000-0000-4000-8000-000000000006",
+            "appendId": "00000000-0000-4000-8000-000000000006/append/00000000-0000-4000-8000-000000000008",
+            "revision": 2
+          }
+        }
+      },
+      {
+        "session": "fork",
+        "terminal": {
+          "kind": "terminal",
+          "turnId": "00000000-0000-4000-8000-000000000006/turn/2",
+          "record": {
+            "agent": "a",
+            "messages": [
+              {
+                "role": "user",
+                "text": "Review again"
+              },
+              {
+                "role": "assistant",
+                "text": "Fork review"
+              }
+            ],
+            "outcome": {
+              "kind": "completed"
+            }
+          }
+        }
+      },
+      {
+        "op": "input",
+        "session": "compact",
+        "accepted": {
+          "kind": "accepted",
+          "receipt": {
+            "sessionId": "00000000-0000-4000-8000-000000000012",
+            "appendId": "00000000-0000-4000-8000-000000000012/append/00000000-0000-4000-8000-000000000014",
+            "revision": 2
+          }
+        }
+      },
+      {
+        "session": "compact",
+        "terminal": {
+          "kind": "terminal",
+          "turnId": "00000000-0000-4000-8000-000000000012/turn/1",
+          "record": {
+            "agent": "a",
+            "messages": [
+              {
+                "role": "user",
+                "text": "Review replacement context"
+              },
+              {
+                "role": "assistant",
+                "text": "Compact review"
+              }
+            ],
+            "outcome": {
+              "kind": "completed"
+            }
+          }
+        }
+      }
+    ],
+    "states": {
+      "root": {
+        "conversation": {
+          "status": "open",
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "origin": {
+            "kind": "root"
+          },
+          "context": [],
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/2",
+          "turn": {
+            "status": "idle",
+            "id": "00000000-0000-4000-8000-000000000001/turn/2",
+            "agent": "a",
+            "steps": 4
+          },
+          "log": [
+            {
+              "agent": "a",
+              "messages": [
+                {
+                  "role": "user",
+                  "text": "Review this",
+                  "parts": [
+                    {
+                      "type": "text",
+                      "text": "Review this"
+                    },
+                    {
+                      "type": "blob",
+                      "ref": {
+                        "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                        "media": "text/markdown",
+                        "bytes": 40,
+                        "name": "DESIGN.md"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "text": "Reviewed"
+                }
+              ],
+              "outcome": {
+                "kind": "completed"
+              }
+            }
+          ],
+          "allowance": 4,
+          "sequence": 2,
+          "pending": []
+        },
+        "configuration": {
+          "agents": [
+            [
+              "a",
+              {
+                "model": "test-model",
+                "systemPrompt": "Agent A",
+                "tools": ["echo"]
+              }
+            ],
+            [
+              "b",
+              {
+                "model": "test-model",
+                "systemPrompt": "Agent B",
+                "tools": ["echo"]
+              }
+            ]
+          ],
+          "tools": [
+            [
+              "echo",
+              {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["text"]
+              }
+            ]
+          ]
+        },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "provider": "openai-chat@1",
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
+        "systemInputs": [],
+        "systemVersion": 0,
+        "partial": [],
+        "revision": 7,
+        "records": [
+          {
+            "version": 3,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 1,
+            "entryId": "initialize/00000000-0000-4000-8000-000000000001/0",
+            "appendId": "initialize/00000000-0000-4000-8000-000000000001",
+            "body": {
+              "kind": "created",
+              "seed": {
+                "sessionId": "00000000-0000-4000-8000-000000000001",
+                "origin": {
+                  "kind": "root"
+                },
+                "context": [],
+                "log": [],
+                "agent": "a",
+                "allowance": 4,
+                "sequence": 1,
+                "systemInputs": [],
+                "systemVersion": 0,
+                "configuration": {
+                  "agents": [
+                    [
+                      "a",
+                      {
+                        "model": "test-model",
+                        "systemPrompt": "Agent A",
+                        "tools": ["echo"]
+                      }
+                    ],
+                    [
+                      "b",
+                      {
+                        "model": "test-model",
+                        "systemPrompt": "Agent B",
+                        "tools": ["echo"]
+                      }
+                    ]
+                  ],
+                  "tools": [
+                    [
+                      "echo",
+                      {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "type": "object",
+                        "properties": {
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["text"]
+                      }
+                    ]
+                  ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "provider": "openai-chat@1",
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 2,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "user",
+                "text": "Review this",
+                "attachments": [
+                  {
+                    "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                    "media": "text/markdown",
+                    "bytes": 40,
+                    "name": "DESIGN.md"
+                  }
+                ]
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 3,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                "event": {
+                  "type": "prepared",
+                  "child": {
+                    "kind": "prepare",
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/1"
+                  },
+                  "result": {
+                    "kind": "succeeded",
+                    "value": {
+                      "provider": "openai-chat@1",
+                      "successors": ["a", "b"],
+                      "model": "test-model",
+                      "messages": [
+                        {
+                          "role": "system",
+                          "content": "Agent A"
+                        },
+                        {
+                          "role": "user",
+                          "content": "Review this",
+                          "parts": [
+                            {
+                              "type": "text",
+                              "text": "Review this"
+                            },
+                            {
+                              "type": "blob",
+                              "ref": {
+                                "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                                "media": "text/markdown",
+                                "bytes": 40,
+                                "name": "DESIGN.md"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "tools": [
+                        {
+                          "type": "function",
+                          "function": {
+                            "name": "echo",
+                            "parameters": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "type": "object",
+                              "properties": {
+                                "text": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["text"]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 4,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                "event": {
+                  "type": "model_settled",
+                  "child": {
+                    "kind": "completion",
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/2"
+                  },
+                  "result": {
+                    "kind": "succeeded",
+                    "value": {
+                      "kind": "answer",
+                      "text": "Reviewed"
+                    }
+                  }
+                }
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 5,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "body": {
+              "kind": "terminal",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "record": {
+                "agent": "a",
+                "messages": [
+                  {
+                    "role": "user",
+                    "text": "Review this",
+                    "parts": [
+                      {
+                        "type": "text",
+                        "text": "Review this"
+                      },
+                      {
+                        "type": "blob",
+                        "ref": {
+                          "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                          "media": "text/markdown",
+                          "bytes": 40,
+                          "name": "DESIGN.md"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "role": "assistant",
+                    "text": "Reviewed"
+                  }
+                ],
+                "outcome": {
+                  "kind": "completed"
+                }
+              }
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 6,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "request",
+                "request": {
+                  "kind": "fork",
+                  "id": "00000000-0000-4000-8000-000000000005",
+                  "sessionId": "00000000-0000-4000-8000-000000000006"
+                }
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 7,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000013/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000013",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "request",
+                "request": {
+                  "kind": "compact",
+                  "id": "00000000-0000-4000-8000-000000000011",
+                  "sessionId": "00000000-0000-4000-8000-000000000012",
+                  "context": [
+                    {
+                      "role": "user",
+                      "text": "",
+                      "parts": [
+                        {
+                          "type": "blob",
+                          "ref": {
+                            "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                            "media": "text/markdown",
+                            "bytes": 40,
+                            "name": "DESIGN.md"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          }
+        ]
+      },
+      "restored": {
+        "conversation": {
+          "status": "open",
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "origin": {
+            "kind": "root"
+          },
+          "context": [],
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/2",
+          "turn": {
+            "status": "idle",
+            "id": "00000000-0000-4000-8000-000000000001/turn/2",
+            "agent": "a",
+            "steps": 4
+          },
+          "log": [
+            {
+              "agent": "a",
+              "messages": [
+                {
+                  "role": "user",
+                  "text": "Review this",
+                  "parts": [
+                    {
+                      "type": "text",
+                      "text": "Review this"
+                    },
+                    {
+                      "type": "blob",
+                      "ref": {
+                        "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                        "media": "text/markdown",
+                        "bytes": 40,
+                        "name": "DESIGN.md"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "text": "Reviewed"
+                }
+              ],
+              "outcome": {
+                "kind": "completed"
+              }
+            }
+          ],
+          "allowance": 4,
+          "sequence": 2,
+          "pending": []
+        },
+        "configuration": {
+          "agents": [
+            [
+              "a",
+              {
+                "model": "test-model",
+                "systemPrompt": "Agent A",
+                "tools": ["echo"]
+              }
+            ],
+            [
+              "b",
+              {
+                "model": "test-model",
+                "systemPrompt": "Agent B",
+                "tools": ["echo"]
+              }
+            ]
+          ],
+          "tools": [
+            [
+              "echo",
+              {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["text"]
+              }
+            ]
+          ]
+        },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "provider": "openai-chat@1",
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
+        "systemInputs": [],
+        "systemVersion": 0,
+        "partial": [],
+        "revision": 5,
+        "records": [
+          {
+            "version": 3,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 1,
+            "entryId": "initialize/00000000-0000-4000-8000-000000000001/0",
+            "appendId": "initialize/00000000-0000-4000-8000-000000000001",
+            "body": {
+              "kind": "created",
+              "seed": {
+                "sessionId": "00000000-0000-4000-8000-000000000001",
+                "origin": {
+                  "kind": "root"
+                },
+                "context": [],
+                "log": [],
+                "agent": "a",
+                "allowance": 4,
+                "sequence": 1,
+                "systemInputs": [],
+                "systemVersion": 0,
+                "configuration": {
+                  "agents": [
+                    [
+                      "a",
+                      {
+                        "model": "test-model",
+                        "systemPrompt": "Agent A",
+                        "tools": ["echo"]
+                      }
+                    ],
+                    [
+                      "b",
+                      {
+                        "model": "test-model",
+                        "systemPrompt": "Agent B",
+                        "tools": ["echo"]
+                      }
+                    ]
+                  ],
+                  "tools": [
+                    [
+                      "echo",
+                      {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "type": "object",
+                        "properties": {
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["text"]
+                      }
+                    ]
+                  ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "provider": "openai-chat@1",
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 2,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "user",
+                "text": "Review this",
+                "attachments": [
+                  {
+                    "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                    "media": "text/markdown",
+                    "bytes": 40,
+                    "name": "DESIGN.md"
+                  }
+                ]
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 3,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                "event": {
+                  "type": "prepared",
+                  "child": {
+                    "kind": "prepare",
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/1"
+                  },
+                  "result": {
+                    "kind": "succeeded",
+                    "value": {
+                      "provider": "openai-chat@1",
+                      "successors": ["a", "b"],
+                      "model": "test-model",
+                      "messages": [
+                        {
+                          "role": "system",
+                          "content": "Agent A"
+                        },
+                        {
+                          "role": "user",
+                          "content": "Review this",
+                          "parts": [
+                            {
+                              "type": "text",
+                              "text": "Review this"
+                            },
+                            {
+                              "type": "blob",
+                              "ref": {
+                                "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                                "media": "text/markdown",
+                                "bytes": 40,
+                                "name": "DESIGN.md"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "tools": [
+                        {
+                          "type": "function",
+                          "function": {
+                            "name": "echo",
+                            "parameters": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "type": "object",
+                              "properties": {
+                                "text": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["text"]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 4,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                "event": {
+                  "type": "model_settled",
+                  "child": {
+                    "kind": "completion",
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/2"
+                  },
+                  "result": {
+                    "kind": "succeeded",
+                    "value": {
+                      "kind": "answer",
+                      "text": "Reviewed"
+                    }
+                  }
+                }
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 5,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "body": {
+              "kind": "terminal",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "record": {
+                "agent": "a",
+                "messages": [
+                  {
+                    "role": "user",
+                    "text": "Review this",
+                    "parts": [
+                      {
+                        "type": "text",
+                        "text": "Review this"
+                      },
+                      {
+                        "type": "blob",
+                        "ref": {
+                          "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                          "media": "text/markdown",
+                          "bytes": 40,
+                          "name": "DESIGN.md"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "role": "assistant",
+                    "text": "Reviewed"
+                  }
+                ],
+                "outcome": {
+                  "kind": "completed"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "fork": {
+        "conversation": {
+          "status": "open",
+          "sessionId": "00000000-0000-4000-8000-000000000006",
+          "origin": {
+            "kind": "fork",
+            "parent": "00000000-0000-4000-8000-000000000001",
+            "sequence": 2
+          },
+          "context": [],
+          "turnId": "00000000-0000-4000-8000-000000000006/turn/3",
+          "turn": {
+            "status": "idle",
+            "id": "00000000-0000-4000-8000-000000000006/turn/3",
+            "agent": "a",
+            "steps": 4
+          },
+          "log": [
+            {
+              "agent": "a",
+              "messages": [
+                {
+                  "role": "user",
+                  "text": "Review this",
+                  "parts": [
+                    {
+                      "type": "text",
+                      "text": "Review this"
+                    },
+                    {
+                      "type": "blob",
+                      "ref": {
+                        "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                        "media": "text/markdown",
+                        "bytes": 40,
+                        "name": "DESIGN.md"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "text": "Reviewed"
+                }
+              ],
+              "outcome": {
+                "kind": "completed"
+              }
+            },
+            {
+              "agent": "a",
+              "messages": [
+                {
+                  "role": "user",
+                  "text": "Review again"
+                },
+                {
+                  "role": "assistant",
+                  "text": "Fork review"
+                }
+              ],
+              "outcome": {
+                "kind": "completed"
+              }
+            }
+          ],
+          "allowance": 4,
+          "sequence": 3,
+          "pending": []
+        },
+        "configuration": {
+          "agents": [
+            [
+              "a",
+              {
+                "model": "test-model",
+                "systemPrompt": "Agent A",
+                "tools": ["echo"]
+              }
+            ],
+            [
+              "b",
+              {
+                "model": "test-model",
+                "systemPrompt": "Agent B",
+                "tools": ["echo"]
+              }
+            ]
+          ],
+          "tools": [
+            [
+              "echo",
+              {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["text"]
+              }
+            ]
+          ]
+        },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "provider": "openai-chat@1",
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
+        "systemInputs": [],
+        "systemVersion": 0,
+        "partial": [],
+        "revision": 5,
+        "records": [
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000006",
+            "revision": 1,
+            "entryId": "initialize/00000000-0000-4000-8000-000000000006/0",
+            "appendId": "initialize/00000000-0000-4000-8000-000000000006",
+            "body": {
+              "kind": "created",
+              "seed": {
+                "sessionId": "00000000-0000-4000-8000-000000000006",
+                "origin": {
+                  "kind": "fork",
+                  "parent": "00000000-0000-4000-8000-000000000001",
+                  "sequence": 2
+                },
+                "context": [],
+                "log": [
+                  {
+                    "agent": "a",
+                    "messages": [
+                      {
+                        "role": "user",
+                        "text": "Review this",
+                        "parts": [
+                          {
+                            "type": "text",
+                            "text": "Review this"
+                          },
+                          {
+                            "type": "blob",
+                            "ref": {
+                              "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                              "media": "text/markdown",
+                              "bytes": 40,
+                              "name": "DESIGN.md"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "role": "assistant",
+                        "text": "Reviewed"
+                      }
+                    ],
+                    "outcome": {
+                      "kind": "completed"
+                    }
+                  }
+                ],
+                "agent": "a",
+                "allowance": 4,
+                "sequence": 2,
+                "systemInputs": [],
+                "systemVersion": 0,
+                "configuration": {
+                  "agents": [
+                    [
+                      "a",
+                      {
+                        "model": "test-model",
+                        "systemPrompt": "Agent A",
+                        "tools": ["echo"]
+                      }
+                    ],
+                    [
+                      "b",
+                      {
+                        "model": "test-model",
+                        "systemPrompt": "Agent B",
+                        "tools": ["echo"]
+                      }
+                    ]
+                  ],
+                  "tools": [
+                    [
+                      "echo",
+                      {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "type": "object",
+                        "properties": {
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["text"]
+                      }
+                    ]
+                  ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "provider": "openai-chat@1",
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000006",
+            "revision": 2,
+            "entryId": "00000000-0000-4000-8000-000000000006/append/00000000-0000-4000-8000-000000000008/0",
+            "appendId": "00000000-0000-4000-8000-000000000006/append/00000000-0000-4000-8000-000000000008",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "user",
+                "text": "Review again"
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000006",
+            "revision": 3,
+            "entryId": "00000000-0000-4000-8000-000000000006/append/00000000-0000-4000-8000-000000000009/0",
+            "appendId": "00000000-0000-4000-8000-000000000006/append/00000000-0000-4000-8000-000000000009",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000006/turn/2",
+                "event": {
+                  "type": "prepared",
+                  "child": {
+                    "kind": "prepare",
+                    "id": "00000000-0000-4000-8000-000000000006/turn/2/1"
+                  },
+                  "result": {
+                    "kind": "succeeded",
+                    "value": {
+                      "provider": "openai-chat@1",
+                      "successors": ["a", "b"],
+                      "model": "test-model",
+                      "messages": [
+                        {
+                          "role": "system",
+                          "content": "Agent A"
+                        },
+                        {
+                          "role": "user",
+                          "content": "Review this",
+                          "parts": [
+                            {
+                              "type": "text",
+                              "text": "Review this"
+                            },
+                            {
+                              "type": "blob",
+                              "ref": {
+                                "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                                "media": "text/markdown",
+                                "bytes": 40,
+                                "name": "DESIGN.md"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "role": "assistant",
+                          "content": "Reviewed"
+                        },
+                        {
+                          "role": "user",
+                          "content": "Review again"
+                        }
+                      ],
+                      "tools": [
+                        {
+                          "type": "function",
+                          "function": {
+                            "name": "echo",
+                            "parameters": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "type": "object",
+                              "properties": {
+                                "text": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["text"]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000006",
+            "revision": 4,
+            "entryId": "00000000-0000-4000-8000-000000000006/append/00000000-0000-4000-8000-000000000010/0",
+            "appendId": "00000000-0000-4000-8000-000000000006/append/00000000-0000-4000-8000-000000000010",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000006/turn/2",
+                "event": {
+                  "type": "model_settled",
+                  "child": {
+                    "kind": "completion",
+                    "id": "00000000-0000-4000-8000-000000000006/turn/2/2"
+                  },
+                  "result": {
+                    "kind": "succeeded",
+                    "value": {
+                      "kind": "answer",
+                      "text": "Fork review"
+                    }
+                  }
+                }
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000006",
+            "revision": 5,
+            "entryId": "00000000-0000-4000-8000-000000000006/append/00000000-0000-4000-8000-000000000010/1",
+            "appendId": "00000000-0000-4000-8000-000000000006/append/00000000-0000-4000-8000-000000000010",
+            "body": {
+              "kind": "terminal",
+              "turnId": "00000000-0000-4000-8000-000000000006/turn/2",
+              "record": {
+                "agent": "a",
+                "messages": [
+                  {
+                    "role": "user",
+                    "text": "Review again"
+                  },
+                  {
+                    "role": "assistant",
+                    "text": "Fork review"
+                  }
+                ],
+                "outcome": {
+                  "kind": "completed"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "compact": {
+        "conversation": {
+          "status": "open",
+          "sessionId": "00000000-0000-4000-8000-000000000012",
+          "origin": {
+            "kind": "compaction",
+            "parent": "00000000-0000-4000-8000-000000000001",
+            "sequence": 2
+          },
+          "context": [
+            {
+              "role": "user",
+              "text": "",
+              "parts": [
+                {
+                  "type": "blob",
+                  "ref": {
+                    "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                    "media": "text/markdown",
+                    "bytes": 40,
+                    "name": "DESIGN.md"
+                  }
+                }
+              ]
+            }
+          ],
+          "turnId": "00000000-0000-4000-8000-000000000012/turn/2",
+          "turn": {
+            "status": "idle",
+            "id": "00000000-0000-4000-8000-000000000012/turn/2",
+            "agent": "a",
+            "steps": 4
+          },
+          "log": [
+            {
+              "agent": "a",
+              "messages": [
+                {
+                  "role": "user",
+                  "text": "Review replacement context"
+                },
+                {
+                  "role": "assistant",
+                  "text": "Compact review"
+                }
+              ],
+              "outcome": {
+                "kind": "completed"
+              }
+            }
+          ],
+          "allowance": 4,
+          "sequence": 2,
+          "pending": []
+        },
+        "configuration": {
+          "agents": [
+            [
+              "a",
+              {
+                "model": "test-model",
+                "systemPrompt": "Agent A",
+                "tools": ["echo"]
+              }
+            ],
+            [
+              "b",
+              {
+                "model": "test-model",
+                "systemPrompt": "Agent B",
+                "tools": ["echo"]
+              }
+            ]
+          ],
+          "tools": [
+            [
+              "echo",
+              {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["text"]
+              }
+            ]
+          ]
+        },
+        "policy": {
+          "id": "default@1",
+          "version": 0,
+          "provider": "openai-chat@1",
+          "steps": 4,
+          "admission": "reject-during-tools",
+          "bargeIn": true,
+          "toolFailure": "fail-turn",
+          "project": "history@1",
+          "handoff": "handoff-slim@1",
+          "tools": {
+            "a": ["echo"],
+            "b": ["echo"]
+          }
+        },
+        "pendingInputs": [],
+        "systemInputs": [],
+        "systemVersion": 0,
+        "partial": [],
+        "revision": 5,
+        "records": [
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000012",
+            "revision": 1,
+            "entryId": "initialize/00000000-0000-4000-8000-000000000012/0",
+            "appendId": "initialize/00000000-0000-4000-8000-000000000012",
+            "body": {
+              "kind": "created",
+              "seed": {
+                "sessionId": "00000000-0000-4000-8000-000000000012",
+                "origin": {
+                  "kind": "compaction",
+                  "parent": "00000000-0000-4000-8000-000000000001",
+                  "sequence": 2
+                },
+                "context": [
+                  {
+                    "role": "user",
+                    "text": "",
+                    "parts": [
+                      {
+                        "type": "blob",
+                        "ref": {
+                          "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                          "media": "text/markdown",
+                          "bytes": 40,
+                          "name": "DESIGN.md"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "log": [],
+                "agent": "a",
+                "allowance": 4,
+                "sequence": 1,
+                "systemInputs": [],
+                "systemVersion": 0,
+                "configuration": {
+                  "agents": [
+                    [
+                      "a",
+                      {
+                        "model": "test-model",
+                        "systemPrompt": "Agent A",
+                        "tools": ["echo"]
+                      }
+                    ],
+                    [
+                      "b",
+                      {
+                        "model": "test-model",
+                        "systemPrompt": "Agent B",
+                        "tools": ["echo"]
+                      }
+                    ]
+                  ],
+                  "tools": [
+                    [
+                      "echo",
+                      {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "type": "object",
+                        "properties": {
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["text"]
+                      }
+                    ]
+                  ]
+                },
+                "policy": {
+                  "id": "default@1",
+                  "version": 0,
+                  "provider": "openai-chat@1",
+                  "steps": 4,
+                  "admission": "reject-during-tools",
+                  "bargeIn": true,
+                  "toolFailure": "fail-turn",
+                  "project": "history@1",
+                  "handoff": "handoff-slim@1",
+                  "tools": {
+                    "a": ["echo"],
+                    "b": ["echo"]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000012",
+            "revision": 2,
+            "entryId": "00000000-0000-4000-8000-000000000012/append/00000000-0000-4000-8000-000000000014/0",
+            "appendId": "00000000-0000-4000-8000-000000000012/append/00000000-0000-4000-8000-000000000014",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "user",
+                "text": "Review replacement context"
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000012",
+            "revision": 3,
+            "entryId": "00000000-0000-4000-8000-000000000012/append/00000000-0000-4000-8000-000000000015/0",
+            "appendId": "00000000-0000-4000-8000-000000000012/append/00000000-0000-4000-8000-000000000015",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000012/turn/1",
+                "event": {
+                  "type": "prepared",
+                  "child": {
+                    "kind": "prepare",
+                    "id": "00000000-0000-4000-8000-000000000012/turn/1/1"
+                  },
+                  "result": {
+                    "kind": "succeeded",
+                    "value": {
+                      "provider": "openai-chat@1",
+                      "successors": ["a", "b"],
+                      "model": "test-model",
+                      "messages": [
+                        {
+                          "role": "system",
+                          "content": "Agent A"
+                        },
+                        {
+                          "role": "user",
+                          "content": "",
+                          "parts": [
+                            {
+                              "type": "blob",
+                              "ref": {
+                                "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                                "media": "text/markdown",
+                                "bytes": 40,
+                                "name": "DESIGN.md"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "role": "user",
+                          "content": "Review replacement context"
+                        }
+                      ],
+                      "tools": [
+                        {
+                          "type": "function",
+                          "function": {
+                            "name": "echo",
+                            "parameters": {
+                              "$schema": "https://json-schema.org/draft/2020-12/schema",
+                              "type": "object",
+                              "properties": {
+                                "text": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["text"]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000012",
+            "revision": 4,
+            "entryId": "00000000-0000-4000-8000-000000000012/append/00000000-0000-4000-8000-000000000016/0",
+            "appendId": "00000000-0000-4000-8000-000000000012/append/00000000-0000-4000-8000-000000000016",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000012/turn/1",
+                "event": {
+                  "type": "model_settled",
+                  "child": {
+                    "kind": "completion",
+                    "id": "00000000-0000-4000-8000-000000000012/turn/1/2"
+                  },
+                  "result": {
+                    "kind": "succeeded",
+                    "value": {
+                      "kind": "answer",
+                      "text": "Compact review"
+                    }
+                  }
+                }
+              },
+              "systemVersion": 0,
+              "policyVersion": 0
+            }
+          },
+          {
+            "version": 5,
+            "sessionId": "00000000-0000-4000-8000-000000000012",
+            "revision": 5,
+            "entryId": "00000000-0000-4000-8000-000000000012/append/00000000-0000-4000-8000-000000000016/1",
+            "appendId": "00000000-0000-4000-8000-000000000012/append/00000000-0000-4000-8000-000000000016",
+            "body": {
+              "kind": "terminal",
+              "turnId": "00000000-0000-4000-8000-000000000012/turn/1",
+              "record": {
+                "agent": "a",
+                "messages": [
+                  {
+                    "role": "user",
+                    "text": "Review replacement context"
+                  },
+                  {
+                    "role": "assistant",
+                    "text": "Compact review"
+                  }
+                ],
+                "outcome": {
+                  "kind": "completed"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
   }
 ]

@@ -150,6 +150,8 @@ test("rejected policy append never starts dependent work or changes durable sele
   let reject = false;
   const persistence: SessionPersistence = {
     lifetime: backing.lifetime,
+    putBlob: backing.putBlob.bind(backing),
+    getBlob: backing.getBlob.bind(backing),
     load: backing.load.bind(backing),
     append: (request, signal) =>
       reject
@@ -341,6 +343,8 @@ test("lost policy acknowledgement reconciles the same v3 selection exactly once"
   let lost = false;
   const persistence: SessionPersistence = {
     lifetime: backing.lifetime,
+    putBlob: backing.putBlob.bind(backing),
+    getBlob: backing.getBlob.bind(backing),
     load: backing.load.bind(backing),
     async append(request, signal) {
       const result = await backing.append(request, signal);

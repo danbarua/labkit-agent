@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { BlobResolver, MediaKind } from "../agent/content.ts";
 import { CompletionOwnerSchema, MessagesSchema, ToolNameSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 
@@ -92,8 +93,12 @@ export type HttpRequest = Readonly<{
 export type HttpResponse = Readonly<{ status: number; headers: Headers; body: unknown }>;
 export type CompletionProfile = Readonly<{
   id: string;
-  capabilities: Readonly<{ thinking: ThinkingCapability; stream: false }>;
-  encode(request: CompletionRequest): HttpRequest;
+  capabilities: Readonly<{
+    thinking: ThinkingCapability;
+    stream: false;
+    media: readonly MediaKind[];
+  }>;
+  encode(request: CompletionRequest, blobs?: BlobResolver): HttpRequest;
   decode(response: HttpResponse): DecodedCompletion;
 }>;
 export function parseRequest(raw: unknown, profileId?: string): CompletionRequest {

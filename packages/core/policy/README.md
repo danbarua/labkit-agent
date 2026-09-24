@@ -41,3 +41,9 @@ an effort capability listing that value, and adaptive requires an adaptive capab
 capabilities have no enabled policy value yet. Unsupported settings fail closed during policy
 validation and again before transport fetch. Policy packs may supply the same thinking field.
 Provider switches must explicitly patch thinking to a supported value when necessary.
+
+Message projections preserve optional content parts alongside legacy text. Built-in history and
+context-only policies keep refs on retained messages; slim handoff keeps refs on the last user and
+assistant only. Capability checks and blob reads occur after projection. Projectors perform no I/O:
+text attachment inlining (up to 64 KiB) or named hash stubs are produced at encode time through an
+operation-local resolver. Custom projections should retain parts for attachments they intend to send.

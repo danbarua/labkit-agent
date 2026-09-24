@@ -1,7 +1,13 @@
 import { z } from "zod";
 
 import { ToolCallSchema } from "../agent/types.ts";
-import { advertisements, completion, responseBody, systemAndMessages } from "./shared.ts";
+import {
+  advertisements,
+  completion,
+  messageText,
+  responseBody,
+  systemAndMessages,
+} from "./shared.ts";
 import { parseRequest, validateThinking, type CompletionProfile } from "./types.ts";
 
 const part = z.union([
@@ -21,14 +27,19 @@ const part = z.union([
 ]);
 export const googleGenerate: CompletionProfile = {
   id: "google-generate@1",
-  capabilities: { thinking: { mode: "off" }, stream: false },
-  encode(raw) {
+  capabilities: {
+    thinking: { mode: "off" },
+    stream: false,
+    media: ["text/plain", "text/markdown"],
+  },
+  encode(raw, blobs) {
     const request = parseRequest(raw, "google-generate@1");
     validateThinking(request.thinking, this.capabilities.thinking);
-    const split = systemAndMessages(request);
+    const split = systemAndMessages(request, blobs);
     const contents: { role: string; parts: unknown[] }[] = [];
     const calls = new Map<string, string>();
     for (const message of split.messages) {
+      const text = messageText(message, blobs);
       const role = message.role === "assistant" ? "model" : "user";
       const parts: unknown[] = [];
       if (message.role === "tool")
@@ -36,11 +47,11 @@ export const googleGenerate: CompletionProfile = {
           functionResponse: {
             id: message.callId,
             name: calls.get(message.callId),
-            response: { output: message.text },
+            response: { output: text },
           },
         });
       else {
-        if (message.text) parts.push({ text: message.text });
+        if (text) parts.push({ text: text });
         if (message.role === "assistant")
           for (const call of message.calls ?? []) {
             calls.set(call.id, call.name);

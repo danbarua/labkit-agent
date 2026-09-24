@@ -191,6 +191,8 @@ test("rejected input append starts no external work; lost receipt dispatches exa
       },
       persistence: {
         lifetime: base.lifetime,
+        putBlob: base.putBlob.bind(base),
+        getBlob: base.getBlob.bind(base),
         load: base.load,
         append: (request, signal) =>
           request.expectedRevision > 0

@@ -52,6 +52,8 @@ export function lostAcknowledgement(
   let lost = false;
   return {
     lifetime: port.lifetime,
+    putBlob: port.putBlob.bind(port),
+    getBlob: port.getBlob.bind(port),
     load: port.load.bind(port),
     async append(request, signal) {
       const result = await port.append(request, signal);

@@ -312,3 +312,14 @@ same journal append (v4), then releases dependent work. Turn decisions do not in
 Session projection retains assistant owner metadata and attaches only matching provider envelopes.
 Replay validates the keyed set against projected owners. Fork seeds copy applicable envelopes;
 compaction drops them, and restore rebuilds them without calling a completion port.
+
+## Attachment refs and journal v5
+
+The environment stores immutable bytes through SessionPersistence.putBlob before dispatching user
+refs. Session reduction decorates user messages with text/blob parts without changing turn decisions.
+Queued input and branch seeds retain those parts. Projection is pure; prepare reads only projected
+refs and fails closed on missing or unsupported media. After the prepared append commits, the
+completion operation reloads bytes and supplies a BlobId-keyed resolver to the profile encoder.
+No bytes or resolver functions enter the journal or snapshots. Replay is structurally validating
+and I/O-free. Fork and compaction copy their cited subset before publishing the child.
+See [journal and blob persistence](session-persistence.md) for the storage contract.

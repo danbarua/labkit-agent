@@ -1,6 +1,9 @@
 import { z } from "zod";
 
+import type { BlobId, BlobMeta, MediaKind } from "../agent/content.ts";
 import { SessionIdSchema } from "../agent/types.ts";
+
+export * from "../agent/content.ts";
 
 export const RevisionSchema = z.number().int().nonnegative().brand<"JournalRevision">();
 export const AppendIdSchema = z.string().min(1).brand<"AppendId">();
@@ -65,6 +68,17 @@ export type AppendResult = z.infer<typeof AppendResultSchema>;
  */
 export interface SessionPersistence {
   readonly lifetime: string;
+  putBlob(
+    sessionId: z.infer<typeof SessionIdSchema>,
+    bytes: Uint8Array,
+    meta: { media: MediaKind; name?: string },
+    signal: AbortSignal,
+  ): Promise<BlobMeta>;
+  getBlob(
+    sessionId: z.infer<typeof SessionIdSchema>,
+    id: BlobId,
+    signal: AbortSignal,
+  ): Promise<{ meta: BlobMeta; bytes: Uint8Array } | { kind: "not_found" }>;
   load(sessionId: z.infer<typeof SessionIdSchema>, signal: AbortSignal): Promise<LoadResult>;
   append(request: AppendRequest, signal: AbortSignal): Promise<AppendResult>;
 }

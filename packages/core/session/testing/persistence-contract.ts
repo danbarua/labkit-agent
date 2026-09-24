@@ -3,7 +3,9 @@ import { describe, expect, test } from "@logtape/testing-bun/autoload";
 import { SessionIdSchema } from "../../agent/types.ts";
 import {
   AppendIdSchema,
+  BlobIdSchema,
   INITIAL_REVISION,
+  MAX_BLOB_BYTES,
   RevisionSchema,
   type AppendRequest,
   type SessionPersistence,
@@ -23,6 +25,76 @@ export function persistenceContract(
       appendId: AppendIdSchema.parse("one"),
       records: ['{"one":1}', '{"two":2}'],
       ...extra,
+    });
+    test("blob put/get is content-addressed, session-scoped, idempotent and alias-safe", async () => {
+      const { writer, reader } = factory();
+      const bytes = new TextEncoder().encode("abc");
+      const put = writer.putBlob(
+        sessionId,
+        bytes,
+        { media: "text/markdown", name: "DESIGN.md" },
+        signal(),
+      );
+      bytes.fill(0);
+      const meta = await put;
+      expect(String(meta.id)).toBe(
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      );
+      const original = new TextEncoder().encode("abc");
+      expect(
+        await writer.putBlob(
+          sessionId,
+          original,
+          { media: "text/markdown", name: "DESIGN.md" },
+          signal(),
+        ),
+      ).toEqual(meta);
+      const loaded = await reader().getBlob(sessionId, meta.id, signal());
+      if ("kind" in loaded) throw new Error("Missing blob");
+      expect(loaded.meta).toEqual(meta);
+      expect(loaded.bytes).toEqual(original);
+      loaded.bytes.fill(0);
+      expect(await reader().getBlob(sessionId, meta.id, signal())).toEqual({
+        meta,
+        bytes: original,
+      });
+      expect(
+        await reader().getBlob(
+          SessionIdSchema.parse("00000000-0000-4000-8000-000000000002"),
+          meta.id,
+          signal(),
+        ),
+      ).toEqual({ kind: "not_found" });
+      expect(
+        await reader().getBlob(sessionId, BlobIdSchema.parse("0".repeat(64)), signal()),
+      ).toEqual({ kind: "not_found" });
+      expect(await reader().load(sessionId, signal())).toEqual({ kind: "not_found" });
+    });
+    test("blob size and cancellation are checked before writing", async () => {
+      const { writer, reader } = factory();
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        writer.putBlob(sessionId, new Uint8Array([1]), { media: "image/png" }, controller.signal),
+      ).rejects.toThrow();
+      await expect(
+        reader().getBlob(sessionId, BlobIdSchema.parse("0".repeat(64)), controller.signal),
+      ).rejects.toThrow();
+      await expect(
+        writer.putBlob(
+          sessionId,
+          new Uint8Array(MAX_BLOB_BYTES + 1),
+          { media: "image/png" },
+          signal(),
+        ),
+      ).rejects.toThrow();
+      expect(
+        await reader().getBlob(
+          sessionId,
+          BlobIdSchema.parse("4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"),
+          signal(),
+        ),
+      ).toEqual({ kind: "not_found" });
     });
     test("creates absent streams, preserves order, and exposes atomic batches to independent readers", async () => {
       const { writer, reader } = factory();

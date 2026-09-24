@@ -218,6 +218,7 @@ export function projectPolicy(
         return {
           role: "assistant",
           text: message.content,
+          ...(message.parts ? { parts: message.parts } : {}),
           calls: message.tool_calls.map((call) => {
             let args: unknown;
             try {
@@ -228,7 +229,11 @@ export function projectPolicy(
             return { id: call.id, name: call.function.name, args };
           }),
         };
-      return { role: message.role, text: message.content };
+      return {
+        role: message.role,
+        text: message.content,
+        ...(message.parts ? { parts: message.parts } : {}),
+      };
     }),
   );
   return freeze(messages);

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { ToolCallSchema } from "../agent/types.ts";
-import { advertisements, completion, jsonArguments, responseBody } from "./shared.ts";
+import { advertisements, completion, jsonArguments, messageText, responseBody } from "./shared.ts";
 import { parseRequest, validateThinking, type CompletionProfile } from "./types.ts";
 
 const output = z.discriminatedUnion("type", [
@@ -21,17 +21,22 @@ const output = z.discriminatedUnion("type", [
 ]);
 export const openaiResponses: CompletionProfile = {
   id: "openai-responses@1",
-  capabilities: { thinking: { mode: "effort", values: ["none"] }, stream: false },
-  encode(raw) {
+  capabilities: {
+    thinking: { mode: "effort", values: ["none"] },
+    stream: false,
+    media: ["text/plain", "text/markdown"],
+  },
+  encode(raw, blobs) {
     const request = parseRequest(raw, "openai-responses@1");
     validateThinking(request.thinking, this.capabilities.thinking);
     const input: unknown[] = [];
     for (const message of request.messages) {
+      const text = messageText(message, blobs);
       if (message.role === "tool")
-        input.push({ type: "function_call_output", call_id: message.callId, output: message.text });
+        input.push({ type: "function_call_output", call_id: message.callId, output: text });
       else {
-        if (message.text || message.role !== "assistant" || !message.calls?.length)
-          input.push({ role: message.role, content: message.text });
+        if (text || message.role !== "assistant" || !message.calls?.length)
+          input.push({ role: message.role, content: text });
         if (message.role === "assistant")
           for (const call of message.calls ?? [])
             input.push({

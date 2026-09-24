@@ -188,6 +188,8 @@ test("indeterminate envelope append reconciles stable bytes before releasing too
   let lost = false;
   const persistence: SessionPersistence = {
     lifetime: backing.lifetime,
+    putBlob: backing.putBlob.bind(backing),
+    getBlob: backing.getBlob.bind(backing),
     load: backing.load.bind(backing),
     async append(request, signal) {
       const result = await backing.append(request, signal);

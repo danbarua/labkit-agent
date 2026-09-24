@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { CompletionSchema, type ToolCall } from "../agent/types.ts";
+import { hashBlob, type BlobRef, type BlobResolver } from "../agent/content.ts";
+import { CompletionSchema, type AgentMessage, type ToolCall } from "../agent/types.ts";
 import { CompletionRequestSchema, type CompletionRequest, type HttpResponse } from "./types.ts";
 
 export const HANDOFF_TOOL = "handoff_to";
@@ -51,11 +52,39 @@ export function responseBody(response: HttpResponse): unknown {
     throw new Error(`Completion HTTP failure (${response.status})`);
   return response.body;
 }
-export function systemAndMessages(request: CompletionRequest) {
+export function systemAndMessages(request: CompletionRequest, blobs?: BlobResolver) {
   return {
     system: request.messages
       .filter((message) => message.role === "system")
-      .map((message) => message.text),
+      .map((message) => messageText(message, blobs)),
     messages: request.messages.filter((message) => message.role !== "system"),
   };
+}
+
+/** Deterministic text projection; refs remain on the canonical request. */
+export function attachmentText(ref: BlobRef, blobs?: BlobResolver): string {
+  if (ref.media !== "text/plain" && ref.media !== "text/markdown")
+    throw new Error(`Cannot inline attachment media as text: ${ref.media}`);
+  const bytes = attachmentBytes(ref, blobs);
+  return bytes.byteLength <= 65536
+    ? new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+    : `[attached: ${ref.name ?? ref.media} sha256:${ref.id}]`;
+}
+export function attachmentBytes(ref: BlobRef, blobs?: BlobResolver): Uint8Array {
+  if (!blobs) throw new Error(`Missing blob resolver: ${ref.id}`);
+  const bytes = blobs(ref.id);
+  if (bytes.byteLength !== ref.bytes || hashBlob(bytes) !== ref.id)
+    throw new Error(`Attachment bytes do not match ref: ${ref.id}`);
+  return bytes;
+}
+export function messageText(message: AgentMessage, blobs?: BlobResolver): string {
+  if (message.role === "tool" || !message.parts) return message.text;
+  const segments: string[] = [];
+  let previousWasText = false;
+  for (const part of message.parts) {
+    if (part.type === "text" && previousWasText) segments[segments.length - 1] += part.text;
+    else segments.push(part.type === "text" ? part.text : attachmentText(part.ref, blobs));
+    previousWasText = part.type === "text";
+  }
+  return segments.join("\n");
 }

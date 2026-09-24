@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { PreparedModel } from "../agent/agent.ts";
+import { blobRefs, type BlobResolver } from "../agent/content.ts";
 import { CompletionSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import { HANDOFF_TOOL } from "./shared.ts";
@@ -76,6 +77,7 @@ export function canonicalRequest(prepared: PreparedModel) {
         return {
           role: "assistant",
           text: message.content,
+          ...(message.parts ? { parts: message.parts } : {}),
           ...(message.owner ? { owner: message.owner } : {}),
           calls: message.tool_calls.map((call) => ({
             id: call.id,
@@ -86,6 +88,7 @@ export function canonicalRequest(prepared: PreparedModel) {
       return {
         role: message.role,
         text: message.content,
+        ...(message.parts ? { parts: message.parts } : {}),
         ...(message.role === "assistant" && message.owner ? { owner: message.owner } : {}),
       };
     }),
@@ -121,13 +124,18 @@ export function bindProviders(bindings: ProviderBindings) {
   );
   return Object.freeze({
     ids: Object.freeze([...bound.keys()]),
+    media: new Map([...bound].map(([id, binding]) => [id, binding.profile.capabilities.media])),
     capabilities: new Map(
       [...bound].map(([id, binding]) => [
         id,
         freeze(structuredClone(binding.profile.capabilities.thinking)),
       ]),
     ),
-    complete: async (request: PreparedModel, signal: AbortSignal): Promise<DecodedCompletion> => {
+    complete: async (
+      request: PreparedModel,
+      signal: AbortSignal,
+      blobs?: BlobResolver,
+    ): Promise<DecodedCompletion> => {
       if (!request.provider) throw new Error("Prepared request has no provider");
       ProviderSettingsSchema.parse({
         provider: request.provider,
@@ -139,7 +147,10 @@ export function bindProviders(bindings: ProviderBindings) {
       if (!binding) throw new Error("Missing versioned provider binding");
       validateThinking(request.thinking, binding.profile.capabilities.thinking);
       const input = canonicalRequest(request);
-      const response = await binding.http(binding.profile.encode(input), signal);
+      for (const ref of blobRefs(input.messages))
+        if (!binding.profile.capabilities.media.includes(ref.media))
+          throw new Error(`Provider does not support attachment media: ${ref.media}`);
+      const response = await binding.http(binding.profile.encode(input, blobs), signal);
       const decoded = binding.profile.decode(response);
       const result = CompletionSchema.parse(decoded.completion);
       if (result.kind === "handoff" && !input.successors.includes(result.agent))

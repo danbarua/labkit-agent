@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { ChatMessageSchema, ChatToolSchema } from "../agent/agent.ts";
+import { BlobRefSchema } from "../agent/content.ts";
 import { parseSessionContext } from "../agent/prompt.ts";
 import { ToolResultSchema } from "../agent/tool-batch.ts";
 import {
@@ -106,7 +107,11 @@ const BatchOutcomeSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("cancelled"), results: z.array(ToolResultSchema).readonly() }),
 ]);
 export const WireEventSchema = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("user"), text: z.string() }),
+  z.strictObject({
+    type: z.literal("user"),
+    text: z.string(),
+    attachments: z.array(BlobRefSchema).min(1).readonly().optional(),
+  }),
   z.strictObject({ type: z.literal("abort") }),
   z.strictObject({
     type: z.literal("request"),
@@ -166,6 +171,7 @@ export const BodySchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("policy"), patch: PolicyPatchSchema, policy: PolicySchema }),
   z.strictObject({
     kind: z.literal("queued"),
+    attachments: z.array(BlobRefSchema).min(1).readonly().optional(),
     inputId: ActorIdSchema,
     text: z.string(),
     policyVersion: PolicyVersionSchema,
@@ -202,9 +208,29 @@ export const BodySchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("recovery"), turnId: ActorIdSchema, reason: z.string().min(1) }),
 ]);
 export type JournalBody = z.infer<typeof BodySchema>;
+export function bodyHasBlobs(body: JournalBody): boolean {
+  const messages = (items: readonly { role: string; parts?: readonly { type: string }[] }[]) =>
+    items.some((message) => message.parts?.some((part) => part.type === "blob"));
+  if (body.kind === "created")
+    return messages(body.seed.context) || body.seed.log.some((record) => messages(record.messages));
+  if (body.kind === "queued") return body.attachments !== undefined;
+  if (body.kind === "terminal") return messages(body.record.messages);
+  if (body.kind !== "event") return false;
+  const event = body.event;
+  if (event.type === "user") return event.attachments !== undefined;
+  if (event.type === "request")
+    return event.request.kind === "compact" && messages(event.request.context);
+  if (event.type !== "child") return false;
+  const child = event.event;
+  if (child.type === "prepared" && child.result.kind === "succeeded")
+    return messages(child.result.value.messages);
+  if (child.type === "handoff_prepared" && child.result.kind === "succeeded")
+    return messages(child.result.value);
+  return false;
+}
 export const JournalRecordSchema = z
   .strictObject({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
     sessionId: SessionIdSchema,
     revision: RevisionSchema,
     entryId: z.string().min(1),
@@ -213,6 +239,7 @@ export const JournalRecordSchema = z
   })
   .refine((record) => {
     const body = record.body;
+    if (record.version < 5 && bodyHasBlobs(body)) return false;
     const policy =
       body.kind === "created"
         ? body.seed.policy

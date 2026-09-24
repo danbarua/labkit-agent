@@ -59,7 +59,7 @@ finish that append after the runtime closes, so reopen through `restoreSession` 
 
 ## Persistence contract
 
-Implement `SessionPersistence` in `persistence.ts` and inject it. Its two operations accept an
+Implement `SessionPersistence` in `persistence.ts` and inject it. Its journal and blob operations accept an
 `AbortSignal`. Loads return a consistent committed stream and revision, not mutable domain objects.
 Appends accept serialized record strings, an expected revision, a session ID, and a stable append ID.
 
@@ -208,3 +208,39 @@ Restore reconstructs this state without executing completions. Fork seeds retain
 copied assistant messages; compaction seeds drop envelopes. Switching providers preserves stored
 envelopes but removes them from the next request to another provider. Indeterminate appends use
 the existing stable append-ID reconciliation, including the envelope bytes.
+
+## Attachments and journal v5
+
+Store bytes before submitting refs. `input` accepts a string or `{ text?, attachments? }`;
+`dispatch({ type: "user", text?, attachments? })` uses the same validation. Supply nonempty text
+or at least one attachment. A ref contains SHA-256 ID, media type, byte count, and optional name.
+
+```ts
+const sessionId = session.snapshot.durable.conversation.sessionId;
+const ref = await persistence.putBlob(
+  sessionId,
+  new TextEncoder().encode("# DESIGN\nPinned review document"),
+  { media: "text/markdown", name: "DESIGN.md" },
+  new AbortController().signal,
+);
+await session.input({ text: "Review this design", attachments: [ref] }).settled;
+```
+
+The session journals refs as user content parts, including queued/barge-in input. `text` remains
+the concatenation of explicit text parts; the document bytes are never added to journal records.
+Blob-bearing events, prepared prompts, seeds and terminal messages require v5. Streams remain at
+v5 after upgrading. A legacy v1 stream first commits its existing v2 policy upgrade at an idle
+boundary before admitting attachments; an active legacy turn must settle before this upgrade.
+Text-only v1–v4 records and fixtures retain their bytes.
+
+After projection, prepare checks the bound profile's media capabilities and reads/verifies only
+cited refs. Missing bytes or unsupported media fail preparation without HTTP. Completion reloads
+bytes under its own cancellation signal after the prepared append commits; the resolver is an
+operation-local resource, not a snapshot field. Idle restore and journal replay never call getBlob.
+
+Fork publication copies referenced blobs into the child's session scope before its creation is
+published. Compaction copies only refs in its replacement context, so those bytes exist in the
+child before it can prepare. Replacement refs must be available in the parent for this copy.
+Unreferenced blobs are not copied; parent blobs are never deleted. Copy/creation is not a
+cross-session transaction: failed publication may leave unreferenced child blobs, and retrying
+copies is idempotent. See [persistence details](../../../docs/session-persistence.md).

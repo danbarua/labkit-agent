@@ -23,3 +23,10 @@ Tool outputs are JSON-only: null, booleans, finite numbers, strings, arrays and 
 Return null instead of undefined, and explicitly convert dates or class instances to JSON data.
 The host reports output validation failures through the same correlated tool-outcome path as
 execution errors. Error-continuation policy can project that failure into a model tool message.
+
+Attachment I/O is supplied through the execution context's `loadBlobs` binding. Preparation calls
+it to validate projected refs. Completion calls it again after the prepared journal receipt and
+passes the resulting BlobId-keyed resolver as the optional third argument to `CompletionPort`.
+Each call receives its operation's AbortSignal. Bytes and resolver functions never enter prepared
+snapshots, child outcomes, or journal events. The session binding owns persistence and media checks;
+the host continues to own operation lifetime and cancellation.

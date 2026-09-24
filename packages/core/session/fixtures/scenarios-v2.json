@@ -274,5 +274,95 @@
         "text": "Switch provider"
       }
     ]
+  },
+  {
+    "format": 2,
+    "name": "markdown-attachment-restore-fork-compact",
+    "providerResponses": true,
+    "policy": {
+      "provider": "openai-chat@1"
+    },
+    "blobs": {
+      "design": {
+        "media": "text/markdown",
+        "name": "DESIGN.md",
+        "text": "# DESIGN\nPinned fixture review document."
+      }
+    },
+    "completions": [
+      {
+        "choices": [
+          {
+            "message": {
+              "content": "Reviewed"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "message": {
+              "content": "Fork review"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "message": {
+              "content": "Compact review"
+            }
+          }
+        ]
+      }
+    ],
+    "steps": [
+      {
+        "op": "input",
+        "text": "Review this",
+        "attachments": ["design"]
+      },
+      {
+        "op": "restore",
+        "target": "restored"
+      },
+      {
+        "op": "fork",
+        "target": "fork"
+      },
+      {
+        "op": "input",
+        "session": "fork",
+        "text": "Review again"
+      },
+      {
+        "op": "compact",
+        "target": "compact",
+        "context": [
+          {
+            "role": "user",
+            "text": "",
+            "parts": [
+              {
+                "type": "blob",
+                "ref": {
+                  "id": "b13b3392f0140b08d909e5d982bafba3bf4a188ae3ecd4db2d4116300126c833",
+                  "media": "text/markdown",
+                  "bytes": 40,
+                  "name": "DESIGN.md"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "op": "input",
+        "session": "compact",
+        "text": "Review replacement context"
+      }
+    ]
   }
 ]

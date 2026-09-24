@@ -1,8 +1,9 @@
 import { format } from "prettier";
 import { z } from "zod";
 
+import { BlobInputMetaSchema, type BlobRef } from "../agent/content.ts";
 import { PolicyPatchSchema } from "../policy/policy.ts";
-import { anthropicMessagesV2, googleGenerate } from "../providers/index.ts";
+import { anthropicMessagesV2, googleGenerate, openaiChat } from "../providers/index.ts";
 import { journalJSONL, journalMarkdown } from "./session-log.ts";
 import type { LegacySessionOptions, SessionOptions } from "./session-runtime.ts";
 import {
@@ -42,6 +43,7 @@ const StepSchema = z.object({
   session: z.string().default("root"),
   target: z.string().optional(),
   text: z.string().optional(),
+  attachments: z.array(z.string()).optional(),
   inputs: z.array(z.string()).optional(),
   context: z.unknown().optional(),
   patch: PolicyPatchSchema.optional(),
@@ -54,6 +56,7 @@ const StepSchema = z.object({
 const ScenarioSchema = z.object({
   format: z.literal(2).optional(),
   providerResponses: z.literal(true).optional(),
+  blobs: z.record(z.string(), BlobInputMetaSchema.extend({ text: z.string() })).optional(),
   policy: PolicyPatchSchema.optional(),
   name: z.string().regex(/^[a-z0-9-]+$/),
   allowance: z.number().int().nonnegative().default(4),
@@ -155,7 +158,7 @@ async function runScenario(scenario: Scenario, directory: string) {
             ...(scenario.providerResponses
               ? {
                   providers: new Map(
-                    [anthropicMessagesV2, googleGenerate].map((profile) => [
+                    [anthropicMessagesV2, googleGenerate, openaiChat].map((profile) => [
                       profile.id,
                       {
                         profile,
@@ -188,12 +191,36 @@ async function runScenario(scenario: Scenario, directory: string) {
   let error: string | undefined;
   try {
     sessions.set("root", await createSession(bind(options)));
+    const attachments = new Map<string, BlobRef>();
+    for (const [name, blob] of Object.entries(scenario.blobs ?? {})) {
+      const { text, ...meta } = blob;
+      attachments.set(
+        name,
+        await port.putBlob(
+          sessions.get("root")!.snapshot.durable.conversation.sessionId,
+          new TextEncoder().encode(text),
+          meta,
+          new AbortController().signal,
+        ),
+      );
+    }
     for (const step of scenario.steps) {
       const session = sessions.get(step.session);
       if (!session && step.op !== "join") throw new Error(`Unknown session ${step.session}`);
       switch (step.op) {
         case "input": {
-          const turn = session!.input(step.text ?? "");
+          const turn = session!.input(
+            step.attachments
+              ? {
+                  text: step.text ?? "",
+                  attachments: step.attachments.map((name) => {
+                    const ref = attachments.get(name);
+                    if (!ref) throw new Error(`Unknown fixture attachment ${name}`);
+                    return ref;
+                  }),
+                }
+              : (step.text ?? ""),
+          );
           active.set(step.session, turn.settled);
           results.push({ op: step.op, session: step.session, accepted: await turn.accepted });
           if (step.wait) results.push({ session: step.session, terminal: await turn.settled });

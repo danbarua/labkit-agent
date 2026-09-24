@@ -3,6 +3,7 @@ import { z } from "zod";
 import { openaiChat } from "../providers/openai-chat.ts";
 import { canonicalRequest, httpTransport } from "../providers/transport.ts";
 import { ContinuationSchema, ProviderSettingsSchema } from "../providers/types.ts";
+import { ContentPartsSchema, partsText } from "./content.ts";
 import { CompletionOwnerSchema, CompletionSchema, type Completion } from "./types.ts";
 
 const ChatToolCallSchema = z
@@ -15,12 +16,21 @@ const ChatToolCallSchema = z
 
 export const ChatMessageSchema = z
   .discriminatedUnion("role", [
-    z.strictObject({ role: z.literal("system"), content: z.string() }),
-    z.strictObject({ role: z.literal("user"), content: z.string() }),
+    z.strictObject({
+      role: z.literal("system"),
+      content: z.string(),
+      parts: ContentPartsSchema.optional(),
+    }),
+    z.strictObject({
+      role: z.literal("user"),
+      content: z.string(),
+      parts: ContentPartsSchema.optional(),
+    }),
     z.strictObject({
       role: z.literal("assistant"),
       content: z.string(),
       owner: CompletionOwnerSchema.optional(),
+      parts: ContentPartsSchema.optional(),
       tool_calls: z.array(ChatToolCallSchema).min(1).readonly().optional(),
     }),
     z.strictObject({
@@ -29,6 +39,11 @@ export const ChatMessageSchema = z
       tool_call_id: z.string().min(1),
     }),
   ])
+  .refine(
+    (message) =>
+      message.role === "tool" || !message.parts || message.content === partsText(message.parts),
+    "Message content must equal its text parts",
+  )
   .readonly();
 
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;

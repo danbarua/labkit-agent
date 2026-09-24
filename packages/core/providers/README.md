@@ -115,8 +115,8 @@ permission to hand off to any registered agent, including when upgrading an old 
 Successors are registry capabilities; changing them requires a compatible new session,
 not mutating an existing registry.
 
-Provider-aware sessions start at v3, or v4 for non-off thinking or continuations, and remain
-at v4 once upgraded. Existing v1/v2 streams retain their original bytes. A first provider
+Provider-aware sessions start at v3, use v4 for non-off thinking or continuations, and
+upgrade to v5 for blob refs. A stream never downgrades its journal version. Existing v1/v2 streams retain their original bytes. A first provider
 policy patch appends the explicit v3/v4 policy boundary; a v1 stream
 first includes its existing v2 policy upgrade in the same atomic append. Prepared events
 capture effective model, provider/settings, successors, and policy version. Replay checks
@@ -184,3 +184,24 @@ Wire references checked during implementation:
 - [Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create)
 - [Google GenerateContent](https://ai.google.dev/api/generate-content)
 - [Google thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)
+
+## Attachment media and operation-local bytes
+
+Every profile declares `capabilities.media`. All built-ins accept `text/plain` and `text/markdown`.
+Anthropic `@2` additionally accepts user-message PNG/JPEG refs and emits base64 image blocks.
+Images on other profiles, PDFs on every profile, and tool-result blob parts are unsupported.
+
+Domain and prepared messages contain optional text/blob parts. When parts are present, their text
+parts concatenate to the legacy text field. Default history and slim handoff projections retain
+parts on the messages they keep. The canonical request keeps refs even when encoding text inline.
+`encode(request, blobs?)` receives a synchronous BlobId-keyed resolver supplied by the host's
+completion operation; neither profiles nor projection policies read persistence themselves.
+
+Text blobs of at most 65,536 bytes are decoded as UTF-8 and inlined. Larger text uses
+`[attached: NAME sha256:FULL_HASH]`; the ref remains on the request. No summarization, filesystem
+path reads, model calls, or implicit PDF conversion occur. Invalid UTF-8 or mismatched bytes fail
+encoding before HTTP. Existing text-only encode vectors remain unchanged.
+
+Preparation checks media and existence after projection; completion reloads immutable bytes after
+the prepared record commits. Canonical requests and all journal records store refs only. Blob
+storage is session-scoped, content-addressed and owned by the persistence adapter.
