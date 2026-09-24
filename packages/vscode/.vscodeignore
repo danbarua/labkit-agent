@@ -1,0 +1,7 @@
+src/**
+node_modules/**
+**/*.test.ts
+**/*.map
+bun.lock
+.vscodeignore
+**/*.vsix

@@ -1,5 +1,12 @@
 # Launch Labkit in VS Code through ACP
 
+The repository-owned client is in [`packages/vscode`](../packages/vscode/README.md).
+Run `bun run package:vscode` from the root to build its VSIX. Its tool-content and usage
+rendering has executable DOM tests, but native editor integration is still unverified.
+Use an isolated development profile and disable the upstream ACP Client there because
+the command and view identifiers overlap. The existing installed extension is not changed
+by building this package.
+
 Install [ACP Client by formulahendry](https://marketplace.visualstudio.com/items?itemName=formulahendry.acp-client)
 and run `bun install` in the Labkit checkout. This uses ACP stdio, not VS Code Agent Host/AHP.
 Run `bun run debug:acp` from the checkout root to verify the built stdio integration without an

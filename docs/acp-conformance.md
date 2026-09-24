@@ -10,9 +10,11 @@ The current protocol target is [ACP v1](https://agentclientprotocol.com/protocol
 Protocol drafts and separately negotiated extensions need explicit tracking; they are not silently
 counted as either implemented or irrelevant to the requested complete integration.
 
-The repository provides the agent side in `packages/acp`. VS Code's installed ACP client is an
-external component. Completion requires evidence from the complete editor/agent path, not merely
-a claim that the agent sends valid JSON. No repository-owned VS Code extension has been verified.
+The repository provides the agent in `packages/acp` and a tracked client fork in
+[`packages/vscode`](../packages/vscode/README.md). The installed upstream client ignores tool
+content and usage updates; the fork has executable webview tests for these paths. Those DOM tests
+do not establish native editor integration. Completion still requires evidence from the complete
+editor/agent path. The native UI inspection tool could not start during this audit.
 
 ## Evidence and remaining work
 
@@ -28,7 +30,7 @@ current schema and editor verification before it can support a full-conformance 
 | Prompt lifecycle                | Receipt-gated execution, cancellation, tool-error continuation, typed provider stops, public settlements.                        | Audit all terminal mappings, interruption states, and user-visible explanations; scripted recovery does not establish autonomous task success.                                                                                                                             |
 | Content                         | `prompt-input.ts`: text, images, resources and resource links; blob admission tests.                                             | Google audio input has exact-wire and reload tests. Verify editor playback and review all content variants, annotations and capability combinations.                                                                                                                       |
 | Tool calls and permissions      | Pending/progress/final cards, locations, tool names, terminal links; live-session grants; validation failures returned to model. | Named renderers and MCP text/resource display have live/reload wire tests. Workspace write baselines have local and editor RPC/reload tests. Verify actual editor rich content/diffs, support MCP binary results at the model boundary, and audit every permission option. |
-| Client filesystem               | `client-files.ts`, workspace tools and ACP RPC tests.                                                                            | Line-range reads now have local and client RPC tests; verify actual editor unsaved-buffer behavior; actual tool descriptions and recovery paths must match available operations.                                                                                           |
+| Client filesystem               | `client-files.ts`, workspace tools and ACP RPC tests.                                                                            | Line-range reads now have local and client RPC tests; the imported client still writes to disk without updating a dirty editor buffer; fix and verify editor save behavior; actual tool descriptions and recovery paths must match available operations.                   |
 | Client terminals                | `client-terminal.ts` and create/output/wait/kill/release tests.                                                                  | Verify actual editor terminal display, exit/truncation status and cleanup under cancellation.                                                                                                                                                                              |
 | Plans                           | `plan.ts` and adapter update tests.                                                                                              | Verify full plan replacement and display in the editor.                                                                                                                                                                                                                    |
 | Configuration and modes         | Committed policy changes, grouped selectors, boolean controls, first-mode alias.                                                 | Cross-provider switching is missing in the workspace launcher. Model capabilities must describe the selected deployment rather than an adapter guess.                                                                                                                      |
