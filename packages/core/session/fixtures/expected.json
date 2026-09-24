@@ -10940,14 +10940,68 @@
         "session": "root",
         "accepted": {
           "kind": "failed",
-          "message": "Scripted rejected append"
+          "message": "Scripted rejected append",
+          "error": {
+            "message": "Scripted rejected append",
+            "classification": "persistence",
+            "operation": {
+              "id": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
+              "kind": "append",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+            },
+            "phase": "append",
+            "details": {
+              "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
+              "expectedRevision": 1,
+              "attempts": 1,
+              "precedingFailure": null,
+              "observed": {
+                "outcome": "rejected"
+              },
+              "originalDetails": {
+                "outcome": "rejected",
+                "expectedRevision": 1
+              }
+            },
+            "cause": {
+              "message": "Scripted rejected append"
+            }
+          }
         }
       },
       {
         "session": "root",
         "terminal": {
           "kind": "failed",
-          "message": "Scripted rejected append"
+          "message": "Scripted rejected append",
+          "error": {
+            "message": "Scripted rejected append",
+            "classification": "persistence",
+            "operation": {
+              "id": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
+              "kind": "append",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1"
+            },
+            "phase": "append",
+            "details": {
+              "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
+              "expectedRevision": 1,
+              "attempts": 1,
+              "precedingFailure": null,
+              "observed": {
+                "outcome": "rejected"
+              },
+              "originalDetails": {
+                "outcome": "rejected",
+                "expectedRevision": 1
+              }
+            },
+            "cause": {
+              "message": "Scripted rejected append"
+            }
+          }
         }
       }
     ],

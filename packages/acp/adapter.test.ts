@@ -20,7 +20,7 @@ type Message = {
   method?: string;
   params?: any;
   result?: any;
-  error?: { code: number; message: string };
+  error?: { code: number; message: string; data?: unknown };
 };
 
 function harness(options: AcpOptions) {
@@ -4399,5 +4399,47 @@ test("ACP diagnostics correlate permission waits, turn outcomes and failed sessi
   } finally {
     await h.close();
     emitted.mockRestore();
+  }
+});
+
+test("ACP exposes structured storage failure from public settlement without reconstructing it", async () => {
+  const { options, persistence } = setup();
+  const original = options.sessionOptions;
+  const h = harness({
+    ...options,
+    sessionOptions: async (context) => ({
+      ...(await original(context)),
+      persistence: {
+        ...persistence,
+        append: async (request, signal) =>
+          request.expectedRevision === 0
+            ? persistence.append(request, signal)
+            : {
+                kind: "rejected",
+                message: "Journal volume is read-only",
+                error: {
+                  message: "Journal volume is read-only",
+                  cause: { code: "EROFS", path: "/store/journal" },
+                },
+              },
+      },
+    }),
+  });
+  try {
+    await h.initialize();
+    const sessionId = await h.newSession();
+    const response = await h.request("session/prompt", prompt(sessionId));
+    expect(response.error).toMatchObject({
+      code: -32000,
+      message: "Journal volume is read-only",
+      data: {
+        classification: "persistence",
+        operation: { kind: "append", sessionId },
+        phase: "append",
+        cause: { code: "EROFS", path: "/store/journal" },
+      },
+    });
+  } finally {
+    await h.close();
   }
 });

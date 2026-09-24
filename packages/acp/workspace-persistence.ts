@@ -16,7 +16,7 @@ import {
   type AppendResult,
   type SessionPersistence,
 } from "@labkit-agent/core/session";
-import { SessionIdSchema } from "@labkit-agent/core/types";
+import { failure, SessionIdSchema } from "@labkit-agent/core/types";
 
 export type WorkspacePersistence = SessionPersistence & {
   setScope: (
@@ -202,7 +202,7 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
           durationMs: performance.now() - started,
           error: diagnosticError(error),
         });
-        return { kind: "failed", message: error instanceof Error ? error.message : "Load failed" };
+        return { kind: "failed", message: failure(error).message, error: failure(error) };
       }
     },
     async append(raw, signal) {
@@ -212,7 +212,7 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
           path,
           error: diagnosticError(parsed.error),
         });
-        return { kind: "rejected", message: parsed.error.message };
+        return { kind: "rejected", message: parsed.error.message, error: failure(parsed.error) };
       }
       const request = parsed.data;
       const started = performance.now();
@@ -298,6 +298,7 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
         });
         return {
           kind: "indeterminate",
+          error: failure(error),
           message: error instanceof Error ? error.message : "Append failed",
         };
       }

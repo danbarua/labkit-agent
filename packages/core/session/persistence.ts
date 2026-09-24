@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { BlobId, BlobMeta, MediaKind } from "../agent/content.ts";
-import { SessionIdSchema } from "../agent/types.ts";
+import { FailureSchema, SessionIdSchema } from "../agent/types.ts";
 
 export * from "../agent/content.ts";
 
@@ -39,7 +39,11 @@ export const LoadResultSchema = z
       batches: z.array(CommittedBatchSchema).readonly(),
     }),
     z.strictObject({ kind: z.literal("not_found") }),
-    z.strictObject({ kind: z.literal("failed"), message: z.string() }),
+    z.strictObject({
+      kind: z.literal("failed"),
+      message: z.string(),
+      error: FailureSchema.optional(),
+    }),
   ])
   .readonly();
 export type LoadResult = z.infer<typeof LoadResultSchema>;
@@ -47,8 +51,16 @@ export const AppendResultSchema = z
   .discriminatedUnion("kind", [
     z.strictObject({ kind: z.literal("committed"), receipt: ReceiptSchema }),
     z.strictObject({ kind: z.literal("conflict"), revision: RevisionSchema }),
-    z.strictObject({ kind: z.literal("rejected"), message: z.string() }),
-    z.strictObject({ kind: z.literal("indeterminate"), message: z.string() }),
+    z.strictObject({
+      kind: z.literal("rejected"),
+      message: z.string(),
+      error: FailureSchema.optional(),
+    }),
+    z.strictObject({
+      kind: z.literal("indeterminate"),
+      message: z.string(),
+      error: FailureSchema.optional(),
+    }),
   ])
   .readonly();
 export type AppendResult = z.infer<typeof AppendResultSchema>;

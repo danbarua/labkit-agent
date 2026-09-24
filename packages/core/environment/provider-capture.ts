@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 
 import { redactDiagnostics } from "../logging/index.ts";
@@ -9,6 +9,14 @@ export async function createProviderCapture(root: string) {
   const runId = crypto.randomUUID();
   const directory = join(root, runId);
   await mkdir(directory, { recursive: true });
+
+  const writeEvidence = async (name: string, text: string) => {
+    const target = join(directory, name);
+    const temporary = `${target}.pending`;
+    await Bun.write(temporary, text);
+    await rename(temporary, target);
+  };
+
   const calls = new Map<string, Record<string, unknown>>();
   let writes = Promise.resolve();
   const capture: ProviderCapture = (event) => {
@@ -23,7 +31,7 @@ export async function createProviderCapture(root: string) {
       if (event.kind === "completion") row.completionPhase = event.phase;
       if (typeof body === "string") {
         const name = `${fileId}.${event.kind === "http_request" ? "request" : "response"}.txt`;
-        await Bun.write(join(directory, name), body);
+        await writeEvidence(name, body);
         row[event.kind === "http_request" ? "requestFile" : "responseFile"] = name;
         row[event.kind === "http_request" ? "requestBytes" : "responseBytes"] =
           new TextEncoder().encode(body).byteLength;
@@ -46,12 +54,12 @@ export async function createProviderCapture(root: string) {
         }
       }
       calls.set(id, row);
-      await Bun.write(
-        join(directory, "manifest.json"),
+      await writeEvidence(
+        "manifest.json",
         JSON.stringify({ runId, calls: [...calls.values()] }, null, 2),
       );
-      await Bun.write(
-        join(directory, "README.md"),
+      await writeEvidence(
+        "README.md",
         [
           `# Provider traffic: ${runId}`,
           "",
@@ -69,6 +77,6 @@ export async function createProviderCapture(root: string) {
     });
     return writes;
   };
-  await Bun.write(join(directory, "manifest.json"), JSON.stringify({ runId, calls: [] }));
+  await writeEvidence("manifest.json", JSON.stringify({ runId, calls: [] }));
   return { runId, directory, capture, flush: () => writes };
 }

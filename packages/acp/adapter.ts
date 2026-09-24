@@ -1298,8 +1298,10 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         admitted = true;
         if (promptSignal.aborted) abort();
         const receipt = await turn.accepted;
+        if (receipt.kind === "failed")
+          throw new RequestError(-32000, receipt.error.message, receipt.error);
         if (receipt.kind !== "accepted")
-          throw new RequestError(-32000, "Prompt admission failed", receipt);
+          throw new RequestError(-32000, `Prompt admission ${receipt.kind}`, receipt);
         diagnostic("acp", "info", "acp.prompt.admitted", {
           ...trace,
           revision: entry.runtime.snapshot.durable.revision,
@@ -1325,7 +1327,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         await writes;
         if (aborted || result.kind === "closed") return { stopReason: "cancelled" };
         if (result.kind !== "terminal")
-          throw new RequestError(-32000, "Session storage failed", { message: result.message });
+          throw new RequestError(-32000, result.error.message, result.error);
         const outcome = result.record.outcome;
         if (outcome.kind === "failed") {
           if (outcome.error.classification === "permission_refused")

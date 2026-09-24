@@ -61,7 +61,8 @@ Stream text is provisional. It can be visible before EOF exposes a malformed res
 card can show completion before its result is saved. Wait for the prompt response to decide how
 the turn ended; use the core terminal outcome/logs for the underlying cause. Completed turns map
 to `end_turn`, exhausted steps to `max_turn_requests`, and aborted turns to `cancelled`. Other
-execution/storage failures become JSON-RPC errors. A display notification is never a receipt.
+execution/storage failures become JSON-RPC errors. Failed admission and storage settlement expose
+the core structured failure in error data, including operation identity and reconciliation causes. A display notification is never a receipt.
 
 Reload renders saved conversation data without rerunning tools or asking for old permissions.
 Live terminal handles, stream callbacks, and MCP connections are recreated as needed, not recovered

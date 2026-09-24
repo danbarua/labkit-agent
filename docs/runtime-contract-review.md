@@ -45,19 +45,46 @@ These measurements justify evaluating journal/history duplication as separate st
 proposal must preserve receipt correlation, exact request reconstruction, immutable branch boundaries
 and recovery without repeating effects. It is not implemented by this change.
 
-## Remaining acceptance gaps
+## Acceptance gap closure
 
-This change is a progress checkpoint, not completion of the full remediation plan:
+The three gaps from the progress checkpoint are closed by the following implementation and evidence.
+The scope remains the original runtime-contract remediation; no storage deduplication or automatic
+external-effect retry was added.
 
-- Storage/admission failure settlements can still expose only `kind` and `message`, unlike the
-  structured causal failures carried by terminal operation outcomes.
-- The peer-review consumer demonstrates extraction, explicit repeat, restoration, and request-size
-  comparison. Refusal and interruption have coverage elsewhere but still need acceptance through
-  that consumer.
-- Malformed JSON and partial stream EOF retain evidence in tests. Evidence retention after an
-  actual process failure remains unverified.
+| Gap                                       | Implemented boundary                                                                                                                                                                                                                                             | Executable acceptance                                                                                                                                                                                                                                                                                                                |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Message-only storage/admission settlement | Failed receipts, session state, and public settlements carry a serializable `error`. Storage captures the original cause; reconciliation retains the preceding uncertain append, identity, revisions, and attempt count. ACP forwards the failure as error data. | `settlement-failure.test.ts`: rejected append, revision conflict, failed reconciliation load, repeated uncertainty, and invalid policy admission. `adapter.test.ts`: structured failure survives JSON-RPC.                                                                                                                           |
+| Missing peer-review failure acceptance    | The consumer makes coordinator and nested Anthropic extraction requests through actual transport with scripted responses. It handles refusal, interruption, timeout, malformed extraction JSON, cancellation, and model/permission/deadline reconfiguration.     | `peer-review-acceptance.test.ts`: all six scenarios restore without completion/tool/permission invocation, then extract exactly once only after a new explicit input. The earlier consumer test still verifies growing coordinator history against constant independent extraction sizes.                                            |
+| Unverified evidence after process failure | Capture writes complete temporary files and replaces published files by rename. Each run remains independent.                                                                                                                                                    | `environment/provider-capture.test.ts`: a separate Bun process uses real HTTP to a local scripted server, retains a partial SSE response, then receives SIGKILL. The parent verifies the request, partial response, model, status, upstream request ID, operation identity, manifest, and diagnostic logs without shutdown flushing. |
 
-Verification at this checkpoint: 524 core/ACP tests, TypeScript checking, the frontend build, and
-42 consolidated fixtures passed. The final focused consumer run passed all 11 tests. Documentation
-links and anchors were checked; diagram flows were checked against source but not visually rendered.
-Changed-file lint passed; whole-repository lint still reports unrelated existing failures.
+Process termination cannot emit its own terminal event. The interrupted capture correctly retains
+`outcome: in_progress` and `phase: stream`; the test parent's `process-outcome.json` records the
+observed SIGKILL separately. This does not claim power-loss durability or an fsync guarantee.
+
+## Final verification and review artifacts
+
+- `LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core packages/acp`:
+  537 passed, zero failed, across 65 files. The final focused peer-review run also passed all six
+  scenarios after moving journal evidence into cleanup so assertion failures retain it.
+- `bunx tsc --noEmit` and `bun run build` passed.
+- Consolidated fixture inspector: 42 passed; retained `--v2` entry point: 25 passed.
+- The only new baseline change is added structured failure data on the rejected-append receipt
+  and settlement. Requests, journal contents, conversation outcomes, and dispatch counts are unchanged.
+- Changed implementation files passed Biome; scoped formatting and diff checks passed. Existing
+  whole-repository lint issues are outside this change. Diagrams were checked against source,
+  not visually rendered.
+
+Runtime evidence is retained in unique directories under:
+
+| Directory                                            | Inspect                                                                                                                           |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `.session-artifacts/settlement-failure/<run-id>`     | `settlement.json` and diagnostic logs show the storage origin and cause without journal search.                                   |
+| `.session-artifacts/peer-review-acceptance/<run-id>` | `acceptance.md`, `outcomes.json`, `journal.json`, and linked full traffic distinguish coordinator history from nested extraction. |
+| `.session-artifacts/process-failure/<run-id>`        | `process-outcome.json`, manifest, request/partial-response files, and logs survive process death.                                 |
+| `.session-artifacts/latest/<run-id>`                 | Consolidated fixture reports, journal evidence, and persisted diagnostics.                                                        |
+
+WARNING/ERROR-only artifact inspection confirmed that refusal identifies the blocked extraction,
+timeout identifies its 20 ms limit, malformed extraction retains the JSON parser cause, and failed
+reconciliation retains EDQUOT and the original volume-quota explanation. Successful peer-review
+configuration/repeat execution produced no warnings or errors. A killed process has no fabricated
+failure log or successful terminal record; its last retained operation remains visibly incomplete.

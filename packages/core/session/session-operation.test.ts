@@ -49,7 +49,11 @@ test("thrown append errors are indeterminate; load failures remain typed", async
     request,
   );
   await actor.start();
-  expect(await actor.result).toEqual({ kind: "indeterminate", message: "Lost connection" });
+  expect(await actor.result).toMatchObject({
+    kind: "indeterminate",
+    message: "Lost connection",
+    error: { operation: { kind: "append", id: "a" }, cause: { message: "Lost connection" } },
+  });
   const load = loadOperation(
     {
       ...port,
@@ -60,7 +64,11 @@ test("thrown append errors are indeterminate; load failures remain typed", async
     sessionId,
   );
   await load.start();
-  expect(await load.result).toEqual({ kind: "failed", message: "offline" });
+  expect(await load.result).toMatchObject({
+    kind: "failed",
+    message: "offline",
+    error: { operation: { kind: "load" }, cause: { message: "offline" } },
+  });
 });
 test("cancel before start is known uncommitted only when the adapter certifies it", async () => {
   const actor = appendOperation(createMemoryPersistence(), request);

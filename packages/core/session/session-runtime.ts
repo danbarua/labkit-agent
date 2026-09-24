@@ -12,6 +12,7 @@ import {
   SessionIdSchema,
   StepsSchema,
   type ActorId,
+  type Failure,
   type TurnData,
   type TurnRecord,
 } from "../agent/types.ts";
@@ -142,7 +143,8 @@ function bindOptions(options: SessionOptions, restoring = false) {
 
 export type TerminalResult =
   | Readonly<{ kind: "terminal"; turnId: ActorId; record: TurnRecord }>
-  | Readonly<{ kind: "failed" | "closed"; message: string }>;
+  | Readonly<{ kind: "failed"; message: string; error: Failure }>
+  | Readonly<{ kind: "closed"; message: string }>;
 
 export type EnvReceipt = CommandReceipt | Readonly<{ kind: "close_acknowledged" }>;
 
@@ -237,7 +239,9 @@ function configure(raw: SessionOptions, restoring = false) {
     );
     if (receipt.kind !== "accepted") {
       await built.runtime.close();
-      throw new Error(receipt.kind === "failed" ? receipt.message : `Creation ${receipt.kind}`);
+      throw new Error(receipt.kind === "failed" ? receipt.message : `Creation ${receipt.kind}`, {
+        cause: receipt.kind === "failed" ? receipt.error : undefined,
+      });
     }
     return built.runtime;
   }
@@ -305,7 +309,9 @@ function configure(raw: SessionOptions, restoring = false) {
                         : "Waiting for durable append receipt before releasing work",
                   }
                 : {}),
-              ...(snapshot.status === "failed" ? { reason: snapshot.message } : {}),
+              ...(snapshot.status === "failed"
+                ? { reason: snapshot.message, error: snapshot.error }
+                : {}),
             },
           );
           observedTransition = transition;
@@ -447,8 +453,16 @@ function configure(raw: SessionOptions, restoring = false) {
               kind: "failed",
               message:
                 session.snapshot.status === "failed"
-                  ? session.snapshot.message
-                  : "Session persistence failed",
+                  ? session.snapshot.error.message
+                  : "Session stopped",
+              error:
+                session.snapshot.status === "failed"
+                  ? session.snapshot.error
+                  : failure("Session stopped", {
+                      classification: "interrupted",
+                      operation: { id: sessionId, kind: "admission", sessionId },
+                      phase: "stop",
+                    }),
             };
       for (const settle of admissions.values()) settle(result);
       admissions.clear();
@@ -456,7 +470,8 @@ function configure(raw: SessionOptions, restoring = false) {
       waiters.clear();
       for (const settle of queuedWaiters.values()) settle(result);
       queuedWaiters.clear();
-      for (const reply of branchReplies.values()) reply.reject(new Error(result.message));
+      for (const reply of branchReplies.values())
+        reply.reject(result.kind === "failed" ? result.error : new Error(result.message));
       branchReplies.clear();
     }
     const executeSession = (command: SessionCommand): undefined => {
@@ -627,7 +642,9 @@ function configure(raw: SessionOptions, restoring = false) {
                     revision: command.result.receipt.revision,
                   }
                 : {}),
-              ...(command.result.kind === "failed" ? { reason: command.result.message } : {}),
+              ...(command.result.kind === "failed"
+                ? { reason: command.result.message, error: command.result.error }
+                : {}),
             },
           );
           receipts.get(command.id)?.(command.result);
@@ -641,6 +658,20 @@ function configure(raw: SessionOptions, restoring = false) {
                 command.result.kind === "failed"
                   ? command.result.message
                   : `Input ${command.result.kind}`,
+              error:
+                command.result.kind === "failed"
+                  ? command.result.error
+                  : failure(`Input ${command.result.kind}`, {
+                      classification: "admission",
+                      operation: {
+                        id: command.id,
+                        kind: "admission",
+                        sessionId,
+                        turnId: session.snapshot.durable.conversation.turnId,
+                      },
+                      phase: "admission",
+                      details: { outcome: command.result.kind },
+                    }),
             });
             admissions.delete(command.id);
           }
@@ -717,7 +748,14 @@ function configure(raw: SessionOptions, restoring = false) {
           accepted: handle.accepted,
           settled: handle.settled.then(
             (child) => ({ kind: "branch" as const, session: child }),
-            (error) => ({ kind: "failed" as const, message: failure(error).message }),
+            (error) => {
+              const cause = failure(error, {
+                classification: "execution",
+                operation: { id: request.id, kind: "branch", sessionId },
+                phase: "publication",
+              });
+              return { kind: "failed" as const, message: cause.message, error: cause };
+            },
           ),
         };
       }
@@ -828,7 +866,9 @@ export async function restoreSession(
     stage = "load_journal";
     const loaded = await loadSession(options.persistence, sessionId);
     if (loaded.kind !== "loaded")
-      throw new Error(loaded.kind === "not_found" ? "Session not found" : loaded.message);
+      throw new Error(loaded.kind === "not_found" ? "Session not found" : loaded.message, {
+        cause: loaded.kind === "failed" ? loaded.error : undefined,
+      });
     stage = "replay_journal";
     const journal = replay(loaded.batches, configured.resolvers);
     if (journal.conversation.sessionId !== sessionId || journal.revision !== loaded.revision)
@@ -858,7 +898,9 @@ export async function restoreSession(
       );
       if (receipt.kind !== "accepted") {
         await built.runtime.close();
-        throw new Error(receipt.kind === "failed" ? receipt.message : `Recovery ${receipt.kind}`);
+        throw new Error(receipt.kind === "failed" ? receipt.message : `Recovery ${receipt.kind}`, {
+          cause: receipt.kind === "failed" ? receipt.error : undefined,
+        });
       }
     }
     diagnostic("session", "info", "session.restored", {

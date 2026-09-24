@@ -41,7 +41,11 @@ console.log(run.directory); // Open README.md and manifest.json here.
 Every call gets linked request/response files and a report of model, counts, byte sizes, and repeated
 message content. Requests are saved before dispatch; response text is retained before JSON parsing,
 and partial SSE text is retained as it arrives. Each run has a unique directory, so a failed run
-cannot inherit an earlier success report. Configured credential values are redacted.
+cannot inherit an earlier success report. Configured credential values are redacted. Files are
+replaced by rename after a complete temporary write; a process stopping mid-write does not truncate
+the previously saved file. A forced-termination test verifies retained request, partial response,
+manifest, and logs without graceful shutdown. This is a process-failure guarantee, not a power-loss
+fsync guarantee. An interrupted call remains labeled in progress when no terminal event was observed.
 
 Bind the same capture to model transports used inside tools and pass their `ToolRunContext`
 correlation. This distinguishes a growing coordinator history from independent extraction calls.

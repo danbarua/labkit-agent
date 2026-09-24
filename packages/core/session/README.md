@@ -49,7 +49,9 @@ There are three different observations; choose the one that answers your applica
 
 Inspect the receipt's discriminant: a resolved promise alone does not mean admission succeeded.
 Malformed public input can throw before admission. A storage failure or close can settle a command
-without a terminal record. `snapshot.durable` is committed state; `pending.next` is only a proposal
+without a terminal record. Failed receipts and settlements carry the same structured `error`,
+including storage operation identity, original cause, and reconciliation evidence. `message` is its
+human-readable summary. `snapshot.durable` is committed state; `pending.next` is only a proposal
 waiting for storage. Do not persist pending state as a successful result.
 
 The host owns the completion/tool loop. Your completion binding returns an answer, tool calls, or a
@@ -133,6 +135,11 @@ Implement `SessionPersistence` and run its
 [contract suite](testing/persistence-contract.ts). An append must atomically accept the complete
 batch at its expected revision. Its stable append ID must recognize identical retries and reject
 changed bytes. A lost acknowledgement is `indeterminate`, not proof of failure.
+
+Persistence adapters can return a serializable `error` alongside a failed/rejected/indeterminate
+message to preserve database codes and nested causes. Thrown exceptions are captured by the storage
+operation boundary. A reconciliation failure also retains the preceding uncertain append failure,
+so the public result explains both the lost acknowledgement and why execution could not continue.
 
 The session reconciles uncertainty with a consistent load before releasing work. If the append is
 absent at the expected revision, it may retry the _same storage append_ once. This never retries the

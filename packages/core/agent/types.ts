@@ -117,12 +117,25 @@ export const FailureSchema = z
         "cancelled",
         "timeout",
         "interrupted",
+        "persistence",
+        "admission",
       ])
       .optional(),
     operation: z
       .strictObject({
         id: z.string(),
-        kind: z.enum(["prepare", "completion", "handoff", "permission", "batch", "tool"]),
+        kind: z.enum([
+          "prepare",
+          "completion",
+          "handoff",
+          "permission",
+          "batch",
+          "tool",
+          "append",
+          "load",
+          "admission",
+          "branch",
+        ]),
         sessionId: z.string().optional(),
         turnId: z.string().optional(),
         toolName: z.string().optional(),
@@ -131,6 +144,7 @@ export const FailureSchema = z
       .readonly()
       .optional(),
     phase: z.string().optional(),
+    details: z.json().optional(),
     timeoutMs: z.number().positive().optional(),
     cause: z.json().optional(),
   })
