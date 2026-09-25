@@ -7,7 +7,6 @@ import {
   type CompletionProfile,
 } from "../../core/providers/index.ts";
 
-const SOURCE = "https://models.dev/catalog.json";
 const SNAPSHOT = new URL("./models.dev.json", import.meta.url);
 
 type ReasoningOption = {
@@ -90,13 +89,12 @@ function modelList(models: CatalogProviderRecord["models"]) {
 
 function chatModels(models: CatalogProviderRecord["models"]) {
   return modelList(models)
-    .filter(
-      (model) =>
-        model.tool_call &&
-        model.modalities?.output?.includes("text") &&
-        (model.limit?.output ?? 0) > 0 &&
-        !SKIP.test(model.id),
-    )
+    .filter((model) => {
+      if (model.tool_call === false) return false;
+      if (model.modalities?.output && !model.modalities.output.includes("text")) return false;
+      if (model.limit?.output === 0) return false;
+      return !SKIP.test(model.id);
+    })
     .sort(
       (left, right) =>
         String(right.release_date ?? "").localeCompare(String(left.release_date ?? "")) ||
@@ -131,8 +129,8 @@ function thinkingFor(providerId: string, model: CatalogModelRecord, profile: Com
   const effort = option(model, "effort");
   const budget = option(model, "budget_tokens");
   const mode = profile.capabilities.thinking.mode;
-  const requiresEffort = Boolean(effort && !effort.values?.includes("none"));
-  if (!requiresEffort) values.push("off");
+  const alwaysOn = providerId === "anthropic" && /fable|mythos/i.test(model.id);
+  if (!alwaysOn) values.push("off");
   if (providerId === "anthropic" && mode === "adaptive") values.push("adaptive");
   if (mode === "budget" && budget) values.push("budget");
   if (mode === "effort") {
@@ -161,7 +159,13 @@ function wire(provider: CatalogProviderRecord, key: string): WiredProvider | und
       omitThinkingWhenOff: profile.capabilities.thinking.mode === "effort",
     };
   });
-  const first = models[0];
+  const preferred: Record<string, string> = {
+    anthropic: "claude-sonnet-4-6",
+    openai: "gpt-5.4",
+    google: "gemini-2.5-flash",
+    xai: "grok-4.5",
+  };
+  const first = models.find((entry) => entry.id === preferred[provider.id]) ?? models[0];
   if (!first) return undefined;
   return {
     id: provider.id,
@@ -178,15 +182,6 @@ async function readSnapshot() {
 }
 
 async function loadProviders() {
-  try {
-    const response = await fetch(SOURCE, { signal: AbortSignal.timeout(4000) });
-    if (response.ok) {
-      const body = (await response.json()) as { providers?: Record<string, CatalogProviderRecord> };
-      if (body.providers?.anthropic && body.providers.openai) return body.providers;
-    }
-  } catch {
-    /* The committed snapshot is the catalog when models.dev is unreachable. */
-  }
   return (await readSnapshot()).providers;
 }
 

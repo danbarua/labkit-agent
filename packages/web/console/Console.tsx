@@ -139,7 +139,17 @@ export function Console() {
       if (event.kind === "snapshot") {
         setView(event.view);
         if (event.view.phase === "idle") {
-          setDraft({ text: "", thinking: "" });
+          setDraft((current) => {
+            const committed = [
+              ...event.view.log.flatMap((turn) => turn.messages),
+              ...event.view.live,
+            ]
+              .map((message) => message.text)
+              .join("\n");
+            if ((current.text || current.thinking) && !committed.includes(current.text || current.thinking))
+              return current;
+            return { text: "", thinking: "" };
+          });
           setPermission(null);
         }
       } else if (event.kind === "delta") {

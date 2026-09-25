@@ -11,7 +11,7 @@ import {
 } from "./index.ts";
 import { streamResponse, streamVector } from "./testing/stream-vectors.ts";
 
-for (const reason of ["max_tokens", "model_context_window_exceeded", "pause_turn", "refusal"]) {
+for (const reason of ["model_context_window_exceeded", "pause_turn", "refusal"]) {
   test(`Anthropic ${reason} preserves scalar evidence in streamed and nonstream failures`, async () => {
     for (const profile of [
       anthropicMessages,
@@ -77,6 +77,23 @@ for (const reason of ["max_tokens", "model_context_window_exceeded", "pause_turn
     expect(decoded).toBe(false);
   });
 }
+
+test("Anthropic max_tokens retains produced text and does not execute tool calls", () => {
+  const decoded = anthropicMessagesV4.decode({
+    status: 200,
+    headers: new Headers(),
+    body: {
+      role: "assistant",
+      stop_reason: "max_tokens",
+      content: [
+        { type: "text", text: "partial answer" },
+        { type: "tool_use", id: "call", name: "echo", input: { text: "x" } },
+      ],
+      usage: { input_tokens: 20, output_tokens: 16384 },
+    },
+  });
+  expect(decoded.completion).toEqual({ kind: "answer", text: "partial answer" });
+});
 
 test("stop diagnostics exclude arbitrary content and nonnumeric usage", () => {
   try {
