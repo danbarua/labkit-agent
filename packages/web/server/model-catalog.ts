@@ -76,6 +76,10 @@ const TRANSPORTS: Record<
     baseUrl: "https://api.x.ai/v1",
     header: (key) => ({ Authorization: `Bearer ${key}` }),
   },
+  localhost: {
+    baseUrl: process.env.LABKIT_LOCAL_BASE_URL || "http://localhost:8000/v1",
+    header: () => ({}),
+  },
 };
 
 const SKIP =
@@ -120,7 +124,7 @@ function profileFor(providerId: string, model: CatalogModelRecord) {
     return anthropicMessagesV3;
   }
   if (providerId === "google") return googleGenerateV3;
-  if (providerId === "xai") return openaiChatV2;
+  if (providerId === "xai" || providerId === "localhost") return openaiChatV2;
   return openaiResponsesV3;
 }
 
@@ -185,8 +189,51 @@ async function loadProviders() {
   return (await readSnapshot()).providers;
 }
 
-export function wiredProviders() {
-  cached ??= loadProviders().then((providers) => {
+const LOCAL_BASE_URL = TRANSPORTS.localhost!.baseUrl;
+
+type LocalList = {
+  data?: Array<{ id?: string }>;
+  models?: Array<{
+    slug?: string;
+    display_name?: string;
+    supported_in_api?: boolean;
+    supported_reasoning_levels?: Array<{ effort?: string }>;
+  }>;
+};
+
+async function localProvider(): Promise<WiredProvider | undefined> {
+  try {
+    const response = await fetch(`${LOCAL_BASE_URL}/models`, { signal: AbortSignal.timeout(2000) });
+    if (!response.ok) return undefined;
+    const body = (await response.json()) as LocalList;
+    const listed = (body.models ?? [])
+      .filter((model) => model.supported_in_api !== false && model.slug)
+      .map((model) => ({
+        id: model.slug!,
+        name: model.display_name || model.slug!,
+        reasoning: true,
+        reasoning_options: [
+          {
+            type: "effort",
+            values: (model.supported_reasoning_levels ?? [])
+              .map((level) => level.effort)
+              .filter((effort): effort is string => Boolean(effort)),
+          },
+        ],
+      }));
+    const models =
+      listed.length > 0
+        ? listed
+        : (body.data ?? []).flatMap((model) => (model.id ? [{ id: model.id, name: model.id }] : []));
+    if (!models.length) return undefined;
+    return wire({ id: "localhost", name: "Localhost", models }, "");
+  } catch {
+    return undefined;
+  }
+}
+
+export async function wiredProviders() {
+  const keyed = await (cached ??= loadProviders().then((providers) => {
     const bound: WiredProvider[] = [];
     for (const id of ["anthropic", "openai", "google", "xai"]) {
       const provider = providers[id];
@@ -196,6 +243,7 @@ export function wiredProviders() {
       if (wired) bound.push(wired);
     }
     return bound;
-  });
-  return cached;
+  }));
+  const local = await localProvider();
+  return local ? [...keyed, local] : keyed;
 }
