@@ -9,7 +9,15 @@ import {
   type AgentMessage,
 } from "../../core/agent/types.ts";
 import type { PermissionPort, PermissionRequest } from "../../core/host/ports.ts";
-import { openaiResponses, type CompletionProfile } from "../../core/providers/index.ts";
+import {
+  catalogProviders,
+  LOCALHOST_BASE_URL,
+  localhostProvider,
+  openaiResponses,
+  type CatalogModel,
+  type CatalogProvider,
+  type CompletionProfile,
+} from "../../core/providers/index.ts";
 import {
   createSession,
   defineTool,
@@ -33,10 +41,10 @@ import type {
   PublicReceipt,
   SessionView,
 } from "../protocol.ts";
-import { wiredProviders, type WiredModel, type WiredProvider } from "./model-catalog.ts";
 
 const SYSTEM = "You are a lab operator assistant. Be concise. Use echo and now when they help.";
 const FIXTURE_DELAY_MS = Number(process.env.LABKIT_FIXTURE_DELAY_MS ?? 1500);
+const LOCAL_BASE_URL = process.env.LABKIT_LOCAL_BASE_URL || LOCALHOST_BASE_URL;
 const persistence = createMemoryPersistence();
 const ADMITTED: Record<string, true> = {
   user: true,
@@ -47,10 +55,6 @@ const ADMITTED: Record<string, true> = {
 };
 
 type Subscriber = (event: ConsoleEvent) => void;
-
-type CatalogModel = WiredModel;
-
-type CatalogProvider = WiredProvider;
 
 type PendingPermission = {
   request: PermissionRequest;
@@ -89,8 +93,12 @@ function model(id: string, label: string, profile: CompletionProfile): CatalogMo
   };
 }
 
-function providerCatalog() {
-  return wiredProviders();
+let keyed: CatalogProvider[] | undefined;
+
+async function providerCatalog() {
+  keyed ??= catalogProviders(process.env).providers;
+  const local = await localhostProvider({ baseUrl: LOCAL_BASE_URL });
+  return local.kind === "available" ? [...keyed, local.provider] : keyed;
 }
 
 function fixtureProvider(): CatalogProvider {
@@ -110,14 +118,14 @@ function publicProvider(provider: CatalogProvider): ProviderOption {
     id: provider.id,
     label: provider.label,
     stream: provider.models.some((entry) => entry.profile.capabilities.stream),
-    thinking: fallback?.thinking ?? ["off"],
+    thinking: [...(fallback?.thinking ?? ["off"])],
     media: [...new Set(provider.models.flatMap((entry) => entry.profile.capabilities.media))],
     defaultModel: provider.defaultModel,
     models: provider.models.map((entry) => ({
       id: entry.id,
       label: entry.label,
       stream: entry.profile.capabilities.stream,
-      thinking: entry.thinking,
+      thinking: [...entry.thinking],
       ...(entry.maxOutputTokens === undefined ? {} : { maxOutputTokens: entry.maxOutputTokens }),
       ...(entry.thinkingBudgetMin === undefined
         ? {}

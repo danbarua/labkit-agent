@@ -58,6 +58,40 @@ model directly, using their declared profile. Binding keys need not match profil
 capabilities, profiles and transport settings are captured at construction; credentials and origins
 are never journal data. Restore validates persisted selections before external work.
 
+## Model catalog
+
+`catalogProviders(env)` and `localhostProvider(options)` turn a provider/model catalog into the
+declarations above, so applications offer named providers and models instead of adapter versions.
+The catalog is a committed snapshot of [models.dev](https://models.dev/catalog.json)
+(`models.dev.json`, source in `CATALOG_SOURCE`); it is never fetched at runtime. To refresh it,
+replace the snapshot file and review the resulting model list.
+
+`catalogProviders` binds anthropic, openai, google and xai when one of the provider's snapshot `env`
+names has a value, and lists the rest in `skipped` with the names it checked. It skips non-chat
+models (realtime, image, voice and similar), sorts newest first, and picks a preferred default.
+`localhostProvider` reads `GET <baseUrl>/models` from an OpenAI-chat-compatible server
+(`LOCALHOST_BASE_URL` is the conventional default). An unreachable or empty server returns
+`unavailable` with a reason and HTTP status; it never throws.
+
+Each model carries its own profile and thinking choices; the provider does not fix them:
+
+| Provider       | Profile                                                                      |
+| -------------- | ---------------------------------------------------------------------------- |
+| anthropic      | `anthropic-messages@4` if adaptive-capable, otherwise `anthropic-messages@3` |
+| google         | `google-generate@3`                                                          |
+| openai         | `openai-responses@3`                                                         |
+| xai, localhost | `openai-chat@2`                                                              |
+
+An Anthropic model is adaptive-capable when the snapshot lists a thinking toggle or effort values
+that include `xhigh` or `max`. Budget-only models such as Claude Sonnet 4.5 get `@3`.
+
+`thinking` lists the choices valid for that model: `off` (except always-on Fable/Mythos), then
+`adaptive`, `budget` (with `thinkingBudgetMin`) or effort levels. `maxOutputTokens` is the
+catalog's output limit. `omitThinkingWhenOff` marks effort profiles, where "off" means sending no
+thinking field. Core reads no environment and performs no I/O of its own: the caller injects `env`
+and, for localhost, `fetch`. Returned `headers` carry credentials; `credential` names the env var
+that supplied them and is safe to log.
+
 ## Choose settings without silently changing their meaning
 
 | Setting           | What the binding must promise                              | Why rejection matters                                                 |

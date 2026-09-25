@@ -14,5 +14,14 @@ export {
   googleGenerateV3,
   openaiResponsesV3,
 } from "./streaming-profiles.ts";
+export {
+  CATALOG_SOURCE,
+  LOCALHOST_BASE_URL,
+  catalogProviders,
+  localhostProvider,
+  type CatalogModel,
+  type CatalogProvider,
+  type LocalhostResult,
+} from "./catalog.ts";
 
 export { CompletionUsageSchema, type CompletionUsage } from "./usage.ts";
