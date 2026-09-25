@@ -27,6 +27,10 @@ architecture belongs in `docs/`.
 - `packages/web/`: React 19 session console and Bun server. The browser talks to the
   server host; session UI beyond that console is separate work.
 
+Read `docs/glossary.md` before writing plans, docs or code that name runtime concepts
+(turn, step, interjection, barge-in, configuration, load). Its definitions are canonical; code
+that uses those words differently is naming debt.
+
 Use `docs/core-runtime.md` and `docs/agent-flow-diagrams.md` for the underlying agent
 runtime. Use `docs/session-runtime.md` for persistence and session flows.
 `docs/host-protocol.md` is a design document with explicit implementation gaps; do not
@@ -139,9 +143,8 @@ report the work as incomplete; do not claim that passing tests makes it done.
   context and severity, including the absence of warnings during routine success.
 - Redact API keys without discarding the evidence needed to diagnose the problem.
 
-The central rule is: **a reader should need surrounding logs to understand the sequence, 
+The central rule is: **a reader should need surrounding logs to understand the sequence,
 not to discover what the warning means.**
-
 
 ## Runtime conventions
 
