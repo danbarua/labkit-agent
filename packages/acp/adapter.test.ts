@@ -2,7 +2,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ndJsonStream, type SessionNotification } from "@agentclientprotocol/sdk";
+import { ndJsonStream } from "@agentclientprotocol/sdk";
 import {
   createSession,
   defineTool,
@@ -26,89 +26,14 @@ import { connectAcp, type AcpOptions } from "./adapter.ts";
 import { workspaceAgent } from "./examples/vscode-workspace.ts";
 import type { PlanEntries } from "./plan.ts";
 import { selectChoices } from "./session-config.ts";
+import { harness, setup, type Message as HarnessMessage } from "./testing/harness.ts";
 
 // Keep workspace launcher tests off any real local model server.
 const offline = (async () => {
   throw new Error("offline");
 }) as unknown as typeof fetch;
 
-type Message = {
-  jsonrpc: string;
-  id?: string | number | null;
-  method?: string;
-  params?: any;
-  result?: any;
-  error?: { code: number; message: string; data?: unknown };
-};
-
-function harness(options: AcpOptions) {
-  const input = new TransformStream<Uint8Array, Uint8Array>();
-  const writer = input.writable.getWriter();
-  const messages: Message[] = [];
-  const output = new WritableStream<Uint8Array>({
-    write(bytes) {
-      messages.push(JSON.parse(new TextDecoder().decode(bytes)));
-    },
-  });
-  const server = connectAcp(ndJsonStream(output, input.readable), options);
-  const send = (value: unknown) =>
-    writer.write(new TextEncoder().encode(`${JSON.stringify(value)}\n`));
-  let sequence = 0;
-  const response = async (id: number) => {
-    await until(() => messages.some((m) => m.id === id && !m.method));
-    return messages.find((m) => m.id === id && !m.method)!;
-  };
-  const start = async (method: string, params: unknown) => {
-    const id = ++sequence;
-    await send({ jsonrpc: "2.0", id, method, params });
-    return id;
-  };
-  const request = async (method: string, params: unknown) => response(await start(method, params));
-  return {
-    messages,
-    server,
-    send,
-    start,
-    response,
-    request,
-    raw: (text: string) => writer.write(new TextEncoder().encode(text)),
-    initialize: () => request("initialize", { protocolVersion: 1, clientCapabilities: {} }),
-    newSession: async () =>
-      (await request("session/new", { cwd: "/tmp", mcpServers: [] })).result.sessionId as string,
-    updates: () =>
-      messages
-        .filter((m) => m.method === "session/update")
-        .map((m) => m.params as SessionNotification),
-    disconnect: async () => {
-      await writer.close();
-      await server.closed;
-    },
-    close: () => server.close(),
-  };
-}
-
-function setup(overrides: Partial<SessionOptions["bindings"]> = {}) {
-  const persistence = createMemoryPersistence();
-  const options: AcpOptions = {
-    loadSession: true,
-    sessionOptions: () => ({
-      persistence,
-      configuration: {
-        agent: "a",
-        agents: new Map([["a", { model: "m", tools: ["echo"] }]]),
-        steps: 3,
-      },
-      bindings: {
-        complete: () => ({ kind: "answer", text: "Hello 🌍" }),
-        tools: new Map([
-          ["echo", defineTool({ input: z.object({ text: z.string() }), run: ({ text }) => text })],
-        ]),
-        ...overrides,
-      },
-    }),
-  };
-  return { options, persistence };
-}
+type Message = HarnessMessage;
 
 const tools = {
   kind: "tools",
