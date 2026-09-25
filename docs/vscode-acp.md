@@ -102,6 +102,13 @@ a cwd filter can address another workspace directly. The adapter also supports `
 for hosts that already retain history and do not want replay. Runtime files are ignored by this repo and blocked from the file tools. Other workspaces should
 also add `.labkit/` to their `.gitignore`.
 
+The editor keeps a launcher process running for as long as its agent connection lasts, often for
+hours, and that process keeps the code it started with. After updating the checkout (and running
+`bun run build:acp` for the built agent), restart the ACP agent or reload the VS Code window so no
+launcher runs old code. An old launcher cannot read journal records a newer build wrote:
+`session/load` fails with a `record_decode` integrity error that names the unknown record kind or
+version and asks you to restart the launcher on current code.
+
 For the denial check, ask: “Use write_file to create acp-deny-check.txt containing DENY_CHECK.”
 Choose **Reject** in the permission picker. The adapter returns `stopReason: "refusal"`; the file
 must remain absent (or unchanged if it already exists). The exact refusal rendering is client-owned.

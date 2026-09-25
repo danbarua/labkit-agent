@@ -44,6 +44,7 @@ import {
   type Revision,
 } from "./persistence.ts";
 import {
+  BodySchema,
   JournalRecordSchema,
   SeedSchema,
   WireEventSchema,
@@ -833,6 +834,34 @@ export function decodeRecord(serialized: string): JournalRecord {
   return freeze(JournalRecordSchema.parse(JSON.parse(serialized)));
 }
 
+const recordKinds: ReadonlySet<string> = new Set(
+  BodySchema.options.map((option) => option.shape.kind.value),
+);
+
+const newerBuild =
+  "the journal was probably written by a newer Labkit build, so restart the launcher on current code";
+
+/** Why stored bytes do not decode, read from the raw JSON without validating it. */
+function decodeFailure(serialized: string): string {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(serialized);
+  } catch {
+    return "Record is not valid JSON";
+  }
+  const field = (value: unknown, key: string) =>
+    typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>)[key]
+      : undefined;
+  const version = field(raw, "version");
+  if (typeof version === "number" && version > 1)
+    return `Record has version ${version}, but this Labkit build reads only version 1; ${newerBuild}`;
+  const kind = field(field(raw, "body"), "kind");
+  if (typeof kind === "string" && !recordKinds.has(kind))
+    return `Record has kind ${JSON.stringify(kind)}, which this Labkit build does not know; ${newerBuild}`;
+  return "Record does not decode as a version 1 journal record";
+}
+
 export function stage(
   state: JournalState,
   input: SessionInput,
@@ -1063,12 +1092,9 @@ export function replay(batches: readonly CommittedBatch[]): JournalState {
       try {
         record = decodeRecord(serialized);
       } catch (error) {
-        throw new JournalIntegrityError(
-          "record_decode",
-          "Record does not decode as a version 1 journal record",
-          expected,
-          { cause: error },
-        );
+        throw new JournalIntegrityError("record_decode", decodeFailure(serialized), expected, {
+          cause: error,
+        });
       }
       const at = { revision: record.revision, appendId: record.appendId, entryId: record.entryId };
       const sessionId = state?.conversation.sessionId ?? batch.sessionId;

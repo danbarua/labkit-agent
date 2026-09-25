@@ -147,7 +147,10 @@ the terminal record are history as written.
 
 A load failure is a `JournalIntegrityError` with `rule`, `revision`, `appendId` and `entryId` of the
 offending record (for an undecodable record, where it should be). `session.restore_failed` reports
-the same fields at stage `replay_journal`.
+the same fields at stage `replay_journal`. A record with a newer `version` or a `kind` this build
+does not know fails `record_decode` with a message that names the version or kind and says the
+journal was probably written by a newer Labkit build, so the launcher should be restarted on current
+code; the schema error stays as the `cause`.
 
 Neither a changed agent/tool registry, a provider/model that is no longer bound, nor a policy
 pack, projection or handoff the live environment no longer supplies prevents reopening.

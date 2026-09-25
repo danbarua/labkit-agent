@@ -1,5 +1,6 @@
 import { getLogger } from "@logtape/logtape";
 import { expect, spyOn, test } from "@logtape/testing-bun/autoload";
+import { z } from "zod";
 
 import { AppendIdSchema, RevisionSchema, type CommittedBatch } from "./persistence.ts";
 import {
@@ -400,4 +401,59 @@ test("a restore that fails integrity logs the rule and the offending record", as
   } finally {
     spy.mockRestore();
   }
+});
+
+const newerBuild: readonly (readonly [name: string, edits: readonly Edit[], named: string])[] = [
+  ["an unknown record kind", [[["body"], { kind: "future_kind" }]], 'kind "future_kind"'],
+  ["a newer record version", [[["version"], 2]], "version 2"],
+];
+
+for (const [name, edits, named] of newerBuild)
+  test(`load reports ${name} as written by a newer Labkit build`, async () => {
+    const records: { event: string; fields: Record<string, unknown> }[] = [];
+    const logger = getLogger(["labkit", "session"]);
+    const emit = logger.emit.bind(logger);
+    const spy = spyOn(logger, "emit").mockImplementation((record) => {
+      records.push({ event: String(record.rawMessage), fields: record.properties });
+      emit(record);
+    });
+    try {
+      const { options, durable, batches } = await committed();
+      const sessionId = durable.conversation.sessionId;
+      const at = position(batches, "user");
+      const offending = located(batches, at);
+      const error = await restoreSession(
+        serving(options, rewrite(batches, at, edits)),
+        sessionId,
+      ).catch((failure: unknown) => failure);
+      expect(error).toBeInstanceOf(JournalIntegrityError);
+      expect(error).toMatchObject({ rule: "record_decode", ...offending });
+      const message = (error as Error).message;
+      expect(message).toContain(named);
+      expect(message).toContain("written by a newer Labkit build");
+      expect(message).toContain("restart the launcher on current code");
+      expect((error as Error).cause).toBeInstanceOf(z.ZodError);
+      expect(
+        records.find((record) => record.event === "session.restore_failed")?.fields,
+      ).toMatchObject({
+        sessionId,
+        stage: "replay_journal",
+        rule: "record_decode",
+        ...offending,
+        error: { name: "JournalIntegrityError", message },
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+test("load reports a record that is not JSON as unreadable, not as a newer build", async () => {
+  const { batches } = await committed();
+  const at = position(batches, "user");
+  const error = violation(() =>
+    replay(batches.map((batch, index) => (index === at ? { ...batch, records: ["{"] } : batch))),
+  );
+  expect(error).toMatchObject({ rule: "record_decode", ...located(batches, at) });
+  expect(error.message).toContain("not valid JSON");
+  expect(error.message).not.toContain("newer Labkit build");
 });
