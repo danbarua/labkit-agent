@@ -241,7 +241,8 @@ test("barge-in cancels the completion reader; no late stream bytes or partial co
     },
   });
   const first = session.input("Old").settled;
-  await until(() => updates.some((event) => event.text));
+  // The first streamed chunk may be thinking (openai-chat reasoning_content) rather than answer text.
+  await until(() => updates.some((event) => event.text || event.thinking));
   const oldId = updates[0]!.completionId;
   const second = session.input("New").settled;
   const [a, b] = await Promise.all([first, second]);
