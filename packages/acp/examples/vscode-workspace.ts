@@ -1,4 +1,4 @@
-import { diagnostic } from "@labkit-agent/core/logging";
+import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
 import type { Policy, PolicyPatch } from "@labkit-agent/core/policy";
 import {
   CATALOG_SOURCE,
@@ -13,6 +13,7 @@ import type { AcpOptions } from "../adapter.ts";
 import { terminalTool } from "../client-terminal.ts";
 import { workspaceToolContent } from "../file-write.ts";
 import { planTool } from "../plan.ts";
+import type { AcpPromptCapabilities } from "../prompt-input.ts";
 import type { AcpConfigBinding, AcpSelectOption } from "../session-config.ts";
 import { workspaceDirectory } from "../workspace-directory.ts";
 import { workspaceFiles } from "../workspace-files.ts";
@@ -201,6 +202,59 @@ async function discover(env: Env, fetchImpl: typeof fetch | undefined): Promise<
   return { providers, selection: chosen ?? fallback };
 }
 
+/** Provider ids with at least one bound model whose profile accepts matching media. */
+function accepting(providers: readonly CatalogProvider[], media: (kind: string) => boolean) {
+  return providers
+    .filter((provider) =>
+      provider.models.some((model) => model.profile.capabilities.media.some(media)),
+    )
+    .map((provider) => provider.id);
+}
+
+/** Advertise prompt content only when a bound catalog model accepts it. */
+async function promptCapabilities(catalog: () => Promise<Catalog>): Promise<AcpPromptCapabilities> {
+  let providers: readonly CatalogProvider[];
+  try {
+    ({ providers } = await catalog());
+  } catch (error) {
+    diagnostic("acp", "warning", "acp.capabilities.advertised", {
+      image: false,
+      audio: false,
+      embeddedContext: false,
+      providers: { image: [], audio: [], embeddedContext: [] },
+      error: diagnosticError(error),
+      reason:
+        "No model provider is bound, so no prompt media is advertised; session/new reports the missing provider",
+    });
+    return {};
+  }
+  const behind = {
+    image: accepting(providers, (kind) => kind.startsWith("image/")),
+    audio: accepting(providers, (kind) => kind.startsWith("audio/")),
+    embeddedContext: accepting(
+      providers,
+      (kind) => kind === "text/plain" || kind === "text/markdown",
+    ),
+  };
+  const declared = {
+    image: behind.image.length > 0,
+    audio: behind.audio.length > 0,
+    embeddedContext: behind.embeddedContext.length > 0,
+  };
+  diagnostic("acp", "info", "acp.capabilities.advertised", {
+    ...declared,
+    providers: behind,
+    reason:
+      "Prompt content is advertised only when at least one bound catalog model accepts that media",
+  });
+  return declared;
+}
+
+/** Launcher options; prompt capabilities always come from the catalog. */
+export type WorkspaceAgentOptions = AcpOptions & {
+  promptCapabilities: () => Promise<AcpPromptCapabilities>;
+};
+
 /**
  * Exported separately for injected-environment tests. Keys stay in transport bindings. `fetch`
  * replaces HTTP for localhost discovery and provider transports.
@@ -209,7 +263,7 @@ export function workspaceAgent(
   env: Env = process.env,
   directory = workspaceDirectory(),
   inject: Readonly<{ fetch?: typeof fetch }> = {},
-): AcpOptions {
+): WorkspaceAgentOptions {
   // Discovered on first use so importing performs no I/O; retried while no provider is bound.
   let catalog: Promise<Catalog> | undefined;
   const loadCatalog = () => {
@@ -227,6 +281,7 @@ export function workspaceAgent(
     listSessions: (params, signal) => directory.list(params, signal),
     deleteSession: (params, signal) => directory.deleteSession(params, signal),
     sessionInfo: (params, signal) => directory.info(params, signal),
+    promptCapabilities: () => promptCapabilities(loadCatalog),
     async sessionOptions({
       cwd,
       additionalDirectories,
@@ -444,8 +499,9 @@ export function workspaceAgent(
     },
   };
 }
-// Resolve environment only when the host opens a session; importing this example performs no I/O.
-let options: AcpOptions | undefined;
+
+// Resolve environment only when the host initializes or opens a session; importing performs no I/O.
+let options: WorkspaceAgentOptions | undefined;
 
 let directory: ReturnType<typeof workspaceDirectory> | undefined;
 
@@ -453,17 +509,21 @@ function discovery() {
   directory ??= workspaceDirectory();
   return directory;
 }
+
+function workspace() {
+  options ??= workspaceAgent(process.env, discovery());
+  return options;
+}
+
 export default {
   loadSession: true,
   forkSession: true,
   additionalDirectories: true,
   deleteSession: (params, signal) => discovery().deleteSession(params, signal),
   sessionInfo: (params, signal) => discovery().info(params, signal),
+  promptCapabilities: () => workspace().promptCapabilities(),
   listSessions: (params, signal) => {
     return discovery().list(params, signal);
   },
-  sessionOptions: (context) => {
-    options ??= workspaceAgent(process.env, discovery());
-    return options.sessionOptions(context);
-  },
+  sessionOptions: (context) => workspace().sessionOptions(context),
 } satisfies AcpOptions;

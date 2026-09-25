@@ -39,6 +39,8 @@ export {
 
 export type { AcpToolContent, AcpToolContentContext } from "./tool-content.ts";
 
+export type { AcpPromptCapabilities } from "./prompt-input.ts";
+
 export {
   workspaceToolContent,
   FileWriteResultSchema,

@@ -42,7 +42,13 @@ import { availableCommands, bindCommands, expandCommand, type AcpCommand } from 
 import { acpMcpBridge, McpMessageSchema } from "./mcp-acp.ts";
 import { mcpConnections } from "./mcp.ts";
 import { PlanEntriesSchema, type PlanSink } from "./plan.ts";
-import { promptInput } from "./prompt-input.ts";
+import {
+  advertisedPromptCapabilities,
+  promptInput,
+  requireAdvertisedContent,
+  type AcpPromptCapabilities,
+  type AdvertisedPromptCapabilities,
+} from "./prompt-input.ts";
 import {
   bindConfig,
   configPatch,
@@ -105,6 +111,12 @@ export type AcpOptions = Readonly<{
     signal: AbortSignal,
   ) => SessionInfoUpdate | undefined | Promise<SessionInfoUpdate | undefined>;
   agentInfo?: { name: string; version: string; title?: string };
+  /**
+   * Prompt content the bound models accept, resolved once per initialize. Omitted flags are not
+   * advertised, and prompts carrying unadvertised content are refused before admission.
+   */
+  promptCapabilities?:
+    AcpPromptCapabilities | (() => AcpPromptCapabilities | Promise<AcpPromptCapabilities>);
 }>;
 
 type Session = {
@@ -260,6 +272,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
   const borrowedParents = new Set<string>();
   const deleting = new Set<string>();
   let initialized = false;
+  let initializing = false;
+  let promptCapabilities: AdvertisedPromptCapabilities = {
+    image: false,
+    audio: false,
+    embeddedContext: false,
+  };
   let clientCapabilities: ClientCapabilities = {};
   let closing = false;
   let connection: AgentConnection;
@@ -1079,11 +1097,36 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     );
   };
   const app = agent()
-    .onRequest("initialize", ({ params }) => {
-      if (initialized)
+    .onRequest("initialize", async ({ params, client }) => {
+      if (initialized || initializing)
         throw RequestError.invalidRequest(undefined, "Connection already initialized");
+      initializing = true;
+      try {
+        promptCapabilities = await advertisedPromptCapabilities(options.promptCapabilities);
+      } catch (error) {
+        diagnostic("acp", "error", "acp.capabilities.failed", {
+          connectionId,
+          rpcRequestId: String(client.requestId),
+          method: "initialize",
+          error: diagnosticError(error),
+          reason:
+            "The host could not declare which prompt content its models accept; initialize refused so nothing is advertised falsely",
+        });
+        throw RequestError.internalError(
+          undefined,
+          `Cannot determine which prompt content this agent accepts: ${error instanceof Error ? error.message : String(error)}. Fix the agent's model configuration, then initialize again.`,
+        );
+      } finally {
+        initializing = false;
+      }
       initialized = true;
       clientCapabilities = structuredClone(params.clientCapabilities ?? {});
+      diagnostic("acp", "debug", "acp.capabilities.prompt", {
+        connectionId,
+        rpcRequestId: String(client.requestId),
+        method: "initialize",
+        promptCapabilities,
+      });
       return {
         protocolVersion: PROTOCOL_VERSION,
         agentInfo,
@@ -1091,7 +1134,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         agentCapabilities: {
           loadSession,
           ...(auth.logoutSupported ? { auth: { logout: {} } } : {}),
-          promptCapabilities: { image: true, audio: true, embeddedContext: true },
+          promptCapabilities: { ...promptCapabilities },
           mcpCapabilities: { http: true, sse: true, acp: true },
           sessionCapabilities: {
             close: {},
@@ -1403,6 +1446,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       };
       diagnostic("acp", "info", "acp.prompt.received", { ...trace, count: params.prompt.length });
       const entry = lookup(params.sessionId);
+      requireAdvertisedContent(params.prompt, promptCapabilities, trace);
       if (entry.busy) throw new RequestError(-32000, "Session already has an active prompt");
       let barrier: Promise<void>;
       do {

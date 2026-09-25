@@ -15,6 +15,66 @@ import type { z } from "zod";
 import { diagnostic, diagnosticError } from "../core/logging/index.ts";
 import { workspaceFiles } from "./workspace-files.ts";
 
+/** Prompt content the bound models accept; an omitted flag is not advertised. */
+export type AcpPromptCapabilities = Readonly<{
+  image?: boolean;
+  audio?: boolean;
+  embeddedContext?: boolean;
+}>;
+
+export type AdvertisedPromptCapabilities = Readonly<Required<AcpPromptCapabilities>>;
+
+const CAPABILITY = { image: "image", audio: "audio", resource: "embeddedContext" } as const;
+
+const ALTERNATIVE = {
+  image: "Send the prompt without image blocks.",
+  audio: "Send the prompt without audio blocks.",
+  resource: "Send the file as a resource_link or paste its text into the prompt instead.",
+} as const;
+
+/** Advertise exactly what the host declared; undeclared content is never claimed. */
+export async function advertisedPromptCapabilities(
+  declared:
+    | AcpPromptCapabilities
+    | (() => AcpPromptCapabilities | Promise<AcpPromptCapabilities>)
+    | undefined,
+): Promise<AdvertisedPromptCapabilities> {
+  const value = typeof declared === "function" ? await declared() : declared;
+  return {
+    image: value?.image === true,
+    audio: value?.audio === true,
+    embeddedContext: value?.embeddedContext === true,
+  };
+}
+
+/**
+ * Refuse content kinds initialize did not advertise, before any blob or journal write. Resource
+ * links are baseline ACP content and always pass this gate.
+ */
+export function requireAdvertisedContent(
+  blocks: readonly ContentBlock[],
+  advertised: AdvertisedPromptCapabilities,
+  trace: Readonly<Record<string, unknown>>,
+) {
+  blocks.forEach((block, blockIndex) => {
+    if (block.type !== "image" && block.type !== "audio" && block.type !== "resource") return;
+    const capability = CAPABILITY[block.type];
+    if (advertised[capability]) return;
+    diagnostic("acp", "warning", "acp.prompt.content_refused", {
+      ...trace,
+      blockIndex,
+      blockType: block.type,
+      capability: `promptCapabilities.${capability}`,
+      advertised,
+      reason: `Prompt refused before storage or admission: initialize did not advertise promptCapabilities.${capability}`,
+    });
+    throw RequestError.invalidParams(
+      undefined,
+      `Prompt contains ${block.type} content, but this agent does not advertise promptCapabilities.${capability}. ${ALTERNATIVE[block.type]}`,
+    );
+  });
+}
+
 export async function promptInput(
   blocks: ContentBlock[],
   cwd: string,
@@ -150,7 +210,7 @@ export async function promptInput(
       if (supportedMedia && !supportedMedia.includes(item.media))
         throw RequestError.invalidParams(
           undefined,
-          `Provider does not support attachment media: ${media}; supported media: ${supportedMedia.join(", ") || "none"}`,
+          `Provider does not support attachment media: ${media}; supported media: ${supportedMedia.join(", ") || "none"}. Select a model that accepts ${media}, then send the prompt again.`,
         );
     }
     for (const item of pending) {

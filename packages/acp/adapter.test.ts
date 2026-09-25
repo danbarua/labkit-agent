@@ -63,7 +63,7 @@ test("JSON-RPC initialization, framing, validation and baseline text/resource-li
     protocolVersion: 1,
     agentCapabilities: {
       loadSession: true,
-      promptCapabilities: { image: true, embeddedContext: true, audio: true },
+      promptCapabilities: { image: false, embeddedContext: false, audio: false },
     },
   });
   expect((await h.initialize()).error?.code).toBe(-32600);
@@ -1667,6 +1667,7 @@ test("ACP embedded image, PDF, and large editor text reach provider wire through
     let wire: any;
     const h = harness({
       ...base.options,
+      promptCapabilities: { image: true, embeddedContext: true },
       sessionOptions: async (context) => {
         const original = await base.options.sessionOptions(context);
         return {
@@ -2312,6 +2313,7 @@ test("commands are discovered on new/load and expand once before journal admissi
   const base = setup();
   const options: AcpOptions = {
     ...base.options,
+    promptCapabilities: { embeddedContext: true },
     sessionOptions: async (context) => {
       const original = await base.options.sessionOptions(context);
       return {
@@ -2413,6 +2415,7 @@ test("unbound attachment media is rejected before blob storage or user admission
   let puts = 0;
   const h = harness({
     ...base.options,
+    promptCapabilities: { embeddedContext: true },
     sessionOptions: async (context) => ({
       ...(await base.options.sessionOptions(context)),
       persistence: {
@@ -2453,6 +2456,7 @@ test("ACP fork copies attachment history into an independent restorable child wi
   const bodies: string[] = [];
   const options: AcpOptions = {
     ...base.options,
+    promptCapabilities: { embeddedContext: true },
     forkSession: true,
     sessionOptions: async (context) => {
       const original = await base.options.sessionOptions(context);
@@ -5038,6 +5042,7 @@ test("ACP audio reaches Google as exact inline bytes, remains a journal ref, and
     const base = setup();
     const options: AcpOptions = {
       ...base.options,
+      promptCapabilities: { audio: true },
       sessionOptions: async (context) => {
         const original = await base.options.sessionOptions(context);
         return {

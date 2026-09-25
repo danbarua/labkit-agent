@@ -621,8 +621,9 @@ their results. Only the live tools are advertised to the model.
 
 ## Explicit limits
 
-This is an ACP v1 **session subset**, not a claim of full protocol conformance. Text, resource-link, image, audio, and embedded-resource
-prompts are accepted. Local `file://` links and paths inside the session workspace roots are read through the
+This is an ACP v1 **session subset**, not a claim of full protocol conformance. Text and resource-link
+prompts are always accepted. Image, audio, and embedded-resource prompts are accepted only when
+initialize advertised the matching `promptCapabilities` flag. Local `file://` links and paths inside the session workspace roots are read through the
 workspace path checks and stored with `putBlob` in that session before admitting the user input.
 The journal contains attachment refs, never file bytes. Outside paths are rejected without reading
 them. Non-file URLs remain textual references; the adapter never fetches them. Cancellation during
@@ -632,14 +633,25 @@ Local attachments retain the 8 MiB blob cap. Extensions select markdown, PDF, PN
 plain text; the bound provider must support the selected media. Accepted text attachments are sent in full within the blob limit; oversized model context
 is reported as a provider failure rather than silently substituted content. Attaching a local resource is an explicit user input and does not create
 a tool permission request. Model-initiated file access still uses the permission-gated tools.
-Image, audio, and embedded-context capabilities are advertised. PNG/JPEG image data and embedded binary
+`AcpOptions.promptCapabilities` declares `image`, `audio` and `embeddedContext`, either as values or
+as a function resolved once per `initialize`. Omitted flags are false: the adapter does not know what
+its bindings accept. A prompt with an `image`, `audio` or `resource` block whose flag is false is
+refused with `invalid_params` ("Prompt contains image content, but this agent does not advertise
+promptCapabilities.image") before any blob or journal write, and `acp.prompt.content_refused` logs
+the block type and flag. A declaration function that throws fails `initialize` with an explanation
+and `acp.capabilities.failed`. The workspace launcher resolves its catalog at `initialize` (cached for
+`session/new`) and advertises a flag when any bound model's profile accepts `image/*`, `audio/*`, or
+`text/plain`/`text/markdown` respectively; `acp.capabilities.advertised` lists the providers behind
+each flag. With no bound provider it advertises none and says why. PNG/JPEG image data and embedded binary
 resources (PNG/JPEG/PDF or UTF-8 plain text/markdown) require canonical base64 and the same 8 MiB
 raw-byte cap. Binary resources require an explicit supported MIME type. Embedded text is stored
 as markdown when declared `text/markdown`, otherwise as plain text, including source-code MIME
 types. Embedded URIs are labels only: supplied bytes can represent unsaved or outside-workspace
 content, and no file read or URL fetch occurs. Blob refs, not content bytes, enter the journal.
 Provider media support is checked before storage/admission; attachments require a bound provider
-profile. Custom completion ports without a provider registry cannot resolve attachment media. Audio blocks require a declared supported audio MIME type and canonical base64 within the same
+profile. When the current model cannot take an advertised medium, the refusal lists its supported
+media and asks the user to select a model that accepts it.
+Custom completion ports without a provider registry cannot resolve attachment media. Audio blocks require a declared supported audio MIME type and canonical base64 within the same
 8 MiB cap. Google bindings encode them as native audio; bindings without audio support reject
 before storage/admission. Local audio file links use the declared audio MIME type or a recognized
 extension. Reload displays the saved audio reference without invoking a model; a new prompt can
