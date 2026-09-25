@@ -152,6 +152,9 @@ does not know fails `record_decode` with a message that names the version or kin
 journal was probably written by a newer Labkit build, so the launcher should be restarted on current
 code; the schema error stays as the `cause`.
 
+`restoreSession` rejects with `SessionNotFoundError` (carrying `sessionId`) when the store holds no
+journal under that ID, so hosts can tell a missing or deleted session from a failed load.
+
 Neither a changed agent/tool registry, a provider/model that is no longer bound, nor a policy
 pack, projection or handoff the live environment no longer supplies prevents reopening.
 `session.registry` is `{ kind: "pending_adoption", differences }` until the first input, system or

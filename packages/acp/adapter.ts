@@ -19,6 +19,7 @@ import {
 import {
   createSession,
   restoreSession,
+  SessionNotFoundError,
   type JournalState,
   type SessionOptions,
   type SessionPersistence,
@@ -335,8 +336,30 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     if (borrowedParents.has(id))
       throw RequestError.invalidParams(undefined, "Session is being forked privately");
     const session = sessions.get(id);
-    if (!session) throw RequestError.invalidParams(undefined, "Unknown session");
+    if (!session) {
+      diagnostic("acp", "warning", "acp.session.not_open", { connectionId, sessionId: id });
+      throw RequestError.invalidParams(
+        { sessionId: id },
+        `Session ${id} is not open on this connection (never opened, closed or deleted); open it with session/load or session/resume before using it`,
+      );
+    }
     return session;
+  };
+  /** Additional roots are opt-in; refuse them rather than silently dropping workspace roots. */
+  const requireRootsAdvertised = (
+    requested: readonly string[] | null | undefined,
+    trace: Record<string, unknown>,
+  ) => {
+    if (!requested?.length || options.additionalDirectories) return;
+    diagnostic("acp", "warning", "acp.session.additional_directories.refused", {
+      ...trace,
+      count: requested.length,
+      reason: "sessionCapabilities.additionalDirectories is not advertised",
+    });
+    throw RequestError.invalidParams(
+      { capability: "sessionCapabilities.additionalDirectories" },
+      "additionalDirectories was refused because this agent does not advertise sessionCapabilities.additionalDirectories; resend without additionalDirectories to use cwd as the only workspace root",
+    );
   };
   const text = (
     client: AgentContext,
@@ -507,8 +530,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     requireAccess();
     if (!isAbsolute(params.cwd))
       throw RequestError.invalidParams(undefined, "cwd must be absolute");
-    if (params.additionalDirectories?.length && !options.additionalDirectories)
-      throw RequestError.invalidParams(undefined, "Additional directories are not supported");
+    requireRootsAdvertised(params.additionalDirectories, trace);
     const additionalDirectories = Object.freeze([...new Set(params.additionalDirectories ?? [])]);
     if (
       (params.additionalDirectories?.length ?? 0) > 32 ||
@@ -968,6 +990,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           error: diagnosticError(error),
         },
       );
+      if (error instanceof SessionNotFoundError)
+        throw new RequestError(
+          -32002,
+          `Session ${error.sessionId} has no saved history in this workspace (never saved, or deleted); choose a session from session/list or start one with session/new`,
+          { sessionId: error.sessionId },
+        );
       throw error;
     } finally {
       if (cancelOpening) signal.removeEventListener("abort", cancelOpening);
@@ -1078,7 +1106,37 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       }),
     );
   };
-  const app = agent()
+  // A conditional method that initialize does not advertise is claimed by this earlier handler,
+  // which answers -32601 before params, initialization, auth or session state are checked.
+  const conditional = [
+    ["session/load", "agentCapabilities.loadSession", loadSession],
+    ["session/resume", "agentCapabilities.sessionCapabilities.resume", loadSession],
+    ["session/fork", "agentCapabilities.sessionCapabilities.fork", forkSession],
+    ["session/delete", "agentCapabilities.sessionCapabilities.delete", !!options.deleteSession],
+    ["session/list", "agentCapabilities.sessionCapabilities.list", !!options.listSessions],
+    ["logout", "agentCapabilities.auth.logout", auth.logoutSupported],
+  ] as const;
+  const app = agent();
+  for (const [method, capability, advertised] of conditional)
+    if (!advertised)
+      app.onRequest(
+        method,
+        (params: unknown) => params,
+        ({ client }) => {
+          diagnostic("acp", "warning", "acp.method.not_advertised", {
+            connectionId,
+            rpcRequestId: String(client.requestId),
+            method,
+            capability,
+          });
+          throw new RequestError(
+            -32601,
+            `Method not found: ${method} is unavailable because this agent's initialize response does not advertise ${capability}; check agentCapabilities before calling it`,
+            { method, capability },
+          );
+        },
+      );
+  app
     .onRequest("initialize", ({ params }) => {
       if (initialized)
         throw RequestError.invalidRequest(undefined, "Connection already initialized");
@@ -1153,12 +1211,10 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     .onNotification("mcp/message", McpMessageSchema, ({ params }) => mcpBridge.notify(params))
     .onRequest("session/new", ({ params, client, signal }) => open(params, client, signal))
     .onRequest("session/load", async ({ params, client, signal }) => {
-      if (!loadSession) throw RequestError.methodNotFound("session/load");
       const { sessionId: _, ...configuration } = await open(params, client, signal);
       return configuration;
     })
     .onRequest("session/resume", async ({ params, client, signal }) => {
-      if (!loadSession) throw RequestError.methodNotFound("session/resume");
       const { sessionId: _, ...configuration } = await open(
         { ...params, mcpServers: params.mcpServers ?? [] },
         client,
@@ -1168,7 +1224,6 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       return configuration;
     })
     .onRequest("session/fork", async ({ params, client, signal }) => {
-      if (!forkSession) throw RequestError.methodNotFound("session/fork");
       requireAccess();
       if (deleting.has(params.sessionId))
         throw RequestError.invalidParams(undefined, "Session is being deleted");
@@ -1176,8 +1231,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         throw RequestError.invalidParams(undefined, "Session is already being forked privately");
       if (!isAbsolute(params.cwd))
         throw RequestError.invalidParams(undefined, "cwd must be absolute");
-      if (params.additionalDirectories?.length && !options.additionalDirectories)
-        throw RequestError.invalidParams(undefined, "Additional directories are not supported");
+      requireRootsAdvertised(params.additionalDirectories, {
+        connectionId,
+        rpcRequestId: String(client.requestId),
+        method: "session/fork",
+        sessionId: params.sessionId,
+      });
       if (
         (params.additionalDirectories?.length ?? 0) > 32 ||
         params.additionalDirectories?.some((path) => !isAbsolute(path) || path.includes("\0"))
@@ -1291,7 +1350,6 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       };
       diagnostic("acp", "info", "acp.session.delete.started", trace);
       requireAccess();
-      if (!options.deleteSession) throw RequestError.methodNotFound("session/delete");
       if (
         opening.has(params.sessionId) ||
         borrowedParents.has(params.sessionId) ||
@@ -1305,7 +1363,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       cancellation.throwIfAborted();
       const entry = sessions.get(params.sessionId);
       deleting.add(params.sessionId);
-      const remove = options.deleteSession;
+      const remove = options.deleteSession!; // Unadvertised delete never reaches this handler.
       const operation = (async () => {
         if (entry) {
           entry.usage?.close();
@@ -1347,7 +1405,6 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     })
     .onRequest("session/list", async ({ params, signal, client }) => {
       requireAccess();
-      if (!options.listSessions) throw RequestError.methodNotFound("session/list");
       if (params.cwd != null && !isAbsolute(params.cwd))
         throw RequestError.invalidParams(undefined, "cwd must be absolute");
       const started = performance.now();
@@ -1358,7 +1415,8 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         cwd: params.cwd,
       };
       try {
-        const result = await options.listSessions(params, signal);
+        // Unadvertised list never reaches this handler.
+        const result = await options.listSessions!(params, signal);
         diagnostic("acp", "debug", "acp.session.list.completed", {
           ...trace,
           count: result.sessions.length,

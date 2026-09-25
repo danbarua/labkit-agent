@@ -388,17 +388,25 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
 ## Supported protocol surface
 
 - `initialize`: negotiates ACP v1; declares actual prompt/load/close capabilities. The default launcher uses
-  environment credentials; hosts can supply the authentication methods described above.
+  environment credentials; hosts can supply the authentication methods described above. A
+  conditional method that `initialize` does not advertise (`session/load`, `session/resume`,
+  `session/fork`, `session/delete`, `session/list`, `logout`) returns -32601 naming the missing
+  capability, before initialization, params, auth or session state are checked, and logs
+  `acp.method.not_advertised`. Unknown and unstable methods such as `session/set_model` also
+  return -32601.
 - `session/new`: creates a journaled session. Each connection owns its loaded runtimes.
 - `session/prompt`: admits one active prompt per session and waits for durable terminal settlement.
   Separate sessions run independently; overlapping prompts in one session return an RPC error.
 - `session/cancel`: remains responsive during completions, tools, and permission requests. It routes
   abort through core and returns `cancelled` on the original prompt. Idle cancellation is a no-op.
 - `session/close`: closes the runtime and cancels owned work; it does not delete persisted data.
+  Later requests for that session ID return invalid params saying the session is not open on this
+  connection and to reopen it with `session/load` or `session/resume` (`acp.session.not_open`).
 - `session/load`: opt-in via `loadSession: true`. The factory receives sessionId and must resolve the
   saved store and validate that cwd belongs to that session. No durable session-to-workspace
   directory is invented by this adapter. Duplicate live loads are rejected. Tool or agent registry
-  changes do not prevent loading ([registry changes](#registry-changes-on-reopen)).
+  changes do not prevent loading ([registry changes](#registry-changes-on-reopen)). An ID with no
+  saved journal (never saved, or deleted) returns -32002 (resource not found) with `data.sessionId`.
 - `session/resume`: available with `loadSession`; restores and recovers like load but emits no
   conversation replay. Duplicate live sessions remain rejected.
 - `session/fork`: experimental, opt-in via `forkSession: true` (requires `loadSession`). Forks a
@@ -530,6 +538,9 @@ omitting it or passing an empty list activates only the primary cwd. A load, res
 select different additional roots while retaining the session's primary cwd. Fork changes apply
 only to the child, including when the parent is restored privately. Custom factories opt in with
 `AcpOptions.additionalDirectories: true` and receive a frozen list in `SessionOptionsContext`.
+Without that opt-in, a non-empty `additionalDirectories` on new/load/resume/fork returns invalid
+params naming the unadvertised capability (`acp.session.additional_directories.refused`); an
+empty list is accepted.
 
 Relative file paths resolve against the primary cwd. Absolute paths may address any allowed root.
 The example canonicalizes and deduplicates roots, includes their paths in tool descriptions, and
