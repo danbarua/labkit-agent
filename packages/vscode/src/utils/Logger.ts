@@ -77,8 +77,8 @@ export function logTraffic(direction: "send" | "recv", data: unknown): void {
         message?.result?.sessionId ??
         message?.error?.data?.operation?.sessionId,
       sessionUpdate: update?.sessionUpdate,
-      toolCallId: update?.toolCallId,
-      title: update?.title,
+      toolCallId: update?.toolCallId ?? message?.params?.toolCall?.toolCallId,
+      title: update?.title ?? message?.params?.toolCall?.title,
       status: update?.status,
       stopReason: message?.result?.stopReason,
       ...(message?.error ? { error: message.error } : {}),

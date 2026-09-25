@@ -47,6 +47,20 @@ the session, path, operation, byte count or failed phase and original cause. Fil
 from these lifecycle records. The filesystem tests use an injected editor API: native save,
 format-on-save, undo and dirty-buffer behavior still require editor-host verification.
 
+Permission prompts are serialized so one request cannot hide another. Cancelling a turn dismisses
+its visible and queued prompts and answers later requests from that turn with `cancelled`. A new
+explicit prompt resets that cancellation state; concurrent prompts for one session are rejected.
+Connection closure also settles pending prompts. The SDK request signal reaches the permission
+handler, so `$/cancel_request` dismisses the matching prompt without cancelling unrelated sessions.
+All four option kinds return the agent's exact option ID. The agent owns the meaning and retention
+of an “always” choice; the client does not invent a broader authorization scope. Configured
+`allowAll` cannot override cancellation. Refusal logs identify the tool, choice and consequence;
+`vscode.permission.*` events include session, tool-call and available RPC request IDs.
+
+The client uses the current SDK's typed connection/context API. Cancelling a terminal exit wait
+returns `-32800` without killing or releasing the command; those are separate terminal operations.
+In-process SDK tests and a real scripted stdio exchange exercise these cancellation boundaries.
+
 Terminal commands use the requested executable and literal arguments. To run shell syntax, request
 an explicit shell with its arguments. An omitted working directory uses the workspace selected
 when connecting the agent. Output is decoded across byte chunks, updated immediately, and retained

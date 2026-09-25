@@ -259,13 +259,40 @@ export class TerminalHandler {
 
   async waitForTerminalExit(
     params: WaitForTerminalExitRequest,
+    signal?: AbortSignal,
   ): Promise<WaitForTerminalExitResponse> {
     const terminal = this.get(params);
     logDiagnostic("debug", "vscode.terminal.waiting", {
       ...params,
       reason: "Waiting for command exit and output stream closure",
     });
-    await terminal.done;
+    await new Promise<void>((resolve, reject) => {
+      const cancelled = () => {
+        signal?.removeEventListener("abort", cancelled);
+        logDiagnostic("info", "vscode.terminal.wait_cancelled", {
+          ...params,
+          reason: "request_cancelled",
+          message:
+            "Stopped waiting for terminal exit; the command remains available until killed or released",
+        });
+        reject(
+          RequestError.requestCancelled(
+            params,
+            "Terminal exit wait cancelled; the command has not been killed",
+          ),
+        );
+      };
+
+      if (signal?.aborted) {
+        cancelled();
+        return;
+      }
+      signal?.addEventListener("abort", cancelled, { once: true });
+      void terminal.done.then(() => {
+        signal?.removeEventListener("abort", cancelled);
+        resolve();
+      });
+    });
     if (terminal.failure) throw terminal.failure;
     return terminal.exitStatus!;
   }

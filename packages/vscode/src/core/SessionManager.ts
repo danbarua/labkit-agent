@@ -19,7 +19,7 @@ import { getAgentConfigs } from "../config/AgentConfig";
 import { workspaceCwd } from "../config/workspace-cwd";
 import { SessionUpdateHandler } from "../handlers/SessionUpdateHandler";
 import { sendError, sendEvent } from "../utils/Diagnostics";
-import { log, logError } from "../utils/Logger";
+import { log, logDiagnostic, logError } from "../utils/Logger";
 import { AgentManager } from "./AgentManager";
 import { ConnectionManager, type ConnectionInfo } from "./ConnectionManager";
 import { SessionHistoryStore } from "./SessionHistoryStore";
@@ -75,6 +75,7 @@ export type AgentConnectionError =
 export class SessionManager extends EventEmitter {
   private sessions: Map<string, SessionInfo> = new Map();
   private activeSessionId: string | null = null;
+  private promptingSessionIds = new Set<string>();
 
   /** Maps agentName → activeSessionId for the one-session-per-agent model. */
   private agentSessions: Map<string, string> = new Map();
@@ -326,7 +327,7 @@ export class SessionManager extends EventEmitter {
   ): Promise<SessionInfo> {
     let sessionResponse: NewSessionResponse;
     try {
-      sessionResponse = await connInfo.connection.newSession({
+      sessionResponse = await connInfo.connection.agent.request("session/new", {
         cwd,
         mcpServers: [],
       });
@@ -339,7 +340,7 @@ export class SessionManager extends EventEmitter {
       // Auth required — interactively authenticate, then retry.
       await this.runAuthFlow(agentName, agentId, connInfo);
       try {
-        sessionResponse = await connInfo.connection.newSession({
+        sessionResponse = await connInfo.connection.agent.request("session/new", {
           cwd,
           mcpServers: [],
         });
@@ -443,7 +444,7 @@ export class SessionManager extends EventEmitter {
 
     try {
       log(`Authenticating with method: ${selectedMethod.name} (${selectedMethod.id})`);
-      await connInfo.connection.authenticate({ methodId: selectedMethod.id });
+      await connInfo.connection.agent.request("authenticate", { methodId: selectedMethod.id });
       log("Authentication successful");
     } catch (authErr: any) {
       logError("Authentication failed", authErr);
@@ -493,14 +494,28 @@ export class SessionManager extends EventEmitter {
       throw new Error(`No connection for agent: ${session.agentId}`);
     }
 
-    log(`sendPrompt: session=${sessionId}, text="${text.substring(0, 50)}..."`);
-
     const prompt: ContentBlock[] = [{ type: "text", text }];
 
-    const response = await connInfo.connection.prompt({
-      sessionId,
-      prompt,
-    });
+    if (this.promptingSessionIds.has(sessionId)) {
+      logDiagnostic("warning", "vscode.prompt.rejected", {
+        sessionId,
+        reason: "active_prompt",
+        message:
+          "Another prompt is still active; the new prompt was not sent and the active turn is unchanged",
+      });
+      throw new Error(
+        `Session ${sessionId} already has an active prompt; wait for its terminal response before starting another`,
+      );
+    }
+    this.promptingSessionIds.add(sessionId);
+    logDiagnostic("info", "vscode.prompt.started", { sessionId, contentBlocks: prompt.length });
+    connInfo.permissions.beginTurn(sessionId);
+    const response = await connInfo.connection.agent
+      .request("session/prompt", { sessionId, prompt })
+      .finally(() => {
+        this.promptingSessionIds.delete(sessionId);
+        connInfo.permissions.cancelSession(sessionId, "turn_settled");
+      });
 
     log(`Prompt response: stopReason=${response.stopReason}`);
     return response;
@@ -521,7 +536,8 @@ export class SessionManager extends EventEmitter {
     }
 
     log(`Cancelling turn for session ${sessionId}`);
-    await connInfo.connection.cancel({ sessionId });
+    connInfo.permissions.cancelSession(sessionId);
+    await connInfo.connection.agent.notify("session/cancel", { sessionId });
   }
 
   /**
@@ -553,7 +569,7 @@ export class SessionManager extends EventEmitter {
       return;
     }
 
-    await connInfo.connection.setSessionMode({ sessionId, modeId });
+    await connInfo.connection.agent.request("session/set_mode", { sessionId, modeId });
 
     // Update local state
     if (session.modes) {
@@ -607,7 +623,7 @@ export class SessionManager extends EventEmitter {
       return null;
     }
 
-    const response = await connInfo.connection.setSessionConfigOption({
+    const response = await connInfo.connection.agent.request("session/set_config_option", {
       sessionId,
       configId,
       value,
@@ -800,14 +816,14 @@ export class SessionManager extends EventEmitter {
 
     let response: any;
     try {
-      response = await conn.connection.listSessions(params);
+      response = await conn.connection.agent.request("session/list", params);
     } catch (e: any) {
       if (this.isAuthRequiredError(e)) {
         // Auth then retry.
         const agentInfo = this.findAgentIdForConnection(conn);
         if (agentInfo) {
           await this.runAuthFlow(agentName, agentInfo, conn);
-          response = await conn.connection.listSessions(params);
+          response = await conn.connection.agent.request("session/list", params);
         } else {
           throw e;
         }
@@ -895,7 +911,7 @@ export class SessionManager extends EventEmitter {
     this.emit("session-load-start", sessionId, agentName);
 
     try {
-      const response = await conn.connection.loadSession({
+      const response = await conn.connection.agent.request("session/load", {
         sessionId,
         cwd,
         mcpServers: [],
@@ -965,7 +981,7 @@ export class SessionManager extends EventEmitter {
 
     let response: any;
     try {
-      response = await conn.connection.resumeSession({
+      response = await conn.connection.agent.request("session/resume", {
         sessionId,
         cwd,
         mcpServers: [],

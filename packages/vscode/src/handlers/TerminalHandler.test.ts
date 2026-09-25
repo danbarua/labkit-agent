@@ -217,7 +217,11 @@ test("connection removal closes terminal resources even when shutdown is request
     args: ["-e", 'console.log("ready");setInterval(()=>{},1000)'],
   });
   await until(() => f.updates.some((update) => update.output.includes("ready")));
-  (manager as any).connections.set("agent", { terminalHandler: f.handler });
+  (manager as any).connections.set("agent", {
+    terminalHandler: f.handler,
+    permissions: { dispose() {} },
+    connection: { close() {} },
+  });
   manager.removeConnection("agent");
   await f.handler.dispose();
   expect(f.resources).toEqual({ terminals: 0, writers: 0 });
@@ -263,6 +267,49 @@ test("closing the editor terminal stops its command and leaves the ACP exit stat
       await f.handler.waitForTerminalExit({ sessionId: "close-panel", terminalId }),
     ).toMatchObject({ signal: "SIGKILL" });
   } finally {
+    await f.handler.dispose();
+  }
+});
+
+test("SDK cancellation settles an exit wait without killing or releasing the command", async () => {
+  const { agent } = await import("@agentclientprotocol/sdk");
+  const { clientApp } = await import("../core/client-app.ts");
+  const f = fixture();
+  const abort = new AbortController();
+  let waiting = false;
+  const terminal = await f.handler.createTerminal({
+    sessionId: "cancel-wait",
+    command: process.execPath,
+    args: ["-e", 'console.log("ready");setInterval(()=>{},1000)'],
+  });
+  await until(() => f.updates.some((update) => update.output.includes("ready")));
+  const server = agent().onRequest("session/prompt", async ({ client }) => {
+    waiting = true;
+    await client.request(
+      "terminal/wait_for_exit",
+      { sessionId: "cancel-wait", ...terminal },
+      { cancellationSignal: abort.signal },
+    );
+    return { stopReason: "end_turn" };
+  });
+  const connection = clientApp({ terminals: f.handler } as any).connect(server);
+  try {
+    const prompt = connection.agent.request("session/prompt", {
+      sessionId: "cancel-wait",
+      prompt: [],
+    });
+    const result = prompt.then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    await until(() => waiting);
+    abort.abort();
+    expect(await result).toMatchObject({ error: { code: -32800 } });
+    const output = await f.handler.terminalOutput({ sessionId: "cancel-wait", ...terminal });
+    expect(output.exitStatus).toBeUndefined();
+    expect(output.output).toBe("ready\n");
+  } finally {
+    connection.close();
     await f.handler.dispose();
   }
 });

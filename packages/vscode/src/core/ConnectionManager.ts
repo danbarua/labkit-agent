@@ -1,8 +1,9 @@
 import { ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 
-import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
-import type { Agent, InitializeResponse, Stream } from "@agentclientprotocol/sdk";
+import { ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
+import type { ClientConnection, InitializeResponse, Stream } from "@agentclientprotocol/sdk";
+import * as vscode from "vscode";
 
 import { version as extensionVersion } from "../../package.json";
 import { FileSystemHandler } from "../handlers/FileSystemHandler";
@@ -10,23 +11,26 @@ import { PermissionHandler } from "../handlers/PermissionHandler";
 import { SessionUpdateHandler } from "../handlers/SessionUpdateHandler";
 import { TerminalHandler } from "../handlers/TerminalHandler";
 import { log, logError, logTraffic } from "../utils/Logger";
-import { AcpClientImpl } from "./AcpClientImpl";
+import { clientApp } from "./client-app";
 
 export interface ConnectionInfo {
-  connection: ClientSideConnection;
-  client: AcpClientImpl;
+  connection: ClientConnection;
+  permissions: PermissionHandler;
   terminalHandler: TerminalHandler;
   initResponse: InitializeResponse;
 }
 
 /**
  * Manages ACP connections to agent processes.
- * Creates ClientSideConnection instances from spawned child processes.
+ * Creates typed client connections from spawned child processes.
  */
 export class ConnectionManager {
   private connections: Map<string, ConnectionInfo> = new Map();
 
-  constructor(private readonly sessionUpdateHandler: SessionUpdateHandler) {}
+  constructor(
+    private readonly sessionUpdateHandler: SessionUpdateHandler,
+    private readonly editor: typeof vscode = vscode,
+  ) {}
 
   /**
    * Create an ACP connection from a child process.
@@ -49,35 +53,35 @@ export class ConnectionManager {
     const tappedStream = this.tapStream(stream);
 
     // Create handlers
-    const fsHandler = new FileSystemHandler();
+    const fsHandler = new FileSystemHandler(this.editor);
     const terminalHandler = new TerminalHandler(
-      undefined,
+      this.editor,
       (update) => this.sessionUpdateHandler.terminalOutput(update),
       cwd,
     );
-    process.once("close", () => {
+    const permissionHandler = new PermissionHandler(this.editor);
+    const connection = clientApp({
+      files: fsHandler,
+      terminals: terminalHandler,
+      permissions: permissionHandler,
+      updates: this.sessionUpdateHandler,
+    }).connect(tappedStream);
+
+    const cleanup = () => {
+      permissionHandler.dispose();
       void terminalHandler.dispose();
+    };
+
+    process.once("close", () => {
+      connection.close();
+      cleanup();
     });
-    const permissionHandler = new PermissionHandler();
-
-    // Create client implementation
-    const client = new AcpClientImpl(
-      fsHandler,
-      terminalHandler,
-      permissionHandler,
-      this.sessionUpdateHandler,
-    );
-
-    // Create connection — toClient factory receives the Agent proxy
-    const connection = new ClientSideConnection((agent: Agent) => {
-      client.setAgent(agent);
-      return client;
-    }, tappedStream);
+    connection.signal.addEventListener("abort", cleanup, { once: true });
 
     // Initialize the connection
     log(`ConnectionManager: initializing connection to agent ${agentId}`);
-    const initResponse = await connection
-      .initialize({
+    const initResponse = await connection.agent
+      .request("initialize", {
         protocolVersion: PROTOCOL_VERSION,
         clientInfo: {
           name: "vscode-acp-client",
@@ -92,6 +96,8 @@ export class ConnectionManager {
         },
       })
       .catch(async (error) => {
+        connection.close(error);
+        permissionHandler.dispose();
         await terminalHandler.dispose();
         throw error;
       });
@@ -100,7 +106,12 @@ export class ConnectionManager {
       `ConnectionManager: initialized. Agent: ${initResponse.agentInfo?.name || "unknown"} v${initResponse.agentInfo?.version || "?"}`,
     );
 
-    const info: ConnectionInfo = { connection, client, initResponse, terminalHandler };
+    const info: ConnectionInfo = {
+      connection,
+      permissions: permissionHandler,
+      initResponse,
+      terminalHandler,
+    };
     this.connections.set(agentId, info);
 
     return info;
@@ -113,7 +124,11 @@ export class ConnectionManager {
   removeConnection(agentId: string): void {
     const info = this.connections.get(agentId);
     this.connections.delete(agentId);
-    if (info) void info.terminalHandler.dispose();
+    if (info) {
+      info.permissions.dispose();
+      info.connection.close();
+      void info.terminalHandler.dispose();
+    }
   }
 
   dispose(): void {
