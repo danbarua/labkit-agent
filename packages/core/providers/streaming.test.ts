@@ -73,8 +73,8 @@ for (const profile of streamingProfiles) {
       expect(decodes).toBe(1);
       expect(deltas.map((delta) => delta.text ?? "").join("")).toBe(text);
       expect(deltas.some((delta) => delta.usage)).toBe(true);
+      expect(deltas.map((delta) => delta.thinking ?? "").join("")).toBe("Considering");
       if (profile.id !== "openai-chat@2") {
-        expect(deltas.map((delta) => delta.thinking ?? "").join("")).toBe("Considering");
         expect(JSON.stringify(result.continuationPayload)).toContain("signature");
       }
     }
@@ -294,7 +294,7 @@ for (const profile of streamingProfiles)
     });
     if (profile.id === "openai-chat@2") {
       frames.splice(
-        3,
+        4,
         0,
         event({
           choices: [
@@ -315,7 +315,7 @@ for (const profile of streamingProfiles)
         }),
       );
       frames.splice(
-        5,
+        6,
         0,
         event({
           choices: [

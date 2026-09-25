@@ -80,6 +80,9 @@ export function Console() {
   const [view, setView] = useState<SessionView | null>(null);
   const [sessionId, setSessionId] = useState(() => sessionStorage.getItem("labkit-session"));
   const [draft, setDraft] = useState<Draft>({ text: "", thinking: "" });
+  const [keptDrafts, setKeptDrafts] = useState<Draft[]>([]);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [text, setText] = useState("");
   const [files, setFiles] = useState<AttachmentFile[]>([]);
   const [awaitingReceipt, setAwaitingReceipt] = useState(false);
@@ -139,10 +142,12 @@ export function Console() {
       if (event.kind === "snapshot") {
         setView(event.view);
         if (event.view.phase === "idle") {
-          const failed = event.view.log.at(-1)?.outcome.kind === "failed";
-          setDraft((current) =>
-            failed && (current.text || current.thinking) ? current : { text: "", thinking: "" },
-          );
+          const current = draftRef.current;
+          if (current.text || current.thinking) {
+            draftRef.current = { text: "", thinking: "" };
+            setKeptDrafts((list) => [...list, current]);
+            setDraft({ text: "", thinking: "" });
+          }
           setPermission(null);
         }
       } else if (event.kind === "delta") {
@@ -452,6 +457,22 @@ export function Console() {
               {messages.map((item) => (
                 <Message key={item.key} message={item.message} onOpen={openPreview} />
               ))}
+              {keptDrafts.map((kept, index) => (
+                <details
+                  key={`${index}:${kept.text.length}:${kept.thinking.length}`}
+                  className="rounded-md border border-border px-3 py-2"
+                >
+                  <summary className="cursor-pointer text-[10px] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
+                    Stream draft
+                  </summary>
+                  {kept.thinking ? (
+                    <p className="mt-2 mb-2 font-mono text-xs text-muted-foreground">
+                      {kept.thinking}
+                    </p>
+                  ) : null}
+                  {kept.text ? <p className="whitespace-pre-wrap text-sm">{kept.text}</p> : null}
+                </details>
+              ))}
               {view.phase === "awaiting_model" && !draft.text && !draft.thinking ? (
                 <p className="text-sm text-muted-foreground">awaiting model…</p>
               ) : null}
@@ -461,7 +482,7 @@ export function Console() {
               {draft.text || draft.thinking ? (
                 <article className="rounded-md border border-teal/30 bg-teal/5 px-3 py-2">
                   <p className="mb-1 text-[10px] font-semibold tracking-[0.16em] text-teal uppercase">
-                    {view.phase === "idle" ? "Truncated output" : "Stream draft"}
+                    Stream draft
                   </p>
                   {draft.thinking ? (
                     <p className="mb-2 font-mono text-xs text-muted-foreground">{draft.thinking}</p>

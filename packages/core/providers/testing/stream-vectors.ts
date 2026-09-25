@@ -19,6 +19,7 @@ export function streamVector(profile: CompletionProfile, tools = false, signatur
     const chunk = (delta: unknown, finish_reason: string | null = null) =>
       frame({ choices: [{ index: 0, delta, finish_reason }] });
     return [
+      chunk({ reasoning_content: "Considering" }),
       chunk({ role: "assistant", content: "Hello " }),
       chunk({ content: "🌍" }),
       ...(tools
