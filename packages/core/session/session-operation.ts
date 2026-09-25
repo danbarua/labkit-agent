@@ -10,8 +10,14 @@ import {
   type SessionPersistence,
 } from "./persistence.ts";
 
+/** Identity of one storage operation: an append, by append ID, or a load, by session ID. */
 export type StorageRef = Readonly<{ kind: "load" | "append"; id: string }>;
 
+/**
+ * State of one storage operation. `ready`: created, not started. `running`: the port call is in
+ * progress. `settled`: `result` is final. `cancellationRequested` means the port's AbortSignal was
+ * aborted; it does not certify that nothing was written.
+ */
 export type StorageState<T> =
   | Readonly<{ status: "ready"; ref: StorageRef; cancellationRequested: boolean }>
   | Readonly<{ status: "running"; ref: StorageRef; cancellationRequested: boolean }>
@@ -78,6 +84,15 @@ function operation<T>(
   };
 }
 
+/**
+ * One `port.append` call as a storage operation. The call runs once `start()` is called; `result`
+ * resolves with its outcome and never rejects. A port that throws or answers malformed yields
+ * `indeterminate`, because the batch may have committed. `rejected` and `indeterminate` results
+ * carry a structured `persistence` failure.
+ *
+ * `cancel()` aborts the port's signal, before or during the call; only the adapter's result says
+ * whether anything was written. Neither method has an effect once the operation has settled.
+ */
 export function appendOperation(port: SessionPersistence, request: AppendRequest) {
   const startedAt = performance.now();
   return operation<AppendResult>(
@@ -144,6 +159,12 @@ export function appendOperation(port: SessionPersistence, request: AppendRequest
   );
 }
 
+/**
+ * One `port.load` call as a storage operation. The call runs once `start()` is called; `result`
+ * resolves with the committed batches, `not_found` or `failed`, and never rejects. A port that
+ * throws or answers malformed yields `failed`. Only the reply's shape is checked; journal integrity
+ * is checked by `replay`.
+ */
 export function loadOperation(port: SessionPersistence, sessionId: SessionId) {
   const startedAt = performance.now();
   return operation<LoadResult>(
@@ -188,6 +209,10 @@ export function loadOperation(port: SessionPersistence, sessionId: SessionId) {
     sessionId,
   );
 }
+/**
+ * Loads a session's committed batches through one {@link loadOperation}. Resolves with its result
+ * and never rejects.
+ */
 export async function loadSession(port: SessionPersistence, sessionId: SessionId) {
   const actor = loadOperation(port, sessionId);
   await actor.start();

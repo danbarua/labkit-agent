@@ -37,7 +37,16 @@ async function readBlob(
     throw new Error(`Attachment metadata or hash mismatch: ${ref.id}`);
   return { meta, bytes };
 }
-/** Called inside operation lifetimes only. Replay never reads the object store. */
+/**
+ * Reads and verifies the blobs a prepared completion request refers to and returns a resolver that
+ * hands out copies of their bytes. Called inside operation lifetimes only. Replay never reads the
+ * object store.
+ * @param media Attachment media the bound provider accepts; checked for message attachments only.
+ * @param includeContinuations Also read the payload blobs of continuations (provider continuation
+ * payloads, not the next step).
+ * @throws when an attachment's media is unsupported, a blob is missing, or its size, media or hash
+ * does not match its ref.
+ */
 export async function resolveRequestBlobs(
   port: SessionPersistence,
   sessionId: SessionId,
@@ -65,7 +74,11 @@ export async function resolveRequestBlobs(
     return blob.bytes.slice();
   };
 }
-/** Copy only refs inherited by the child, before publishing its creation. */
+/**
+ * Copies the blobs a child session (fork or compaction) inherits from its parent. Copy only refs
+ * inherited by the child, before publishing its creation.
+ * @throws when a blob is missing or corrupt in the parent, or the child's copy does not match.
+ */
 export async function copyBranchBlobs(
   port: SessionPersistence,
   parent: SessionId,
@@ -90,9 +103,16 @@ export async function copyBranchBlobs(
   }
 }
 
+/** Blob refs of continuations whose payload was stored as a blob rather than inline. */
 export function continuationBlobRefs(entries: readonly Continuation[]) {
   return entries.flatMap((entry) => (entry.payloadBlob ? [entry.payloadBlob] : []));
 }
+/**
+ * Builds the continuation (provider continuation payload) to journal with a settled step. A
+ * payload up to 65,536 characters of JSON stays inline; a larger one is stored as a `text/plain`
+ * blob and referenced by `payloadBlob`.
+ * @throws when the payload is not JSON or the stored blob does not match.
+ */
 export async function storeContinuation(
   port: SessionPersistence,
   sessionId: SessionId,

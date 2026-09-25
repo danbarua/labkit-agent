@@ -5,6 +5,17 @@ import { parseSessionContext } from "../agent/prompt.ts";
 import { MessagesSchema } from "../agent/types.ts";
 import { PolicyPatchSchema } from "../policy/policy.ts";
 
+/**
+ * Schema of the public events a caller submits with `SessionRuntime.dispatch`:
+ * - `user`: user input (text, stored attachment refs, or both). It starts a turn, joins the
+ *   active turn by barge-in, is queued, or is refused, as the mid-turn input policy decides.
+ * - `abort`: cancels the active turn, which ends `aborted`. Already queued inputs are kept.
+ * - `system`: replaces the standing session instructions (not a system notice).
+ * - `policy`: patches the configuration for the next turn.
+ * - `fork` / `compact`: create a child session; `context` is the compacted child's replacement
+ *   context and must hold complete tool exchanges.
+ * - `close`: closes the session; nothing is journaled.
+ */
 export const EnvEventSchema = z.discriminatedUnion("type", [
   z
     .strictObject({
@@ -30,4 +41,5 @@ export const EnvEventSchema = z.discriminatedUnion("type", [
   }),
   z.strictObject({ type: z.literal("close") }),
 ]);
+/** A public session event before validation (input shape of {@link EnvEventSchema}). */
 export type EnvEvent = z.input<typeof EnvEventSchema>;

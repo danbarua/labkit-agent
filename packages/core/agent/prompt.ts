@@ -7,10 +7,18 @@ import {
   type TurnRecord,
 } from "./types.ts";
 
+/** Everything prompt projection may draw on to build the next step's request. */
 export type PromptInput = Readonly<{
+  /** Session context placed before the finished turns, e.g. a compaction's replacement context. */
   context?: readonly AgentMessage[];
+  /** Finished turns of this session, oldest first. */
   log: readonly TurnRecord[];
+  /** The turn in progress. Its `view` decides whether history or the handoff packet is sent. */
   turn: TurnData;
+  /**
+   * The agent that will run the step. {@link projectConversationPrompt} uses only `systemPrompt`;
+   * the other fields are for custom projections.
+   */
   agent: Readonly<{
     successors?: readonly string[];
     model: string;
@@ -70,10 +78,32 @@ const SessionContextSchema = MessagesSchema.transform((messages) => {
   completedExchanges(messages, "session context");
   return messages;
 }).brand<"SessionContext">();
+/**
+ * Session context that was checked to hold only complete, correlated tool exchanges.
+ * Build it with {@link parseSessionContext}.
+ */
 export type SessionContext = ReturnType<typeof SessionContextSchema.parse>;
+/**
+ * Validates messages as session context, for example a compaction's replacement context.
+ * @throws When a message is invalid, or a tool exchange has an orphan, duplicate, unmatched or
+ * missing result.
+ */
 export const parseSessionContext = (raw: unknown): SessionContext =>
   SessionContextSchema.parse(raw);
 
+/**
+ * The default prompt projection: builds the chat messages for the next step.
+ *
+ * The agent's `systemPrompt`, when set, comes first as a `system` message. Then, with a `history`
+ * view: session context, every finished turn and the current turn's messages. With a `handoff`
+ * view: only the handoff packet. Stored history is not changed.
+ *
+ * Tool exchanges must be complete. The one exception is the last exchange of a finished turn that
+ * did not complete: calls without results are dropped from the request.
+ *
+ * @throws When any source (including one the view does not send) has an orphan, duplicate or
+ * unmatched tool result, or a tool call without a result outside that exception.
+ */
 export function projectConversationPrompt({
   context = [],
   log,

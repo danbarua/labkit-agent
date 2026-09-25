@@ -57,29 +57,60 @@ import {
   type WireEvent,
 } from "./types.ts";
 
+/** A `tool` record's body: one tool call's raw result, committed before its tool batch settles. */
 export type ToolEntry = Extract<JournalBody, { kind: "tool" }>;
 
+/** Accounting of the latest committed completion that reported usage. */
 export type LastCompletionUsage = Readonly<{
+  /** Turn whose step produced the completion. */
   turnId: string;
+  /** ID of the completion: a child operation of the turn, not a child session. */
   operationId: string;
   usage: CompletionUsage;
 }>;
 
+/**
+ * Session state folded from journal records: the conversation plus everything the records set.
+ * {@link replay} builds it on load; {@link stage} returns the next one for new work. A staged state
+ * is a proposal until its append commits.
+ */
 export type JournalState = Readonly<{
+  /** Accounting of the latest committed completion that reported usage; kept when one has none. */
   lastCompletionUsage?: LastCompletionUsage;
+  /** Current turn, turn log, inherited context and pending branch requests. */
   conversation: ConversationState;
+  /**
+   * Provider continuation payloads (such as thinking signatures) committed with settled steps, each
+   * owned by the assistant message of one turn and generation.
+   */
   continuations?: readonly Continuation[];
+  /**
+   * Configuration (the user-selectable settings) in force. Policy records are staged only at an
+   * idle boundary, so a running turn keeps the policy it started with.
+   */
   policy: Policy;
+  /**
+   * Queued inputs, oldest first, each waiting for the current turn to end. Not the in-memory
+   * submissions of `SessionState.queue`.
+   */
   pendingInputs?: readonly Readonly<{
     inputId: ReturnType<typeof ActorIdSchema.parse>;
     text: string;
     attachments?: readonly BlobRef[];
   }>[];
+  /** The registry (tool and agent definitions); the user-selectable configuration is `policy`. */
   configuration: Configuration;
+  /** Standing session instructions, not system notices. */
   systemInputs: readonly string[];
   systemVersion: ReturnType<typeof SystemVersionSchema.parse>;
+  /**
+   * `tool` records committed for the running tool batch, in commit order. Cleared when the batch
+   * settles or the turn ends.
+   */
   partial: readonly ToolEntry[];
+  /** Revision of the last record in `records`; 0 before the creation record. */
   revision: Revision;
+  /** Every record folded so far, in revision order. A staged state ends with uncommitted ones. */
   records: readonly JournalRecord[];
 }>;
 
@@ -92,7 +123,14 @@ type Fold = Readonly<{ mode: "stage"; resolvers: PolicyResolvers }> | Readonly<{
 
 const load: Fold = { mode: "load" };
 
-/** Staging a creation record: every commit-time rule applies to the seed. */
+/**
+ * Builds the initial state of a new session from its seed under every commit-time rule: the turn
+ * sequence against origin and log, a registered starting agent, the policy against the registry and
+ * live `resolvers`, inherited continuation owners and provider bindings, and a history that
+ * projects into a prompt. Load folds a committed seed without these checks.
+ *
+ * @throws Error when the seed breaks a commit-time rule; ZodError when it does not parse.
+ */
 export function seedConversation(
   raw: Seed,
   resolvers: PolicyResolvers = builtinResolvers,
@@ -179,6 +217,15 @@ function foldSeed(seed: Seed): JournalState {
   });
 }
 
+/**
+ * The seed that starts a fork or compaction child session (not a child operation) from
+ * `conversation`. It carries `state`'s registry, policy and standing instructions. Continuations
+ * are kept only for a fork, and only those whose assistant message is in the context or log.
+ *
+ * @param conversation Conversation to seed from, defaulting to `state.conversation`. A branch
+ *   passes its branched snapshot, which already holds the child's session ID and origin.
+ * @throws Error when `conversation` has a running turn.
+ */
 export function toSeed(state: JournalState, conversation = state.conversation): Seed {
   if (conversation.turn.status !== "idle")
     throw new Error("Initialization requires an idle boundary");
@@ -211,7 +258,13 @@ export function toSeed(state: JournalState, conversation = state.conversation): 
       : {}),
   });
 }
-/** Explicit DTO projection: connection settings and credentials never enter a journal. */
+/**
+ * Converts a conversation event into its journaled form ({@link WireEvent}). A captured prompt
+ * keeps only its journaled fields, so connection settings and credentials never enter a journal. A
+ * failed dispatch of a turn's child operation becomes a `failed` child event.
+ *
+ * @throws Error for a failed branch reply, which has no journaled form.
+ */
 export function wireEvent(event: ConversationEvent): WireEvent {
   if (event.type === "dispatch_failed") {
     if (event.command.type !== "turn") throw new Error("Cannot journal a failed branch callback");
@@ -290,6 +343,12 @@ function missingTarget(state: JournalState, input: SessionInput): string | undef
   return undefined;
 }
 
+/**
+ * Whether `input` still applies to `state`: the turn, operation, tool batch and call it names are
+ * current, and a tool result arrives while its batch runs, once per call, with no earlier result of
+ * the batch counting as failed under the policy's `toolFailure`. `false` marks a stale or
+ * uncorrelated input: `decideSession` answers `ignored` and {@link stage} throws.
+ */
 export function accepts(state: JournalState, input: SessionInput): boolean {
   if (missingTarget(state, input)) return false;
   if (input.kind !== "tool") return true;
@@ -826,10 +885,22 @@ function reduce(
   };
 }
 
+/**
+ * Serializes a record as a journal append stores it.
+ *
+ * @throws ZodError when the record is not a current-format journal record.
+ */
 export function encodeRecord(record: JournalRecord): string {
   return JSON.stringify(JournalRecordSchema.parse(record));
 }
 
+/**
+ * Parses one stored record and deep-freezes it. Checks only the record format; journal integrity is
+ * checked by {@link replay}, which reports a failure here as `record_decode`.
+ *
+ * @throws SyntaxError for invalid JSON; ZodError for anything else that is not a current-format
+ *   record, including a newer `version` or an unknown body `kind`.
+ */
 export function decodeRecord(serialized: string): JournalRecord {
   return freeze(JournalRecordSchema.parse(JSON.parse(serialized)));
 }
@@ -862,6 +933,25 @@ function decodeFailure(serialized: string): string {
   return "Record does not decode as a version 1 journal record";
 }
 
+/**
+ * Stages new work: folds `input` into `state` under every commit-time rule, checked against the
+ * live `resolvers` (prompt projection, policy patches and versions, permissions, mid-turn input
+ * policy, registry, continuations and tool-result correlation). Load ({@link replay}) never re-runs
+ * these rules. Nothing is durable until the returned records commit.
+ *
+ * One input can stage several records into one append. A record that ends a turn is followed by the
+ * turn's `terminal` record. User input the policy queues becomes a `queued` record, followed by an
+ * `abort` event under `abort-tools-on-user` while tools run or permission is awaited. `recovery` is
+ * followed by `input_cancelled` for every queued input.
+ *
+ * @param appendId Stable ID of the append; entry IDs are `<appendId>/<index>`.
+ * @param inputId Queued-input ID for user input the policy queues; defaults to `appendId`.
+ * @returns `state`, the proposed next state, whose `revision` and `records` include the staged
+ *   records; `records`, the serialized records to append; `commands`, the conversation commands to
+ *   dispatch once the append commits.
+ * @throws Error when the input is stale or uncorrelated (see {@link accepts}) or breaks a
+ *   commit-time rule; `created` also requires an empty journal.
+ */
 export function stage(
   state: JournalState,
   input: SessionInput,
@@ -974,6 +1064,12 @@ function packageRecords(
   });
 }
 
+/**
+ * Stages the `created` record of a new session: {@link seedConversation} under the commit-time
+ * rules, as a one-record append at revision 1. Load folds the committed seed without these rules.
+ *
+ * @throws Error or ZodError, as {@link seedConversation} does.
+ */
 export function stageCreation(
   seed: Seed,
   appendId: AppendId,
@@ -983,11 +1079,15 @@ export function stageCreation(
   return packageRecords(state, state, [{ kind: "created", seed }], appendId);
 }
 
-/** Integrity rules a committed journal must satisfy to load. Nothing else is checked on load. */
+/**
+ * Integrity rules a committed journal must satisfy to load. Nothing else is checked on load; the
+ * commit-time rules run only when new work is staged. "Batch" in these rules is a journal append
+ * batch (`CommittedBatch`), except in `record_applicable`, where it is a tool batch.
+ */
 export type JournalIntegrityRule =
   /** Each append ID is committed once. */
   | "append_unique"
-  /** A batch is non-empty and continues the journal at its expected revision. */
+  /** An append batch is non-empty and continues the journal at its expected revision. */
   | "batch_continuity"
   /** A record decodes as a current-format journal record. */
   | "record_decode"
@@ -1005,19 +1105,28 @@ export type JournalIntegrityRule =
   | "terminal_required"
   /** A terminal record follows a record that ended its turn. */
   | "terminal_unexpected"
-  /** A turn's terminal record is committed in the same batch as the record that ended it. */
+  /** A turn's terminal record is committed in the same append as the record that ended the turn. */
   | "terminal_same_batch"
-  /** The record names a turn, operation, batch, call or queued input the folded state has. */
+  /**
+   * The record applies to the folded state: it names a turn, operation, tool batch, call or queued
+   * input the state has. Any other error while folding a record is reported under this rule too.
+   */
   | "record_applicable";
 
 /** Position of an offending record: its own fields, or where it was expected when undecodable. */
 export type JournalLocation = Readonly<{ revision?: number; appendId?: string; entryId?: string }>;
 
-/** A committed journal that cannot load, naming the violated rule and the offending record. */
+/**
+ * A committed journal that cannot load, naming the violated rule and the offending record. Thrown
+ * by {@link replay}. The message reads `Journal integrity (<rule>) at <entryId>: <detail>`.
+ */
 export class JournalIntegrityError extends Error {
   readonly rule: JournalIntegrityRule;
+  /** Revision of the offending record, or where it was expected; absent for an empty journal. */
   readonly revision?: number;
+  /** Append ID of the offending record's batch; absent for an empty journal. */
   readonly appendId?: string;
+  /** Entry ID of the offending record, or where it was expected; absent for an empty journal. */
   readonly entryId?: string;
 
   constructor(
@@ -1036,10 +1145,13 @@ export class JournalIntegrityError extends Error {
 }
 
 /**
- * Load a journal: fold committed batches into state, checking only journal integrity
- * (`JournalIntegrityRule`). Each stored record is taken as written. Commit-time rules (prompt
+ * Loads a journal: folds committed batches into state, checking only journal integrity
+ * ({@link JournalIntegrityRule}). Each stored record is taken as written. Commit-time rules (prompt
  * projection, policy patches, permissions, admission, bindings) are not re-run, so a journal the
- * runtime committed keeps loading after code, configuration or bindings change.
+ * runtime committed keeps loading after code, configuration or bindings change. A turn that process
+ * exit interrupted stays open in the result; closing it is a separately staged `recovery` record.
+ *
+ * @throws {@link JournalIntegrityError} naming the first violated rule and the offending record.
  */
 export function replay(batches: readonly CommittedBatch[]): JournalState {
   let state: JournalState | undefined;
@@ -1183,10 +1295,17 @@ export function replay(batches: readonly CommittedBatch[]): JournalState {
   return freeze(state);
 }
 
+/** The records as JSON Lines: one encoded record per line in revision order, newline-terminated. */
 export function journalJSONL(state: JournalState): string {
   return `${state.records.map(encodeRecord).join("\n")}\n`;
 }
-/** Human projection only; the journal remains the authoritative record. */
+/**
+ * Renders the journal as a Markdown report for people: agent system prompts, standing instruction
+ * history, context, turn log, any unfinished turn, permission decisions, recoveries and registry
+ * adoptions. A readable view only; the journal remains the authoritative record.
+ *
+ * @param options.agentLabels Display names by agent ID.
+ */
 export function journalMarkdown(
   state: JournalState,
   options: { agentLabels?: Readonly<Record<string, string>> } = {},

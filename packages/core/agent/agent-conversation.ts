@@ -13,34 +13,61 @@ import {
   type UserEvent,
 } from "./types.ts";
 
+/**
+ * A request to branch this conversation into a new session. It waits in `pending` until no turn is
+ * active, then is answered with a {@link SessionReply}.
+ * - `fork`: a child session that inherits the history and session context.
+ * - `compact`: a child session whose history is empty and whose session context is replaced by `context`.
+ */
 export type SessionRequest =
   | Readonly<{ kind: "fork"; id: ActorId; sessionId: SessionId }>
   | Readonly<{ kind: "compact"; id: ActorId; sessionId: SessionId; context: SessionContext }>;
+/**
+ * State of one session's conversation: the settled turns so far and the current turn.
+ * `turn` is never `done`: a finished turn is appended to `log` and replaced by a fresh idle turn.
+ */
 export type ConversationState = Readonly<{
   status: "open";
   sessionId: SessionId;
+  /** Where the session came from; `sequence` is the parent's turn sequence at the branch point. */
   origin:
     | Readonly<{ kind: "root" }>
     | Readonly<{ kind: "fork" | "compaction"; parent: SessionId; sequence: number }>;
   context: SessionContext;
+  /** Identity of the current turn, `<sessionId>/turn/<sequence>`. */
   turnId: ActorId;
   turn: Exclude<TurnState, { status: "done" }>;
+  /** Records of the turns that ended in this session, oldest first. */
   log: readonly TurnRecord[];
+  /** Step allowance each new turn starts with. */
   allowance: Steps;
+  /** 1-based sequence number of the current turn. */
   sequence: number;
+  /** Fork and compaction requests waiting for the current turn to end (not queued user input). */
   pending: readonly SessionRequest[];
 }>;
+/** Initial conversation state of a forked or compacted session: idle, with no pending requests. */
 export type ForkSnapshot = Omit<ConversationState, "turn" | "pending"> &
   Readonly<{
     turn: Extract<TurnState, { status: "idle" }>;
     pending: readonly [];
   }>;
+/** Answer to a {@link SessionRequest}, carrying the new session's initial state. */
 export type SessionReply = Readonly<{ kind: "forked"; state: ForkSnapshot }>;
+/** Input to the conversation machine. */
 export type ConversationEvent =
+  /** User input or abort, forwarded to the current turn. */
   | UserEvent
+  /** Queue a fork or compaction request. */
   | { type: "request"; request: SessionRequest }
+  /** Settlement of a turn's child operation; ignored unless `turnId` is the current turn. */
   | { type: "child"; turnId: ActorId; event: TurnEvent }
+  /** Executing `command` threw; a turn command becomes a `failed` event for the current turn. */
   | { type: "dispatch_failed"; command: ConversationCommand; error: Failure };
+/**
+ * Effect the conversation asks its runtime to perform: dispatch a turn's command to the host, or
+ * deliver a reply to a waiting {@link SessionRequest}.
+ */
 export type ConversationCommand =
   | Readonly<{ type: "turn"; turnId: ActorId; command: TurnCommand }>
   | Readonly<{ type: "reply"; requestId: ActorId; result: SessionReply }>;
@@ -48,6 +75,11 @@ type D = Decision<ConversationState, ConversationCommand>;
 const turnIdentity = (session: SessionId, sequence: number) =>
   ActorIdSchema.parse(`${session}/turn/${sequence}`);
 
+/**
+ * Creates the state of a new root session with an idle first turn.
+ * @param allowance Steps each turn may use.
+ * @param sessionId Defaults to a random UUID.
+ */
 export function initialConversation(
   agent: AgentId,
   allowance: Steps,
@@ -129,7 +161,13 @@ function drain(initial: D): D {
   return { state, commands };
 }
 
-/** Turn events continue normally while fork/compaction requests wait for Done. */
+/**
+ * The conversation machine: forwards user input, abort and child settlements to the current turn,
+ * starts a new idle turn when one ends, and answers pending fork and compaction requests once no turn
+ * is active. Turn events are unaffected by pending requests.
+ * @throws When user input arrives while permission or tools are pending ("abort the turn first"),
+ * and when a request reuses this session's id. The throw rejects the `send` that delivered the event.
+ */
 export const decideConversation = defineMachine<
   ConversationState,
   ConversationEvent,

@@ -47,42 +47,72 @@ export type {
   StreamUpdateSink,
 } from "../host/host.ts";
 export type { PermissionPort, PermissionRequest, ToolKind, ToolLocation } from "../host/ports.ts";
+/** Configuration for {@link createAgentRuntime}. The agent and tool maps are copied at creation. */
 export type RuntimeOptions = {
+  /** Id of the agent that runs the first turn; must be a key of `agents`. */
   agent: string;
   agents: ReadonlyMap<string, AgentDefinition>;
   tools?: ReadonlyMap<string, Tool>;
   toolUpdate?: ToolUpdateSink;
   streamUpdate?: StreamUpdateSink;
+  /** When set, tool calls ask this port for permission; when omitted, permissions are off. */
   requestPermission?: PermissionPort;
+  /** Step allowance of each turn (LLM calls per turn). */
   steps: number;
+  /** http(s) base URL of the chat completions endpoint. */
   baseUrl: string;
   apiKey?: string;
+  /** Fetch used by the default completion adapter. */
   fetch?: typeof fetch;
   /** Adapters return untrusted data; the completion actor parses and admits it. */
   complete?: (request: ChatCompletionRequest) => unknown | Promise<unknown>;
+  /** Prompt projection for each step; defaults to {@link projectConversationPrompt}. */
   projectPrompt?: (input: PromptInput, signal: AbortSignal) => unknown | Promise<unknown>;
+  /** Builds the successor agent's context on a handoff. */
   projectHandoff?: (
     input: PromptInput & { from: string; to: string },
     signal: AbortSignal,
   ) => unknown | Promise<unknown>;
 };
+/** Snapshot of one live child operation of a turn (not a child session): an operation or a tool batch. */
 export type ChildSnapshot = Readonly<{
   ref: ChildRef;
   state: OperationState<unknown> | BatchState;
 }>;
+/** Frozen view of the conversation state and its live child operations. */
 export type RuntimeSnapshot = Readonly<{
   conversation: ConversationState;
   children: readonly ChildSnapshot[];
 }>;
+/** An in-memory conversation driven by user events; turns run through the host in the background. */
 export type AgentRuntime = {
+  /** Current snapshot, rebuilt on each read. */
   readonly snapshot: RuntimeSnapshot;
+  /**
+   * Sends a user event (prompt text or abort) to the conversation.
+   * Resolves once the event is decided and its commands are dispatched, not when the turn ends.
+   * @throws Rejects when `event` fails {@link UserEventSchema} or the conversation refuses it (for
+   * example user input while tools are pending).
+   */
   fire(event: unknown): Promise<RuntimeSnapshot>;
-  /** Resolve at the next completed-turn boundary with an independent runtime. */
+  /**
+   * Resolves at the next turn boundary with an independent runtime for a new session that inherits
+   * this session's history. Resolves immediately when no turn is active.
+   */
   fork(): Promise<AgentRuntime>;
-  /** Fork with validated replacement messages, clearing inherited transcript/context. */
+  /**
+   * Like {@link AgentRuntime.fork}, but the new session starts with an empty history and `context`
+   * as its session context. "Replacement" here is compaction context, not barge-in.
+   * @throws Rejects when `context` is not a valid session context.
+   */
   compact(context: unknown): Promise<AgentRuntime>;
 };
 
+/**
+ * Creates a runtime for a new root session with an idle first turn.
+ * @throws When `agent` is not in `agents`, `steps` is not a valid step count or `baseUrl` is not
+ * an http(s) URL.
+ */
 export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
   const agentId = AgentIdSchema.parse(options.agent);
   const steps = StepsSchema.parse(options.steps);

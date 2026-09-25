@@ -1,12 +1,18 @@
 import { Actor, defineMachine, type Decision } from "../fsm/fsm.ts";
 import { failure, type ChildRef, type Failure, type Result } from "./types.ts";
 
+/**
+ * State of one child operation of a turn (not a child session), such as a prompt projection, LLM
+ * call, permission request, handoff or single tool call. It runs ready → validating_input → running →
+ * validating_output → succeeded; `failed` and `cancelled` are reachable from any non-terminal state.
+ */
 export type OperationState<T> =
   | Readonly<{ status: "ready" }>
   | Readonly<{ status: "validating_input" }>
   | Readonly<{ status: "running"; request: ChildRef }>
   | Readonly<{ status: "validating_output" }>
   | Readonly<{ status: "succeeded"; value: T }>
+  /** Failed while validating or running, or cancelled with a `timeout` reason. */
   | Readonly<{ status: "failed"; error: Failure }>
   | Readonly<{ status: "cancelled"; reason?: Failure }>;
 
@@ -26,16 +32,31 @@ type Command<I, O> =
   | { type: "cancel"; reason?: Failure }
   | { type: "notify"; result: Result<O> };
 
+/** The work an operation actor runs: parse the untrusted input, run, then parse the untrusted output. */
 export type Operation<I, O> = {
+  /** Untrusted input, parsed by `parseInput`. */
   input: unknown;
+  /** Merged into every failure the operation reports. */
   failureContext?: Partial<Failure>;
+  /** Deadline in ms, enforced by the host (not the actor): on expiry the operation fails with `timeout`. */
   timeoutMs?: number;
+  /** Rejections fail the operation as `invalid_input`. */
   parseInput: (input: unknown) => I | Promise<I>;
+  /** `signal` aborts on cancel. Rejections fail the operation as `execution`. */
   run: (input: I, signal: AbortSignal) => unknown | Promise<unknown>;
+  /** Rejections fail the operation as `invalid_output`. */
   parseOutput: (output: unknown) => O | Promise<O>;
 };
 
-/** Controllers and arbitrary values stay in the adapter; only validated outputs enter snapshots. */
+/**
+ * Creates the actor that runs one child operation of a turn. Nothing runs until `start()`.
+ * Controllers and arbitrary values stay in the adapter; only validated outputs enter snapshots.
+ * @param settled Called exactly once with the result when the operation succeeds, fails or is cancelled.
+ * A cancel whose reason is classified `timeout` settles as `failed`, not `cancelled`.
+ * @param observe Called with each new state for display; its errors are ignored.
+ * @returns `snapshot`, `start()` and `cancel(reason?)`. Their promises resolve when the event is
+ * decided, not when the operation settles; `settled` reports that.
+ */
 export function createOperationActor<I, O>(
   request: ChildRef,
   operation: Operation<I, O>,

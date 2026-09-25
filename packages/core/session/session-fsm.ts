@@ -7,6 +7,20 @@ import type { AppendId, AppendRequest, AppendResult, LoadResult, Receipt } from 
 import { accepts, replay, stage, type JournalState } from "./session-log.ts";
 import { SystemVersionSchema, type SessionInput } from "./types.ts";
 
+/**
+ * How the session answered one submission.
+ *
+ * - `accepted`: the staged records committed; `receipt` names the append and the revision it
+ *   reached. The input's conversation commands are dispatched before this reply.
+ * - `ignored`: the input no longer applies (stale or uncorrelated, see `accepts`); nothing was
+ *   written.
+ * - `busy`: a `system` or `policy` change arrived while a turn is running or staged, or while
+ *   queued inputs wait; nothing was written.
+ * - `failed`: staging rejected the input (classification `admission`), or the session has failed;
+ *   `error` says which.
+ * - `closed`: the session closed before the input committed. An append already dispatched may
+ *   still commit.
+ */
 export type CommandReceipt =
   | Readonly<{ kind: "accepted"; receipt: Receipt }>
   | Readonly<{ kind: "ignored" }>
@@ -14,19 +28,43 @@ export type CommandReceipt =
   | Readonly<{ kind: "failed"; message: string; error: Failure }>
   | Readonly<{ kind: "closed" }>;
 
+/**
+ * One input on its way into the journal. `id` correlates the reply; user input the policy queues
+ * also takes it as its queued-input ID. `appendId` is the stable ID of the append that carries the
+ * staged records, reused if that append is retried.
+ */
 export type Submission = Readonly<{ id: string; appendId: AppendId; input: SessionInput }>;
 
+/** The one append in flight: its submission, the proposed state, and what to release on commit. */
 type Pending = Readonly<{
   submission: Submission;
+  /** Proposed state; it becomes `durable` only when the append commits. */
   next: JournalState;
   request: AppendRequest;
+  /** Conversation commands dispatched once the append commits. */
   commands: readonly ConversationCommand[];
+  /** Retries of this append after reconciliation found it absent; at most one. */
   attempts: number;
+  /** Failure that made the last attempt's outcome unknown. */
   uncertainty?: Failure;
 }>;
 
 type Base = Readonly<{ durable: JournalState; queue: readonly Submission[] }>;
 
+/**
+ * State of the session's journal writer. `durable` is the committed state, as of the last append
+ * receipt. `queue` holds submissions waiting to be staged, in arrival order; it lives in memory
+ * only and is not the queued inputs (`JournalState.pendingInputs`). At most one append is in
+ * flight.
+ *
+ * - `ready`: no append in flight.
+ * - `committing`: `pending` holds a staged append awaiting its storage receipt.
+ * - `reconciling`: the append's outcome is unknown; the journal is being loaded to find out
+ *   whether it committed.
+ * - `failed`: storage failed, or an input the session generated itself could not be staged. Every
+ *   later submission fails with the same `error`.
+ * - `closed`: the session closed; later submissions answer `closed`.
+ */
 export type SessionState = Base &
   (
     | Readonly<{ status: "ready" }>
@@ -35,6 +73,11 @@ export type SessionState = Base &
     | Readonly<{ status: "closed" }>
   );
 
+/**
+ * Input to {@link decideSession}. `appended` and `loaded` report the storage operation for
+ * `appendId`; they are ignored unless that append is in flight. `drain` stages the next waiting
+ * submission, or dequeues the first queued input when no turn is running.
+ */
 export type SessionEvent =
   | { type: "submit"; submission: Submission }
   | { type: "appended"; appendId: AppendId; result: AppendResult }
@@ -42,6 +85,17 @@ export type SessionEvent =
   | { type: "drain" }
   | { type: "close" };
 
+/**
+ * Effect of a session decision.
+ *
+ * - `append`: write the batch to storage.
+ * - `load`: load the journal to learn whether an append with an unknown outcome committed.
+ * - `dispatch`: an append committed; release its conversation commands (the turn's next child
+ *   operation, or a branch) against the committed state `durable`.
+ * - `reply`: answer submission `id`.
+ * - `drain`: send a `drain` event.
+ * - `stop`: the session failed or closed; stop owned work and storage operations.
+ */
 export type SessionCommand =
   | { type: "append"; request: AppendRequest }
   | { type: "load"; appendId: AppendId }
@@ -126,6 +180,20 @@ function committed(
   };
 }
 
+/**
+ * The session's pure transition function.
+ *
+ * A submission that arrives while an append is in flight waits in `queue`. A ready session stages
+ * it with `stage` under `resolvers` and appends the result. A matching committed receipt makes the
+ * staged state durable, dispatches its commands and replies `accepted`. An indeterminate append
+ * moves to `reconciling`: the loaded journal shows whether the append committed with the same
+ * bytes, and an append absent at the expected revision is retried once. Anything else, and every
+ * rejected or conflicting append, fails the session and every waiting submission.
+ *
+ * A staging failure answers `failed` with classification `admission`. For inputs the session
+ * generates itself (tool results, child events, dequeues, recovery, registry adoption) it also
+ * fails the session, so no waiting work is released under the old state.
+ */
 export function decideSession(
   state: SessionState,
   event: SessionEvent,

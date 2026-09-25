@@ -2,6 +2,21 @@ import { z } from "zod";
 
 import { FailureSchema, ToolCallIdSchema, type ToolCalls } from "./types.ts";
 
+/**
+ * Result of a permission request for one tool batch: one decision per tool call, in call order.
+ * The list stops at the first refusal; see {@link validatePermissionDecisions}.
+ *
+ * - `allow_once`: the call may run. `approval` is set when a session-wide grant allowed it:
+ *   `source: "user"` when the user just chose "allow for this session", `"remembered"` when an
+ *   earlier grant for the same tool name was reused. `grantId` names that grant.
+ * - `reject_once`: the user refused this call. No call in the batch runs and the turn fails
+ *   with classification `permission_refused`.
+ * - `cancelled`: the user dismissed the request. No call in the batch runs and the turn ends
+ *   `aborted`.
+ * - `invalid_input`: the call's arguments failed validation before approval was asked (only under
+ *   the `return-error-and-continue` tool-failure setting). The call does not run; its tool
+ *   operation fails with `error`, which the model receives as the call's result.
+ */
 export const PermissionDecisionsSchema = z
   .array(
     z.union([
@@ -30,9 +45,18 @@ export const PermissionDecisionsSchema = z
   )
   .min(1)
   .readonly();
+/** Per-call permission decisions for one tool batch. See {@link PermissionDecisionsSchema}. */
 export type PermissionDecisions = z.infer<typeof PermissionDecisionsSchema>;
 
-/** Ordered approvals, ending at the first refusal. No partial batch may execute. */
+/**
+ * Checks that permission decisions fit the batch's tool calls and returns them unchanged.
+ * Ordered approvals, ending at the first refusal. No partial batch may execute.
+ *
+ * Entry `i` must name `calls[i]`. Every entry before the last is `allow_once` or
+ * `invalid_input`; a list that ends with one of those covers every call.
+ *
+ * @throws Error when the decisions do not match the calls.
+ */
 export function validatePermissionDecisions(calls: ToolCalls, decisions: PermissionDecisions) {
   if (
     decisions.length > calls.length ||
