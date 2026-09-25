@@ -55,6 +55,26 @@ export function mcpToolName(server: string, tool: string) {
     .slice(0, 12);
   return `mcp_${slug(server, 16)}_${slug(tool, 24)}_${hash}`;
 }
+
+/**
+ * Opening an MCP server failed. The message names the server, the stage (connecting or loading its
+ * tool catalog) and the sanitized cause, so a client can fix that server's configuration.
+ */
+export class McpOpenError extends Error {
+  override readonly name = "McpOpenError";
+
+  constructor(
+    readonly serverName: string,
+    readonly stage: "connect" | "catalog",
+    cause: Error,
+  ) {
+    super(
+      `${stage === "connect" ? "Failed to connect to" : "Failed to load tools from"} MCP server "${serverName}": ${cause.message.replace(/\.$/, "")}. Check that the server is running and its session configuration (command, URL or headers) is correct, then open the session again.`,
+      { cause },
+    );
+  }
+}
+
 /** Session-owned resources, registered before opening so disconnect can always stop child processes. */
 export function mcpConnections(
   servers: readonly McpServer[],
@@ -113,7 +133,7 @@ export function mcpConnections(
     async open(signal: AbortSignal): Promise<ReadonlyMap<string, Tool>> {
       const started = performance.now();
       let serverName: string | undefined;
-      let stage = "connect";
+      let stage: "connect" | "catalog" = "connect";
       const tools = new Map<string, Tool>();
       const abort = () => {
         void close();
@@ -224,15 +244,11 @@ export function mcpConnections(
               await client.close();
             }
           });
-          try {
-            const deadline = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
-            await waitForBoundary(
-              client.connect(transport, { signal: deadline, timeout: 15000 }),
-              deadline,
-            );
-          } catch (cause) {
-            throw new Error(`Failed to connect to MCP server ${server.name}`, { cause });
-          }
+          const deadline = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
+          await waitForBoundary(
+            client.connect(transport, { signal: deadline, timeout: 15000 }),
+            deadline,
+          );
           diagnostic("acp", "debug", "mcp.connect.completed", { ...context, serverName });
           stage = "catalog";
           if (!client.getServerCapabilities()?.tools) {
@@ -402,7 +418,10 @@ export function mcpConnections(
           },
         );
         await close();
-        throw boundaryError(error);
+        const failure = boundaryError(error);
+        throw serverName && !signal.aborted
+          ? new McpOpenError(serverName, stage, failure)
+          : failure;
       } finally {
         signal.removeEventListener("abort", abort);
       }

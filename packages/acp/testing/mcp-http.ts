@@ -32,7 +32,12 @@ export function mcpHttpFixture(
         ],
       });
     if (body.method === "tools/call" && body.params.name === "echo")
-      return message(body.id, { content: [{ type: "text", text: body.params.arguments.text }] });
+      return message(
+        body.id,
+        body.params.arguments.text === "error"
+          ? { isError: true, content: [{ type: "text", text: "fixture tool error" }] }
+          : { content: [{ type: "text", text: body.params.arguments.text }] },
+      );
   }
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -79,6 +84,9 @@ export function mcpHttpFixture(
       }
       const body = (await request.json()) as any;
       events.push({ method: body.method, authorized });
+      // A crashed upstream: the call fails at the HTTP transport, not as an MCP tool result.
+      if (body.method === "tools/call" && body.params.arguments?.text === "drop")
+        return new Response("fixture upstream crashed", { status: 500 });
       const output = reply(body);
       if (type === "sse") {
         if (output) sse!.enqueue(encode("message", JSON.stringify(output)));

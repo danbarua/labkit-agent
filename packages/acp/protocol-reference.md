@@ -482,6 +482,14 @@ schemas; it never reissues recorded calls. Tool-list-change notifications do not
 session's registry. Sampling, task-only tools, and resource/prompt browsing are not
 advertised. Elicitation is forwarded only for explicitly supported client modes.
 
+A server that cannot be opened fails the whole new/load/resume request; the session never starts
+without that server's tools. The error is `-32602` with the message `Invalid params: Failed to
+connect to MCP server "<name>": <cause>. Check that…` (or `Failed to load tools from …` when the tool
+catalog fails) and data `{ serverName, stage: "connect" | "catalog" }`. The cause is the sanitized
+transport error: a refused HTTP/SSE connection, a stdio process that exited (`Connection closed`),
+or the ACP host's `mcp/connect` error. `mcp.open.failed` (warning) and `acp.session.open.failed`
+(error, with connection and RPC request IDs) log the same failure.
+
 Experimental MCP-over-ACP accepts `{ type: "acp", name, serverId }` and advertises
 `mcpCapabilities.acp: true`. Each session opens its own `mcp/connect` connection, initializes MCP,
 and uses the same frozen catalog, schema validation, and permission-gated tool path. Requests and
@@ -507,9 +515,15 @@ session termination for at most two seconds, then closes local connections regar
 MCP input JSON Schema (2020-12 by default; declared draft-07/2019-09 also supported) is validated
 before the ordinary core permission phase. Annotations only supply display hints; they never bypass
 permission. Tool execution uses the same child AbortSignal and journal receipts as local tools.
-MCP `isError` responses become failed tool outcomes. Text, structured JSON, resource links, and
-embedded textual resources remain JSON results. Binary content is rejected rather than written as
-base64 in the journal. Results and input schemas are limited to 256 KiB; each server may expose at
+MCP `isError` responses and calls that fail at the transport (a stdio server exiting, an HTTP error
+status, an ACP host error reply) become failed tool outcomes with the error text, logged as
+`mcp.call.failed` with the session and tool-call IDs. Under `return-error-and-continue` the model
+receives that text and the turn continues; under `fail-turn` `session/prompt` fails with the
+structured failure (tool name and call ID in `data.operation`). The ACP connection stays open
+either way. Text, structured JSON, resource links, and embedded textual resources remain JSON
+results. Image, audio and binary embedded-resource content is rejected as a failed tool outcome
+("Binary MCP tool results are not supported") rather than written as base64 in the journal; the
+model sees that failure, not the content. Results and input schemas are limited to 256 KiB; each server may expose at
 most 256 tools, with at most 32 servers per session. Initialization/list requests time out after
 15 seconds; tool calls time out after 60 seconds. Cancellation sends the MCP cancellation notification;
 remote effects already started cannot be undone. Session close/disconnect also closes the transports

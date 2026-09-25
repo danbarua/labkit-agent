@@ -40,7 +40,7 @@ import { clientFiles, type ClientFiles } from "./client-files.ts";
 import { clientTerminal, type ClientTerminal } from "./client-terminal.ts";
 import { availableCommands, bindCommands, expandCommand, type AcpCommand } from "./commands.ts";
 import { acpMcpBridge, McpMessageSchema } from "./mcp-acp.ts";
-import { mcpConnections } from "./mcp.ts";
+import { mcpConnections, McpOpenError } from "./mcp.ts";
 import { PlanEntriesSchema, type PlanSink } from "./plan.ts";
 import { promptInput } from "./prompt-input.ts";
 import {
@@ -547,6 +547,8 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       connection.signal,
       () => sessions.get(sessionIdentity())?.promptController?.signal ?? AbortSignal.abort(),
     );
+    // session/new learns its ID only after MCP opens; call diagnostics read it from here later.
+    const mcpContext: { sessionId?: string } = { sessionId: id };
     try {
       let mcp: ReturnType<typeof mcpConnections>;
       try {
@@ -556,7 +558,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           additionalDirectories,
           (serverId) => mcpBridge.transport(serverId, client),
           elicitation.port,
-          { sessionId: id },
+          mcpContext,
         );
       } catch (error) {
         throw RequestError.invalidParams(
@@ -585,7 +587,9 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         mcpTools = await mcp.open(signal);
       } catch (error) {
         throw RequestError.invalidParams(
-          undefined,
+          error instanceof McpOpenError
+            ? { serverName: error.serverName, stage: error.stage }
+            : undefined,
           error instanceof Error ? error.message : "MCP connection failed",
         );
       }
@@ -873,6 +877,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         throw new Error("Duplicate session identity");
       }
       initializedId = sessionId;
+      mcpContext.sessionId = sessionId;
       opening.add(sessionId);
       let configuration: ReturnType<typeof configState>;
       try {
