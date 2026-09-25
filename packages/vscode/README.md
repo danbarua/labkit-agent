@@ -47,6 +47,22 @@ the session, path, operation, byte count or failed phase and original cause. Fil
 from these lifecycle records. The filesystem tests use an injected editor API: native save,
 format-on-save, undo and dirty-buffer behavior still require editor-host verification.
 
+Terminal commands use the requested executable and literal arguments. To run shell syntax, request
+an explicit shell with its arguments. An omitted working directory uses the workspace selected
+when connecting the agent. Output is decoded across byte chunks, updated immediately, and retained
+up to `outputByteLimit` (default 1 MiB), discarding complete characters from the beginning. A zero
+limit retains no output and still reports truncation. The embedded tool card shows live output,
+exit status and truncation; its final display survives release and webview restoration.
+
+Closing the editor terminal stops its command. Kill waits for process/output closure and preserves
+the terminal ID for output and exit queries.
+Release closes process and display resources and invalidates that ID. Connection removal, agent
+exit and initialization failure all dispose their terminal handlers. On Unix, termination includes
+the process group so child commands cannot keep inherited output pipes open. Windows process-tree
+termination and native terminal rendering remain unverified; current Windows termination targets
+the direct process. Terminal lifecycle logs use `vscode.terminal.*` with session/terminal IDs,
+command, limits and exit/failure details. They exclude output text and redact credentials.
+
 Logs are under this extension's VS Code `globalStorageUri`, in `logs/client.jsonl`; ACP: Show Log
 prints the exact path. Each file rotates at 10 MiB with four backups, across restarts. A single
 large protocol record can exceed that rotation threshold. DEBUG protocol summaries include request,

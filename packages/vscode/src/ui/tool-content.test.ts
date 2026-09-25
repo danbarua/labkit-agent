@@ -36,7 +36,11 @@ function view(saved?: unknown) {
       postMessage: (message: unknown) => posted.push(message),
     }),
   });
-  const provider = new ChatWebviewProvider({} as any, {} as any, { addListener() {} } as any);
+  const provider = new ChatWebviewProvider(
+    {} as any,
+    {} as any,
+    { addListener() {}, addTerminalListener() {} } as any,
+  );
   const html = (provider as any).getHtmlContent({ cspSource: "vscode-webview:" });
   window.document.write(html);
 
@@ -245,5 +249,63 @@ test("runtime protocol diagnostics explain failed tools and preserve response ca
   } finally {
     logger.disposeChannels();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("embedded terminals show live output and retain final released output after webview restoration", async () => {
+  const v = view();
+  try {
+    v.send({
+      type: "state",
+      session: { sessionId: "terminal-session", agentName: "Labkit", cwd: "/workspace" },
+    });
+    v.send({
+      type: "terminalOutput",
+      update: {
+        sessionId: "terminal-session",
+        terminalId: "terminal-1",
+        output: "early output",
+        truncated: false,
+      },
+    });
+    v.send({
+      type: "sessionUpdate",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "exec-1",
+        title: "Build",
+        status: "in_progress",
+        content: [{ type: "terminal", terminalId: "terminal-1" }],
+      },
+    });
+    expect(v.window.document.querySelector(".acp-terminal pre")?.textContent).toBe("early output");
+    v.send({
+      type: "terminalOutput",
+      update: {
+        sessionId: "terminal-session",
+        terminalId: "terminal-1",
+        output: "<script>final</script>",
+        truncated: true,
+        exitStatus: { exitCode: 7 },
+        released: true,
+      },
+    });
+    expect(v.window.document.querySelector(".acp-terminal pre")?.textContent).toBe(
+      "<script>final</script>",
+    );
+    expect(v.window.document.querySelector(".acp-terminal summary")?.textContent).toContain(
+      "Exited: 7 (released)",
+    );
+    expect(v.window.document.querySelector(".acp-terminal script")).toBeNull();
+    const restored = view(v.state());
+    try {
+      expect(restored.window.document.querySelector(".acp-terminal pre")?.textContent).toBe(
+        "<script>final</script>",
+      );
+    } finally {
+      await restored.window.happyDOM.close();
+    }
+  } finally {
+    await v.window.happyDOM.close();
   }
 });

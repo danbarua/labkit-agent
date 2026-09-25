@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 
 import { SessionManager } from "../core/SessionManager";
 import { SessionUpdateHandler, type SessionUpdateListener } from "../handlers/SessionUpdateHandler";
+import type { TerminalDisplay } from "../handlers/TerminalHandler";
 import { sendEvent } from "../utils/Diagnostics";
 import { logError } from "../utils/Logger";
 import { renderToolContent } from "./tool-content";
@@ -17,6 +18,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
 
   private view?: vscode.WebviewView;
   private updateListener: SessionUpdateListener;
+  private terminalListener: (update: TerminalDisplay) => void;
   private _hasChatContent = false;
 
   constructor(
@@ -35,6 +37,11 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
       this.handleSessionUpdate(update);
     };
     this.sessionUpdateHandler.addListener(this.updateListener);
+    this.terminalListener = (update) => {
+      if (update.sessionId === this.sessionManager.getActiveSessionId())
+        this.postMessage({ type: "terminalOutput", update });
+    };
+    this.sessionUpdateHandler.addTerminalListener(this.terminalListener);
   }
 
   /**
@@ -290,6 +297,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
     this.postMessage({
       type: "state",
       activeSessionId: activeId,
+      terminals: activeId ? this.sessionUpdateHandler.terminalSnapshots(activeId) : [],
       session: session
         ? {
             sessionId: session.sessionId,
@@ -1279,17 +1287,19 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
     }
 
     // --- State persistence ---
+    let terminalSnapshots = {};
     let chatHistory = [];
     let sessionState = null;
 
     function saveState() {
-      vscode.setState({ chatHistory, sessionState, hasActiveSession });
+      vscode.setState({ chatHistory, sessionState, hasActiveSession, terminalSnapshots });
     }
 
     function restoreState() {
       const saved = vscode.getState();
       if (!saved) return;
 
+      terminalSnapshots = saved.terminalSnapshots || {};
       chatHistory = saved.chatHistory || [];
       sessionState = saved.sessionState || null;
       hasActiveSession = saved.hasActiveSession || false;
@@ -2262,12 +2272,19 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
     window.addEventListener('message', (event) => {
       const msg = event.data;
       switch (msg.type) {
+        case 'terminalOutput':
+          if (!sessionState || msg.update.sessionId === sessionState.sessionId) updateTerminal(msg.update);
+          break;
+
         case 'state':
+          if (msg.session && sessionState?.sessionId !== msg.session.sessionId) terminalSnapshots = {};
+          for (const terminal of msg.terminals || []) terminalSnapshots[terminal.terminalId] = terminal;
           if (msg.session) {
             showSessionConnected(msg.session);
           } else {
             showNoSession();
           }
+          for (const terminal of msg.terminals || []) updateTerminal(terminal);
           break;
 
         case 'promptStart':
@@ -2419,6 +2436,14 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
       }
     });
 
+    function updateTerminal(update) {
+      terminalSnapshots[update.terminalId] = update;
+      for (const item of chatHistory) {
+        if (item.kind === 'toolCall' && item.content?.some(content => content.type === 'terminal' && content.terminalId === update.terminalId)) showToolContent(item.toolCallId, item.content);
+      }
+      saveState();
+    }
+
     function showToolContent(toolCallId, content) {
       if (!Array.isArray(content)) return;
       const card = toolCalls[toolCallId] || document.getElementById('tc-' + toolCallId);
@@ -2429,7 +2454,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
         output.className = 'acp-tool-content';
         card.appendChild(output);
       }
-      output.innerHTML = renderToolContent(content);
+      output.innerHTML = renderToolContent(content, terminalSnapshots);
       const saved = chatHistory.findLast(item => item.kind === 'toolCall' && item.toolCallId === toolCallId);
       if (saved) saved.content = content;
       saveState();
@@ -2606,6 +2631,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
 
   dispose(): void {
     this.sessionUpdateHandler.removeListener(this.updateListener);
+    this.sessionUpdateHandler.removeTerminalListener(this.terminalListener);
   }
 }
 

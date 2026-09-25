@@ -1,5 +1,8 @@
 /** Runs in both the extension and its webview. Keep helpers inside this function. */
-export function renderToolContent(content: unknown): string {
+export function renderToolContent(
+  content: unknown,
+  terminals: Record<string, unknown> = {},
+): string {
   const escape = (value: unknown) =>
     String(value ?? "").replace(
       /[&<>"']/g,
@@ -65,7 +68,14 @@ export function renderToolContent(content: unknown): string {
             : `<div>Before</div><pre class="acp-diff-before">${escape(item.oldText)}</pre>`) +
           `<div>After</div><pre class="acp-diff-after">${escape(item.newText)}</pre></details>`
         );
-      if (item.type === "terminal") return `<p>Terminal: ${escape(item.terminalId)}</p>`;
+      if (item.type === "terminal") {
+        const terminal = object(terminals[String(item.terminalId)]);
+        const status = object(terminal.exitStatus);
+        const label = terminal.exitStatus
+          ? `Exited: ${status.signal ?? status.exitCode ?? "unknown"}`
+          : "Running";
+        return `<details class="acp-terminal" open><summary>Terminal ${escape(item.terminalId)} — ${escape(terminal.output === undefined ? "Output not available" : label)}${terminal.released ? " (released)" : ""}</summary>${terminal.truncated ? "<p>Earlier output was truncated.</p>" : ""}<pre>${escape(terminal.output)}</pre></details>`;
+      }
       return `<pre>Unrecognized tool content: ${escape(JSON.stringify(value))}</pre>`;
     })
     .join("");

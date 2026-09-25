@@ -231,7 +231,11 @@ export class SessionManager extends EventEmitter {
 
       let connInfo: ConnectionInfo;
       try {
-        connInfo = await this.connectionManager.connect(agentId, agentProcess.process);
+        connInfo = await this.connectionManager.connect(
+          agentId,
+          agentProcess.process,
+          workspaceCwd,
+        );
       } catch (e) {
         this.agentManager.killAgent(agentId);
         throw e;
@@ -759,7 +763,7 @@ export class SessionManager extends EventEmitter {
 
     let connInfo: ConnectionInfo;
     try {
-      connInfo = await this.connectionManager.connect(agentId, agentProcess.process);
+      connInfo = await this.connectionManager.connect(agentId, agentProcess.process, workspaceCwd);
     } catch (e) {
       this.agentManager.killAgent(agentId);
       throw e;

@@ -1,5 +1,8 @@
-import { ChildProcess, spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { isAbsolute } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
+import { RequestError } from "@agentclientprotocol/sdk";
 import type {
   CreateTerminalRequest,
   CreateTerminalResponse,
@@ -14,232 +17,316 @@ import type {
 } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 
-import { log, logError } from "../utils/Logger";
+import { diagnosticError } from "../../../core/logging/index.ts";
+import { logDiagnostic, registerEnvironmentSecrets } from "../utils/Logger";
 
-interface ManagedTerminal {
-  id: string;
+export type TerminalDisplay = TerminalOutputResponse & {
+  sessionId: string;
+  terminalId: string;
+  released?: boolean;
+};
+
+type ManagedTerminal = {
+  sessionId: string;
+  terminalId: string;
+  command: string;
   process: ChildProcess;
   output: string;
   truncated: boolean;
   outputByteLimit: number;
-  exitCode: number | null;
-  exitSignal: string | null;
-  exited: boolean;
-  exitPromise: Promise<void>;
-  vsTerminal?: vscode.Terminal;
-}
+  exitStatus?: WaitForTerminalExitResponse;
+  failure?: RequestError;
+  done: Promise<void>;
+  release?: Promise<ReleaseTerminalResponse>;
+  terminal: vscode.Terminal;
+  writer: vscode.EventEmitter<string>;
+};
 
-/**
- * Manages terminals that ACP agents request (terminal/create, terminal/output, etc.).
- * Uses real child processes for capturing output, with VS Code terminals for display.
- */
+/** Each connection owns its processes; display snapshots survive protocol release. */
 export class TerminalHandler {
-  private terminals: Map<string, ManagedTerminal> = new Map();
-  private nextId = 1;
+  private terminals = new Map<string, ManagedTerminal>();
+  private disposed = false;
+  private disposal?: Promise<void>;
+
+  constructor(
+    private readonly editor: typeof vscode = vscode,
+    private readonly display: (update: TerminalDisplay) => void = () => {},
+    private readonly defaultCwd?: string,
+  ) {}
+
+  private snapshot(terminal: ManagedTerminal): TerminalDisplay {
+    return {
+      sessionId: terminal.sessionId,
+      terminalId: terminal.terminalId,
+      output: terminal.output,
+      truncated: terminal.truncated,
+      ...(terminal.exitStatus ? { exitStatus: terminal.exitStatus } : {}),
+    };
+  }
+
+  private publish(terminal: ManagedTerminal, released = false) {
+    try {
+      this.display({ ...this.snapshot(terminal), ...(released ? { released: true } : {}) });
+    } catch (error) {
+      logDiagnostic("error", "vscode.terminal.display_failed", {
+        sessionId: terminal.sessionId,
+        terminalId: terminal.terminalId,
+        cause: diagnosticError(error),
+      });
+    }
+  }
+
+  private failure(
+    terminal: Pick<ManagedTerminal, "sessionId" | "terminalId" | "command">,
+    phase: string,
+    error: unknown,
+  ) {
+    const data = {
+      sessionId: terminal.sessionId,
+      terminalId: terminal.terminalId,
+      command: terminal.command,
+      phase,
+      cause: diagnosticError(error),
+    };
+    const message = `Terminal ${terminal.terminalId} (${terminal.command}) failed during ${phase}: ${error instanceof Error ? error.message : String(error)}`;
+    logDiagnostic("error", "vscode.terminal.failed", { ...data, message });
+    return new RequestError(-32603, message, data);
+  }
+
+  private get(params: { sessionId: string; terminalId: string }) {
+    const terminal = this.terminals.get(params.terminalId);
+    if (!terminal || terminal.sessionId !== params.sessionId) {
+      const message = `Terminal ${params.terminalId} is not available in session ${params.sessionId}; it may have been released`;
+      logDiagnostic("warning", "vscode.terminal.unavailable", { ...params, message });
+      throw RequestError.invalidParams(params, message);
+    }
+    return terminal;
+  }
 
   async createTerminal(params: CreateTerminalRequest): Promise<CreateTerminalResponse> {
-    const terminalId = `term_${this.nextId++}`;
-    const outputByteLimit = params.outputByteLimit ?? 1024 * 1024; // 1MB default
-
-    log(`createTerminal: ${params.command} ${(params.args || []).join(" ")} (id=${terminalId})`);
-
-    const env: Record<string, string> = { ...process.env } as Record<string, string>;
-    if (params.env) {
-      for (const v of params.env) {
-        env[v.name] = v.value;
-      }
+    if (this.disposed)
+      throw RequestError.invalidRequest(undefined, "The terminal connection is closed");
+    const terminalId = crypto.randomUUID();
+    const identity = { sessionId: params.sessionId, terminalId, command: params.command };
+    const outputByteLimit = params.outputByteLimit ?? 1024 * 1024;
+    const cwd = params.cwd ?? this.defaultCwd;
+    if (
+      !Number.isSafeInteger(outputByteLimit) ||
+      outputByteLimit < 0 ||
+      (cwd != null && !isAbsolute(cwd))
+    ) {
+      throw RequestError.invalidParams(
+        { ...identity, outputByteLimit, cwd },
+        "Use a non-negative integer outputByteLimit and an absolute cwd",
+      );
     }
-
-    const child = spawn(params.command, params.args || [], {
-      cwd: params.cwd || undefined,
-      env,
-      shell: true,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    let output = "";
-    let truncated = false;
-
-    const appendOutput = (data: Buffer) => {
-      const text = data.toString();
-      output += text;
-      // Truncate from beginning if over limit
-      const byteLength = Buffer.byteLength(output, "utf-8");
-      if (byteLength > outputByteLimit) {
-        const excess = byteLength - outputByteLimit;
-        // Find a safe character boundary to truncate at
-        let cutPoint = 0;
-        let bytes = 0;
-        for (const character of output) {
-          bytes += Buffer.byteLength(character, "utf-8");
-          cutPoint += character.length;
-          if (bytes >= excess) {
-            break;
-          }
-        }
-        output = output.substring(cutPoint);
-        truncated = true;
-      }
+    const env = {
+      ...process.env,
+      ...Object.fromEntries((params.env ?? []).map((value) => [value.name, value.value])),
     };
-
-    child.stdout?.on("data", appendOutput);
-    child.stderr?.on("data", appendOutput);
-
-    const exitPromise = new Promise<void>((resolve) => {
-      child.on("close", (code, signal) => {
-        const managed = this.terminals.get(terminalId);
-        if (managed) {
-          managed.exitCode = code;
-          managed.exitSignal = signal;
-          managed.exited = true;
-        }
-        resolve();
-      });
-      child.on("error", () => {
-        resolve();
-      });
+    registerEnvironmentSecrets(env);
+    logDiagnostic("info", "vscode.terminal.started", {
+      ...identity,
+      args: params.args ?? [],
+      cwd,
+      outputByteLimit,
     });
-
-    // Also create a VS Code terminal for visual output
-    const writeEmitter = new vscode.EventEmitter<string>();
-    const pty: vscode.Pseudoterminal = {
-      onDidWrite: writeEmitter.event,
-      open() {
-        writeEmitter.fire(`$ ${params.command} ${(params.args || []).join(" ")}\r\n`);
-      },
-      close() {
-        /* no-op */
-      },
-    };
-    const vsTerminal = vscode.window.createTerminal({
+    const writer = new this.editor.EventEmitter<string>();
+    let opened = false;
+    let managed: ManagedTerminal | undefined;
+    const terminal = this.editor.window.createTerminal({
       name: `ACP: ${params.command}`,
-      pty,
+      pty: {
+        onDidWrite: writer.event,
+        open: () => {
+          opened = true;
+          if (managed) writer.fire(managed.output.replace(/\r?\n/g, "\r\n"));
+        },
+        close: () => {
+          if (managed && !managed.exitStatus)
+            void this.kill(managed).catch((error) => {
+              logDiagnostic("error", "vscode.terminal.user_close_failed", {
+                ...identity,
+                cause: diagnosticError(error),
+              });
+            });
+        },
+      },
     });
-
-    // Stream output to VS Code terminal
-    child.stdout?.on("data", (data: Buffer) => {
-      writeEmitter.fire(data.toString().replace(/\n/g, "\r\n"));
+    let child: ChildProcess;
+    try {
+      child = spawn(params.command, params.args ?? [], {
+        cwd,
+        env,
+        shell: false,
+        detached: process.platform !== "win32",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      terminal.dispose();
+      writer.dispose();
+      throw this.failure(identity, "spawn", error);
+    }
+    let settled!: () => void;
+    const done = new Promise<void>((resolve) => {
+      settled = resolve;
     });
-    child.stderr?.on("data", (data: Buffer) => {
-      writeEmitter.fire(data.toString().replace(/\n/g, "\r\n"));
-    });
-
-    const managed: ManagedTerminal = {
-      id: terminalId,
+    managed = {
+      ...identity,
       process: child,
       output: "",
       truncated: false,
       outputByteLimit,
-      exitCode: null,
-      exitSignal: null,
-      exited: false,
-      exitPromise,
-      vsTerminal,
+      done,
+      terminal,
+      writer,
+    };
+    const current = managed;
+    this.terminals.set(terminalId, current);
+
+    const append = (text: string) => {
+      if (!text) return;
+      current.output += text;
+      let excess = Buffer.byteLength(current.output) - outputByteLimit;
+      if (excess > 0) {
+        let offset = 0;
+        for (const character of current.output) {
+          excess -= Buffer.byteLength(character);
+          offset += character.length;
+          if (excess <= 0) break;
+        }
+        current.output = current.output.slice(offset);
+        current.truncated = true;
+      }
+      if (opened) writer.fire(text.replace(/\r?\n/g, "\r\n"));
+      this.publish(current);
     };
 
-    // Keep output reference updated
-    const timer = setInterval(() => {
-      managed.output = output;
-      managed.truncated = truncated;
-    }, 100);
-
-    child.on("close", () => {
-      managed.output = output;
-      managed.truncated = truncated;
-      clearInterval(timer);
+    const stdout = new StringDecoder("utf8");
+    const stderr = new StringDecoder("utf8");
+    child.stdout?.on("data", (chunk) => append(stdout.write(chunk)));
+    child.stderr?.on("data", (chunk) => append(stderr.write(chunk)));
+    child.on("error", (error) => {
+      current.failure = this.failure(current, child.pid === undefined ? "spawn" : "process", error);
     });
-
-    this.terminals.set(terminalId, managed);
-
+    child.once("close", (exitCode, signal) => {
+      append(stdout.end());
+      append(stderr.end());
+      current.exitStatus = { exitCode, signal };
+      logDiagnostic(
+        exitCode === 0 || signal || current.failure ? "info" : "warning",
+        "vscode.terminal.exited",
+        {
+          ...identity,
+          exitCode,
+          signal,
+          outputBytes: Buffer.byteLength(current.output),
+          truncated: current.truncated,
+          message: `Terminal command ${params.command} exited with ${signal ? `signal ${signal}` : `code ${exitCode}`}`,
+        },
+      );
+      this.publish(current);
+      settled();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", reject);
+      });
+    } catch (error) {
+      await done;
+      this.terminals.delete(terminalId);
+      terminal.dispose();
+      writer.dispose();
+      throw current.failure ?? this.failure(current, "spawn", error);
+    }
+    if (this.disposed) {
+      await done;
+      throw RequestError.invalidRequest(
+        identity,
+        "The connection closed while starting the terminal",
+      );
+    }
     return { terminalId };
   }
 
   async terminalOutput(params: TerminalOutputRequest): Promise<TerminalOutputResponse> {
-    const managed = this.terminals.get(params.terminalId);
-    if (!managed) {
-      throw new Error(`Terminal not found: ${params.terminalId}`);
-    }
-
-    const response: TerminalOutputResponse = {
-      output: managed.output,
-      truncated: managed.truncated,
-    };
-
-    if (managed.exited) {
-      response.exitStatus = {
-        exitCode: managed.exitCode,
-        signal: managed.exitSignal,
-      };
-    }
-
-    return response;
+    const terminal = this.get(params);
+    if (terminal.failure) throw terminal.failure;
+    const { output, truncated, exitStatus } = this.snapshot(terminal);
+    return { output, truncated, ...(exitStatus ? { exitStatus } : {}) };
   }
 
   async waitForTerminalExit(
     params: WaitForTerminalExitRequest,
   ): Promise<WaitForTerminalExitResponse> {
-    const managed = this.terminals.get(params.terminalId);
-    if (!managed) {
-      throw new Error(`Terminal not found: ${params.terminalId}`);
+    const terminal = this.get(params);
+    logDiagnostic("debug", "vscode.terminal.waiting", {
+      ...params,
+      reason: "Waiting for command exit and output stream closure",
+    });
+    await terminal.done;
+    if (terminal.failure) throw terminal.failure;
+    return terminal.exitStatus!;
+  }
+
+  private async kill(terminal: ManagedTerminal) {
+    if (terminal.exitStatus) return;
+    logDiagnostic("info", "vscode.terminal.killing", {
+      sessionId: terminal.sessionId,
+      terminalId: terminal.terminalId,
+      command: terminal.command,
+    });
+    try {
+      if (process.platform !== "win32" && terminal.process.pid)
+        process.kill(-terminal.process.pid, "SIGKILL");
+      else if (!terminal.process.kill("SIGKILL"))
+        throw new Error("The process did not accept the kill signal");
+    } catch (error) {
+      if ((error as { code?: string }).code !== "ESRCH")
+        throw this.failure(terminal, "kill", error);
     }
-
-    await managed.exitPromise;
-
-    return {
-      exitCode: managed.exitCode,
-      signal: managed.exitSignal,
-    };
+    await terminal.done;
   }
 
   async killTerminal(params: KillTerminalRequest): Promise<KillTerminalResponse> {
-    const managed = this.terminals.get(params.terminalId);
-    if (!managed) {
-      throw new Error(`Terminal not found: ${params.terminalId}`);
-    }
-
-    try {
-      managed.process.kill("SIGTERM");
-    } catch (e) {
-      logError(`Failed to kill terminal ${params.terminalId}`, e);
-    }
-
+    await this.kill(this.get(params));
     return {};
   }
 
   async releaseTerminal(params: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse> {
-    const managed = this.terminals.get(params.terminalId);
-    if (!managed) {
-      throw new Error(`Terminal not found: ${params.terminalId}`);
-    }
+    const terminal = this.get(params);
+    return (terminal.release ??= this.release(terminal));
+  }
 
-    log(`releaseTerminal: ${params.terminalId}`);
-
-    // Kill if still running
-    if (!managed.exited) {
-      try {
-        managed.process.kill("SIGTERM");
-      } catch {
-        // ignore
-      }
-    }
-
-    // Don't dispose VS Code terminal — keep output visible per ACP spec
-    this.terminals.delete(params.terminalId);
-
+  private async release(terminal: ManagedTerminal): Promise<ReleaseTerminalResponse> {
+    await this.kill(terminal);
+    this.publish(terminal, true);
+    terminal.terminal.dispose();
+    terminal.writer.dispose();
+    this.terminals.delete(terminal.terminalId);
+    logDiagnostic("info", "vscode.terminal.released", {
+      sessionId: terminal.sessionId,
+      terminalId: terminal.terminalId,
+      outputBytes: Buffer.byteLength(terminal.output),
+      truncated: terminal.truncated,
+    });
     return {};
   }
 
-  dispose(): void {
-    for (const [, managed] of this.terminals) {
-      try {
-        if (!managed.exited) {
-          managed.process.kill("SIGKILL");
-        }
-        managed.vsTerminal?.dispose();
-      } catch {
-        // ignore
-      }
-    }
-    this.terminals.clear();
+  dispose(): Promise<void> {
+    this.disposed = true;
+    return (this.disposal ??= this.cleanup());
+  }
+
+  private async cleanup(): Promise<void> {
+    const results = await Promise.allSettled(
+      [...this.terminals.values()].map((terminal) => this.releaseTerminal(terminal)),
+    );
+    for (const result of results)
+      if (result.status === "rejected")
+        logDiagnostic("error", "vscode.terminal.cleanup_failed", {
+          cause: diagnosticError(result.reason),
+        });
   }
 }

@@ -15,6 +15,7 @@ import { AcpClientImpl } from "./AcpClientImpl";
 export interface ConnectionInfo {
   connection: ClientSideConnection;
   client: AcpClientImpl;
+  terminalHandler: TerminalHandler;
   initResponse: InitializeResponse;
 }
 
@@ -31,7 +32,7 @@ export class ConnectionManager {
    * Create an ACP connection from a child process.
    * Sets up streams, creates connection, and performs initialization handshake.
    */
-  async connect(agentId: string, process: ChildProcess): Promise<ConnectionInfo> {
+  async connect(agentId: string, process: ChildProcess, cwd?: string): Promise<ConnectionInfo> {
     if (!process.stdout || !process.stdin) {
       throw new Error("Agent process missing stdio streams");
     }
@@ -49,7 +50,14 @@ export class ConnectionManager {
 
     // Create handlers
     const fsHandler = new FileSystemHandler();
-    const terminalHandler = new TerminalHandler();
+    const terminalHandler = new TerminalHandler(
+      undefined,
+      (update) => this.sessionUpdateHandler.terminalOutput(update),
+      cwd,
+    );
+    process.once("close", () => {
+      void terminalHandler.dispose();
+    });
     const permissionHandler = new PermissionHandler();
 
     // Create client implementation
@@ -68,26 +76,31 @@ export class ConnectionManager {
 
     // Initialize the connection
     log(`ConnectionManager: initializing connection to agent ${agentId}`);
-    const initResponse = await connection.initialize({
-      protocolVersion: PROTOCOL_VERSION,
-      clientInfo: {
-        name: "vscode-acp-client",
-        version: extensionVersion,
-      },
-      clientCapabilities: {
-        fs: {
-          readTextFile: true,
-          writeTextFile: true,
+    const initResponse = await connection
+      .initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientInfo: {
+          name: "vscode-acp-client",
+          version: extensionVersion,
         },
-        terminal: true,
-      },
-    });
+        clientCapabilities: {
+          fs: {
+            readTextFile: true,
+            writeTextFile: true,
+          },
+          terminal: true,
+        },
+      })
+      .catch(async (error) => {
+        await terminalHandler.dispose();
+        throw error;
+      });
 
     log(
       `ConnectionManager: initialized. Agent: ${initResponse.agentInfo?.name || "unknown"} v${initResponse.agentInfo?.version || "?"}`,
     );
 
-    const info: ConnectionInfo = { connection, client, initResponse };
+    const info: ConnectionInfo = { connection, client, initResponse, terminalHandler };
     this.connections.set(agentId, info);
 
     return info;
@@ -98,11 +111,13 @@ export class ConnectionManager {
   }
 
   removeConnection(agentId: string): void {
+    const info = this.connections.get(agentId);
     this.connections.delete(agentId);
+    if (info) void info.terminalHandler.dispose();
   }
 
   dispose(): void {
-    this.connections.clear();
+    for (const agentId of this.connections.keys()) this.removeConnection(agentId);
   }
 
   /**

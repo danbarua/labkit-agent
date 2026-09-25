@@ -1,6 +1,7 @@
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 
-import { log } from "../utils/Logger";
+import { log, logError } from "../utils/Logger";
+import type { TerminalDisplay } from "./TerminalHandler";
 
 export type SessionUpdateListener = (update: SessionNotification) => void;
 
@@ -10,6 +11,32 @@ export type SessionUpdateListener = (update: SessionNotification) => void;
  */
 export class SessionUpdateHandler {
   private listeners: Set<SessionUpdateListener> = new Set();
+
+  private terminalListeners = new Set<(update: TerminalDisplay) => void>();
+  private terminalDisplays = new Map<string, TerminalDisplay>();
+
+  addTerminalListener(listener: (update: TerminalDisplay) => void) {
+    this.terminalListeners.add(listener);
+  }
+
+  removeTerminalListener(listener: (update: TerminalDisplay) => void) {
+    this.terminalListeners.delete(listener);
+  }
+
+  terminalSnapshots(sessionId: string) {
+    return [...this.terminalDisplays.values()].filter((update) => update.sessionId === sessionId);
+  }
+
+  terminalOutput(update: TerminalDisplay) {
+    this.terminalDisplays.set(update.terminalId, update);
+    for (const listener of this.terminalListeners) {
+      try {
+        listener(update);
+      } catch (error) {
+        logError("Terminal display listener failed", error);
+      }
+    }
+  }
 
   addListener(listener: SessionUpdateListener): void {
     this.listeners.add(listener);
@@ -34,5 +61,7 @@ export class SessionUpdateHandler {
 
   dispose(): void {
     this.listeners.clear();
+    this.terminalListeners.clear();
+    this.terminalDisplays.clear();
   }
 }
