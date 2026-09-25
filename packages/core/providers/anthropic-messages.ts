@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { ToolCallSchema } from "../agent/types.ts";
-import { anthropicStopReason, retainedTruncation } from "./anthropic-stop.ts";
+import { anthropicStopReason } from "./anthropic-stop.ts";
 import {
   advertisements,
   completion,
@@ -75,11 +75,7 @@ export const anthropicMessages: CompletionProfile = {
   },
   decode(res) {
     const raw = z.record(z.string(), z.unknown()).parse(responseBody(res));
-    const stop = anthropicStopReason(raw.stop_reason, raw.usage);
-    if (stop === "max_tokens") {
-      const content = z.array(block).parse(raw.content ?? []);
-      return completion(retainedTruncation(content, raw.usage), []);
-    }
+    anthropicStopReason(raw.stop_reason, raw.usage);
     const body = z
       .object({
         role: z.literal("assistant"),

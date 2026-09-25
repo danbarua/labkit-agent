@@ -181,12 +181,7 @@ export function anthropicAssembler(): StreamAssembler {
           active = undefined;
           return [];
         case "message_delta": {
-          if (reason) throw new Error("Invalid message_delta");
-          if (active) {
-            if (active.block.type === "text" || active.block.type === "thinking")
-              blocks.push(active.block);
-            active = undefined;
-          }
+          if (active || reason) throw new Error("Invalid message_delta");
           const delta = object.parse(item.delta);
           if (item.usage != null)
             message.usage = { ...object.parse(message.usage ?? {}), ...object.parse(item.usage) };

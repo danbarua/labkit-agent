@@ -139,17 +139,10 @@ export function Console() {
       if (event.kind === "snapshot") {
         setView(event.view);
         if (event.view.phase === "idle") {
-          setDraft((current) => {
-            const committed = [
-              ...event.view.log.flatMap((turn) => turn.messages),
-              ...event.view.live,
-            ]
-              .map((message) => message.text)
-              .join("\n");
-            if ((current.text || current.thinking) && !committed.includes(current.text || current.thinking))
-              return current;
-            return { text: "", thinking: "" };
-          });
+          const failed = event.view.log.at(-1)?.outcome.kind === "failed";
+          setDraft((current) =>
+            failed && (current.text || current.thinking) ? current : { text: "", thinking: "" },
+          );
           setPermission(null);
         }
       } else if (event.kind === "delta") {
@@ -468,7 +461,7 @@ export function Console() {
               {draft.text || draft.thinking ? (
                 <article className="rounded-md border border-teal/30 bg-teal/5 px-3 py-2">
                   <p className="mb-1 text-[10px] font-semibold tracking-[0.16em] text-teal uppercase">
-                    Stream draft
+                    {view.phase === "idle" ? "Truncated output" : "Stream draft"}
                   </p>
                   {draft.thinking ? (
                     <p className="mb-2 font-mono text-xs text-muted-foreground">{draft.thinking}</p>
