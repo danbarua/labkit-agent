@@ -1,14 +1,17 @@
 import { z } from "zod";
 
+import { AUDIO_MEDIA_KINDS } from "../agent/content.ts";
 import { ToolCallSchema } from "../agent/types.ts";
 import {
   advertisements,
   completion,
+  googleMessageParts,
   messageText,
   responseBody,
   systemAndMessages,
 } from "./shared.ts";
 import { parseRequest, validateProviderSettings, type CompletionProfile } from "./types.ts";
+import { decodeUsage } from "./usage.ts";
 
 const part = z.union([
   z.strictObject({
@@ -30,7 +33,7 @@ export const googleGenerate: CompletionProfile = {
   capabilities: {
     thinking: { mode: "off" },
     stream: false,
-    media: ["text/plain", "text/markdown"],
+    media: ["text/plain", "text/markdown", ...AUDIO_MEDIA_KINDS],
   },
   encode(raw, blobs) {
     const request = parseRequest(raw, "google-generate@1");
@@ -39,7 +42,7 @@ export const googleGenerate: CompletionProfile = {
     const contents: { role: string; parts: unknown[] }[] = [];
     const calls = new Map<string, string>();
     for (const message of split.messages) {
-      const text = messageText(message, blobs);
+      const text = message.role === "tool" ? messageText(message, blobs) : "";
       const role = message.role === "assistant" ? "model" : "user";
       const parts: unknown[] = [];
       if (message.role === "tool")
@@ -51,7 +54,7 @@ export const googleGenerate: CompletionProfile = {
           },
         });
       else {
-        if (text) parts.push({ text: text });
+        parts.push(...googleMessageParts(message, blobs));
         if (message.role === "assistant")
           for (const call of message.calls ?? []) {
             calls.set(call.id, call.name);
@@ -94,6 +97,7 @@ export const googleGenerate: CompletionProfile = {
     };
   },
   decode(res) {
+    const usage = decodeUsage(res.body, "google");
     const body = z
       .object({
         candidates: z
@@ -107,20 +111,23 @@ export const googleGenerate: CompletionProfile = {
       })
       .parse(responseBody(res));
     const parts = body.candidates[0]!.content.parts;
-    return completion(
-      parts.flatMap((value) => ("text" in value ? [value.text] : [])).join(""),
-      parts.flatMap((value, index) =>
-        "functionCall" in value
-          ? [
-              ToolCallSchema.parse({
-                // Stable within this response. Domain correlation scopes IDs to each batch.
-                id: value.functionCall.id ?? `google-call-${index}`,
-                name: value.functionCall.name,
-                args: value.functionCall.args ?? {},
-              }),
-            ]
-          : [],
+    return {
+      ...completion(
+        parts.flatMap((value) => ("text" in value ? [value.text] : [])).join(""),
+        parts.flatMap((value, index) =>
+          "functionCall" in value
+            ? [
+                ToolCallSchema.parse({
+                  // Stable within this response. Domain correlation scopes IDs to each batch.
+                  id: value.functionCall.id ?? `google-call-${index}`,
+                  name: value.functionCall.name,
+                  args: value.functionCall.args ?? {},
+                }),
+              ]
+            : [],
+        ),
       ),
-    );
+      ...(usage ? { usage } : {}),
+    };
   },
 };

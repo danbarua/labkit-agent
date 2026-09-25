@@ -5,11 +5,16 @@ import type { ToolRunContext } from "@labkit-agent/core/host";
 import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
 
 import { waitForBoundary } from "./session-config.ts";
-import { MAX_FILE_BYTES } from "./workspace-files.ts";
+import { FileReadRangeSchema, MAX_FILE_BYTES, type FileReadRange } from "./workspace-files.ts";
 
 /** Session-bound client ports. Missing methods were not advertised by the client. */
 export type ClientFiles = Readonly<{
-  readText?: (path: string, signal: AbortSignal, context?: ToolRunContext) => Promise<string>;
+  readText?: (
+    path: string,
+    signal: AbortSignal,
+    context?: ToolRunContext,
+    range?: FileReadRange,
+  ) => Promise<string>;
   write?: (
     path: string,
     text: string,
@@ -37,6 +42,7 @@ export function clientFiles(
     signal: AbortSignal,
     run: () => Promise<T>,
     context?: ToolRunContext,
+    range?: FileReadRange,
   ): Promise<T> => {
     const started = performance.now();
     const fields = {
@@ -46,6 +52,7 @@ export function clientFiles(
       operation,
       path,
       timeoutMs: 60000,
+      ...(range ?? {}),
     };
     diagnostic("acp", "debug", "client_file.requested", fields);
     try {
@@ -86,7 +93,12 @@ export function clientFiles(
   return {
     ...(capabilities.fs?.readTextFile === true
       ? {
-          readText: async (path: string, signal: AbortSignal, context?: ToolRunContext) =>
+          readText: async (
+            path: string,
+            signal: AbortSignal,
+            context?: ToolRunContext,
+            range?: FileReadRange,
+          ) =>
             observed(
               "fs/read_text_file",
               path,
@@ -99,16 +111,20 @@ export function clientFiles(
                     {
                       sessionId: session(),
                       path,
+                      ...FileReadRangeSchema.parse(range ?? {}),
                     },
                     { cancellationSignal },
                   ),
                   cancellationSignal,
                 );
                 if (Buffer.byteLength(response.content) > MAX_FILE_BYTES)
-                  throw new Error("Client file exceeds 256 KiB; narrow the requested file");
+                  throw new Error(
+                    "Client file response exceeds 256 KiB; narrow the read with line and a smaller limit. A single line larger than 256 KiB cannot be returned by read_file.",
+                  );
                 return response.content;
               },
               context,
+              range,
             ),
         }
       : {}),

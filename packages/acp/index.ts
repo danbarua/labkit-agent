@@ -17,6 +17,8 @@ export {
 
 export type { ClientFiles } from "./client-files.ts";
 
+export type { FileReadRange } from "./workspace-files.ts";
+
 export { terminalTool, type ClientTerminal } from "./client-terminal.ts";
 
 export { planTool, type PlanEntries, type PlanSink } from "./plan.ts";
@@ -26,3 +28,20 @@ export type { AcpCommand } from "./commands.ts";
 export type { AcpAuth, AcpAuthContext } from "./auth.ts";
 
 export type { ClientElicitation, ElicitationResult } from "./client-elicitation.ts";
+
+export {
+  AcpUsageSchema,
+  type AcpUsage,
+  type AcpUsageContext,
+  type AcpUsageBinding,
+} from "./session-usage.ts";
+
+export type { AcpToolContent, AcpToolContentContext } from "./tool-content.ts";
+
+export {
+  workspaceToolContent,
+  FileWriteResultSchema,
+  FileBeforeSchema,
+  type FileWriteResult,
+  type FileBefore,
+} from "./file-write.ts";

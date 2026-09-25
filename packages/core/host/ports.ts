@@ -7,6 +7,7 @@ import type { BlobResolver } from "../agent/content.ts";
 import { AgentIdSchema, ToolNameSchema, type CompletionSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import type { StreamDeltaSink } from "../providers/types.ts";
+import type { CompletionUsage } from "../providers/usage.ts";
 
 export const ToolKindSchema = z.enum([
   "read",
@@ -99,6 +100,7 @@ export type AgentDefinition = z.input<typeof AgentDefinitionSchema>;
 export type CompletionPortResponse = Readonly<{
   completion: z.input<typeof CompletionSchema>;
   continuationPayload?: unknown;
+  usage?: CompletionUsage;
 }>;
 
 export type CompletionPort = (

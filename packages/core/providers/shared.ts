@@ -73,9 +73,7 @@ export function attachmentText(ref: BlobRef, blobs?: BlobResolver): string {
   if (ref.media !== "text/plain" && ref.media !== "text/markdown")
     throw new Error(`Cannot inline attachment media as text: ${ref.media}`);
   const bytes = attachmentBytes(ref, blobs);
-  return bytes.byteLength <= 65536
-    ? new TextDecoder("utf-8", { fatal: true }).decode(bytes)
-    : `[attached: ${ref.name ?? ref.media} sha256:${ref.id}]`;
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 }
 export function attachmentBytes(ref: BlobRef, blobs?: BlobResolver): Uint8Array {
   if (!blobs) throw new Error(`Missing blob resolver: ${ref.id}`);
@@ -106,4 +104,27 @@ export function continuationPayload(entry: Continuation, blobs?: BlobResolver): 
         new TextDecoder("utf-8", { fatal: true }).decode(attachmentBytes(entry.payloadBlob, blobs)),
       ),
     );
+}
+
+/** Audio is native user content; it must never be replaced by a textual attachment stub. */
+export function googleMessageParts(message: AgentMessage, blobs?: BlobResolver): unknown[] {
+  const hasAudio =
+    message.role !== "tool" &&
+    message.parts?.some((part) => part.type === "blob" && part.ref.media.startsWith("audio/"));
+  if (!hasAudio) {
+    const text = messageText(message, blobs);
+    return text ? [{ text }] : [];
+  }
+  if (message.role !== "user") throw new Error("Google audio attachments require a user message");
+  return message.parts!.map((part) => {
+    if (part.type === "text") return { text: part.text };
+    if (part.ref.media.startsWith("audio/"))
+      return {
+        inlineData: {
+          mimeType: part.ref.media,
+          data: Buffer.from(attachmentBytes(part.ref, blobs)).toString("base64"),
+        },
+      };
+    return { text: attachmentText(part.ref, blobs) };
+  });
 }

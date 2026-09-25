@@ -49,7 +49,14 @@ import {
   type SessionEvent,
   type SessionState,
 } from "./session-fsm.ts";
-import { replay, seedConversation, toSeed, wireEvent, type JournalState } from "./session-log.ts";
+import {
+  replay,
+  seedConversation,
+  toSeed,
+  wireEvent,
+  type JournalState,
+  type LastCompletionUsage,
+} from "./session-log.ts";
 import { appendOperation, loadOperation, loadSession } from "./session-operation.ts";
 import {
   ConfigurationSchema,
@@ -161,6 +168,7 @@ export type EnvCommandHandle = Readonly<{
 export type SessionRuntime = {
   readonly snapshot: SessionState;
   readonly model?: ResolvedModel;
+  readonly lastCompletionUsage?: LastCompletionUsage;
   fire(event: unknown): Promise<EnvReceipt>;
   dispatch(event: unknown): EnvCommandHandle;
   input(input: string | Omit<Extract<EnvEvent, { type: "user" }>, "type">): {
@@ -245,6 +253,7 @@ function configure(raw: SessionOptions, restoring = false) {
     }
     return built.runtime;
   }
+
   function build(initial: JournalState) {
     const sessionId = initial.conversation.sessionId;
     if (initial.policy) validatePolicy(initial.policy, initial.configuration, resolvers);
@@ -257,10 +266,10 @@ function configure(raw: SessionOptions, restoring = false) {
         { differences },
       );
     }
-    const branchReplies = new Map<
-      ActorId,
-      { resolve: (runtime: SessionRuntime) => void; reject: (error: unknown) => void }
-    >();
+
+    const branchReplies = 
+    new Map<ActorId, { resolve: (runtime: SessionRuntime) => void; reject: (error: unknown) => void } >();
+
     const receipts = new Map<string, (receipt: CommandReceipt) => void>();
     const afterCommit = new Map<string, () => void>();
     const admissions = new Map<string, (result: TerminalResult) => void>();
@@ -280,8 +289,24 @@ function configure(raw: SessionOptions, restoring = false) {
       },
     });
     let observedTransition = "";
+    let observedUsage = initial.lastCompletionUsage?.operationId;
+
     function send(event: SessionEvent) {
       return session.send(event).then((snapshot) => {
+        const usage = snapshot.durable.lastCompletionUsage;
+        if (usage && usage.operationId !== observedUsage) {
+          observedUsage = usage.operationId;
+          diagnostic("session", "info", "completion.usage.committed", {
+            sessionId,
+            turnId: usage.turnId,
+            childId: usage.operationId,
+            revision: snapshot.durable.revision,
+            ...("appendId" in event ? { appendId: event.appendId } : {}),
+            usage: usage.usage,
+            message:
+              "Completion response accounting committed; not a current-context estimate or cumulative cost",
+          });
+        }
         const phase = snapshot.durable.conversation.turn.status;
         const transition = `${snapshot.status}/${phase}`;
         if (transition !== observedTransition) {
@@ -502,6 +527,7 @@ function configure(raw: SessionOptions, restoring = false) {
           break;
         }
         case "dispatch": {
+          const previousPolicy = dispatchBoundary.policy;
           dispatchBoundary = command.durable;
           const terminal = command.durable.records.at(-1)?.body;
           const newBodies = command.durable.records
@@ -520,7 +546,21 @@ function configure(raw: SessionOptions, restoring = false) {
               }
             }
           for (const body of newBodies) {
-            if (body.kind === "policy")
+            if (body.kind === "policy") {
+              const toolsChanged = Object.entries(body.policy.tools).some(([agent, tools]) => {
+                const previous = previousPolicy?.tools[agent] ?? [];
+                return (
+                  tools.some((tool) => !previous.includes(tool)) ||
+                  previous.some((tool) => !tools.includes(tool))
+                );
+              });
+              if (body.patch.permissions !== undefined || toolsChanged)
+                host.resetPermissions(
+                  body.patch.permissions !== undefined
+                    ? "Permission mode explicitly committed; remembered tool approvals revoked"
+                    : "Allowed tool scope changed; remembered tool approvals revoked",
+                  { policyVersion: body.policy.version, appendId: command.submission.appendId },
+                );
               diagnostic("session", "info", "policy.committed", {
                 sessionId,
                 appendId: command.submission.appendId,
@@ -528,6 +568,7 @@ function configure(raw: SessionOptions, restoring = false) {
                 revision: command.durable.revision,
                 policy: body.policy,
               });
+            }
           }
           const admission = admissions.get(command.submission.id);
           if (admission) {
@@ -791,6 +832,9 @@ function configure(raw: SessionOptions, restoring = false) {
     const runtime: SessionRuntime = {
       get snapshot() {
         return session.snapshot;
+      },
+      get lastCompletionUsage() {
+        return session.snapshot.durable.lastCompletionUsage;
       },
       get model() {
         const { policy, conversation } = session.snapshot.durable;

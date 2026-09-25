@@ -78,11 +78,34 @@ fail validation. Preserve compatible bindings for sessions you intend to reopen;
 software does not migrate historical journal formats. See
 [configuration binding details](protocol-reference.md#configuration-bindings).
 
+## Publish context usage and cumulative cost
+
+Return an `AcpSessionOptions.usage` binding when your environment can measure the current prompt
+context and its effective capacity. `read({ sessionId, cwd, snapshot, model }, signal)` returns
+`{ used, size, cost? }`. Include cached tokens in `used`; `cost`, when known, is the cumulative
+session amount with an explicit currency such as `{ amount: 0.12, currency: "EUR" }`. It is not a
+per-request charge. Return `undefined` when you cannot provide meaningful context usage and size.
+The adapter does not infer capacity or prices from model names or add up response tokens as context.
+
+The adapter reads after new/load/resume/fork and committed state changes. An optional
+`subscribe(changed, signal)` tells it to read again when external accounting changes; return a
+cleanup function if the subscription needs one. Superseded reads receive cancellation, and late
+results cannot overwrite newer state or reach a closed session. Read/subscription failures produce
+warnings and leave agent execution running. Identical values do not produce duplicate updates.
+The source owns measurement and billing persistence; reopening queries it without replaying tools.
+
+`acp.usage.updated` logs the published counts/cost with session, connection, revision and usage-request IDs.
+`acp.usage.failed` explains why no replacement was sent. Core's `lastCompletionUsage` is historical
+per-response evidence and is not interchangeable with this session-level measurement. The default
+workspace launcher does not yet supply a context-measurement/billing source; these controls must
+not be described as wired into that launcher until that integration exists.
+
 ## Tool failures go back to the model
 
 The workspace harness reports ordinary tool failures as tool results and continues the turn.
 A missing file includes its path, underlying error, and a concrete `list_dir` request for discovering
-existing paths. Invalid arguments return the validator’s field-level errors without execution or a
+existing paths. `read_file` also accepts `line` and `limit` to read large files in sections;
+those parameters are forwarded to editor reads so unsaved content remains authoritative. Invalid arguments return the validator’s field-level errors without execution or a
 permission prompt; other calls in the batch finish, and the
 model can choose a corrected action. Failed tool cards and original journal outcomes stay failed.
 No tool is automatically retried. Permission refusal, cancellation, deadlines, and persistence
@@ -96,7 +119,7 @@ call in the batch must be approved before any tool runs. A refusal blocks the ba
 dialog aborts the turn. The picker also offers approval of the named tool for all arguments until
 the live session closes. Other tools remain unapproved. Each reuse is logged and journaled with its
 grant identity; input validation and persistence gates still apply. Closing/reloading a session or
-committing configuration changes clears these approvals. Under Tool approvals, select Ask to clear
+committing a permission reset or tool scope change clears these approvals. Under Tool approvals, select Ask to clear
 remembered grants or explicitly allow all enabled tools without asking. The adapter maps the typed core refusal directly to ACP `refusal`.
 
 Stream text is provisional. It can be visible before EOF exposes a malformed response, and a tool
@@ -112,6 +135,46 @@ Reload renders saved conversation data without rerunning tools or asking for old
 Live terminal handles, stream callbacks, and MCP connections are recreated as needed, not recovered
 from the journal. An interrupted write may have taken effect; repeating it needs a new explicit
 invocation. See [session recovery](../core/session/README.md#reopen-without-repeating-effects).
+
+## Render tool results without changing execution
+
+`AcpSessionOptions.toolContent` maps tool names to pure display renderers. A renderer receives
+`{ toolName, output }`, where `output` is the exact successful tool-result string that core saves
+and sends to the model. Return ACP content blocks or file diffs. The adapter validates the complete
+result against the installed ACP schema and keeps `rawOutput` available alongside the display.
+Images, audio, embedded resources, resource links, annotations and `_meta` remain structured.
+
+Bind a renderer only when you own that tool's output contract. Arbitrary JSON is not automatically
+interpreted as MCP content or a diff. Discovered MCP tools receive a renderer automatically, so their
+admitted text/resource blocks display directly rather than as serialized envelopes. MCP binary-result
+admission remains a separate missing model-content boundary; this display binding does not enable it.
+
+The workspace launcher binds `workspaceToolContent` for `write_file`. Its tool result records
+`before` as observed text, confirmed absence, or unavailable with a reason, plus the written text.
+Existing local files use an inode-checked read before truncation; exclusive creation establishes a
+new file. Editor writes read the editor's buffer when that capability exists, so unsaved changes
+appear in the diff. They never substitute disk contents for an unavailable editor baseline.
+
+Baseline reads stay inside the approved write operation. Cancellation or timeout prevents dispatch
+of a subsequent write. Other baseline-read failures do not deny an otherwise authorized write;
+a successful write then shows why its diff is unavailable. Oversized or non-UTF-8 prior local files
+have that explicit outcome. Missing editor reads do not establish that a file is new. These are
+pre-write observations, not compare-and-swap protection against concurrent edits.
+`workspace.write_evidence.captured` records source and byte counts; `workspace.write_baseline.failed`
+retains an actual read failure, and `workspace.write_evidence.unavailable` explains the consequence.
+File bodies live in the saved result, not routine diagnostics. Custom workspace factories can bind
+`toolContent: workspaceToolContent` using the package export.
+
+Renderers must use only the supplied result: no filesystem reads, network calls, tool execution or
+live terminal handles. Reload runs the current renderer over saved successful results and labels
+the update `_meta["labkit.dev/reconstructed"] = true`. It never reruns the tool. Preserve renderer
+semantics when reopening saved sessions if identical historical presentation matters. Terminal
+links remain owned by the client-terminal binding and are never reconstructed from saved IDs.
+
+A malformed or throwing renderer leaves the execution result unchanged. The tool card explicitly
+reports the display failure and retains raw output; `acp.tool_content.failed` logs the cause, tool
+name and correlated session/tool-call IDs. `acp.tool_content.rendered` records successful block types
+and whether the source was live or saved, without logging content bodies.
 
 ## Decide which environment owns an effect
 

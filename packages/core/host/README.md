@@ -42,7 +42,7 @@ calls. Context is not an approval token, and a tool called directly outside the 
 ## Implement a completion binding
 
 `CompletionPort(request, signal, blobs?, onDelta?, correlation?)` receives a validated prepared
-request. Return `{ completion, continuationPayload? }`; the host validates the untrusted response
+request. Return `{ completion, continuationPayload?, usage? }`; the host validates the untrusted response
 before accepting it. The public request/response types and the
 [executable exchange](../session/examples/completion-binding.ts) show tool arguments and messages.
 Use [provider bindings](../providers/README.md) for supported HTTP dialects. Before invoking the
@@ -54,6 +54,13 @@ Use the supplied blob resolver for attachments and continuations; it is scoped t
 Do not retain it in domain state. The session arranges blob storage and loading while the host owns
 cancellation. A continuation write failure prevents a successful completion outcome, so tools
 cannot run from a response whose required context could not be saved.
+
+Optional `usage` is serializable response accounting, exported as `CompletionUsage` from the
+session entry point. Keep missing counters absent and preserve native counters. The host carries
+it with the admitted completion; it cannot release accounting ahead of that completion's receipt.
+`completion.usage.received` identifies validation at the operation boundary. The session separately
+logs `completion.usage.committed` after persistence. Neither means a cumulative bill or a count of
+current context tokens.
 
 Optional deltas are for display. A stream still needs one complete validated response: partial text
 cannot authorize tool execution or count as a successful answer. Pass correlation into transport
@@ -68,18 +75,22 @@ host reports a failed tool result containing the validation cause; the invalid c
 Valid siblings still require approval. The model receives all committed results to choose its next
 action. `tool.input_rejected` explains the invalid call and consequence in diagnostics. Return `allow-once`, `allow-session`, `reject-once`, or a
 cancelled outcome. Every call must be allowed before the batch runs. A malformed response or callback
-failure fails closed; cancellation revokes in-memory grants, and late approval cannot start a tool.
+failure fails closed; cancellation discards uncommitted grants, and late approval cannot start a tool.
 `allow-session` approves the named tool for all arguments in this host's live session. The host
 installs that grant only when the committed permission outcome releases the batch. Later calls
 still validate inputs and commit permission outcomes, with the original grant ID and `remembered`
 source. Other tools still need approval. Rejection/cancellation discards uncommitted grants.
-Closing the host or a committed policy change clears remembered grants; restore does not resurrect
+Closing the host, explicitly committing permission mode, or changing allowed tools clears remembered grants; restore does not resurrect
 them. `permission.granted`, `permission.reused`, and `permission.grants_cleared` explain this at INFO.
+Model, thinking, and limit changes retain approvals. Direct host consumers call `resetPermissions`
+after committing an explicit permission reset or changed tool scope; dispatch does not infer
+authorization changes from a general policy revision.
 An existing committed grant survives cancellation of a later turn; cancellation stops work rather
 than changing the user's authorization. Select Ask in ACP Tool approvals to revoke remembered grants.
 
 `toolUpdate` and `streamUpdate` are best-effort display subscribers. Their exceptions or pending
-promises cannot block execution. Use their operation IDs to update existing cards/chunks. Restore
+promises cannot block execution. Use their operation IDs to update existing cards/chunks. Tool updates include the known tool name
+so adapters can select display bindings without recovering it from a journal or another callback. Restore
 emits no historical host notifications; render saved history from session state instead.
 
 | Signal              | Suitable use                               | Authority it does not provide                   |

@@ -4,8 +4,6 @@ import { join } from "node:path";
 
 import { expect, test } from "@logtape/testing-bun/autoload";
 
-import { until } from "../core/agent/test-support.ts";
-
 test("Bun stdio launcher exchanges ACP JSON lines and exits on EOF with stdout reserved", async () => {
   const directory = await mkdtemp(join(tmpdir(), "labkit-acp-"));
   const config = join(directory, "config.ts");
@@ -52,12 +50,31 @@ test("Bun stdio launcher exchanges ACP JSON lines and exits on EOF with stdout r
     }
     expect(buffer).toBe("");
   })();
+
   const send = (value: unknown) => child.stdin.write(`${JSON.stringify(value)}\n`);
+
+  async function waitForResponse(id: number) {
+    const deadline = performance.now() + 5000;
+    while (!messages.some((message) => message.id === id)) {
+      if (child.exitCode !== null) {
+        throw new Error(
+          `ACP launcher exited with code ${child.exitCode} before response ${id}: ${await errors}`,
+        );
+      }
+      if (performance.now() >= deadline) {
+        throw new Error(
+          `ACP launcher did not produce response ${id} within 5000 ms; received ${JSON.stringify(messages)}`,
+        );
+      }
+      await Bun.sleep(10);
+    }
+  }
+
   try {
     // Split a JSON frame across writes to exercise the actual stdio reader.
     child.stdin.write('{"jsonrpc":"2.0","id":1,"method":"init');
     child.stdin.write('ialize","params":{"protocolVersion":1,"clientCapabilities":{}}}\n');
-    await until(() => messages.some((m) => m.id === 1));
+    await waitForResponse(1);
     expect(messages.find((m) => m.id === 1).result.protocolVersion).toBe(1);
     send({
       jsonrpc: "2.0",
@@ -65,7 +82,7 @@ test("Bun stdio launcher exchanges ACP JSON lines and exits on EOF with stdout r
       method: "session/new",
       params: { cwd: directory, mcpServers: [] },
     });
-    await until(() => messages.some((m) => m.id === 2));
+    await waitForResponse(2);
     const sessionId = messages.find((m) => m.id === 2).result.sessionId;
     send({
       jsonrpc: "2.0",
@@ -73,7 +90,7 @@ test("Bun stdio launcher exchanges ACP JSON lines and exits on EOF with stdout r
       method: "session/prompt",
       params: { sessionId, prompt: [{ type: "text", text: "Hello 🌍" }] },
     });
-    await until(() => messages.some((m) => m.id === 3));
+    await waitForResponse(3);
     expect(messages.find((m) => m.method === "session/update").params.update.content.text).toBe(
       `hello 🌍 from ${directory}`,
     );
@@ -87,4 +104,4 @@ test("Bun stdio launcher exchanges ACP JSON lines and exits on EOF with stdout r
     await child.exited;
     await rm(directory, { recursive: true, force: true });
   }
-});
+}, 20_000);

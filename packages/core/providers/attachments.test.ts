@@ -72,7 +72,7 @@ test("all profiles inline small markdown while retaining refs on the canonical r
   });
 });
 
-test("large text uses a named hash stub; invalid bytes and unsupported media fail closed", () => {
+test("large text is sent in full; invalid bytes and unsupported media fail closed", () => {
   const bytes = new Uint8Array(65537).fill(65);
   const large = { ...ref, id: hashBlob(bytes), bytes: bytes.length };
   const request = CompletionRequestSchema.parse({
@@ -80,7 +80,7 @@ test("large text uses a named hash stub; invalid bytes and unsupported media fai
     messages: [{ role: "user", text: "", parts: [{ type: "blob", ref: large }] }],
   });
   expect(openaiChat.encode(request, () => bytes).body).toMatchObject({
-    messages: [{ role: "user", content: `[attached: DESIGN.md sha256:${large.id}]` }],
+    messages: [{ role: "user", content: new TextDecoder().decode(bytes) }],
   });
   expect(() => openaiChat.encode(request, () => markdown)).toThrow("do not match");
   expect(() => openaiChat.encode(input)).toThrow("resolver");
@@ -164,4 +164,39 @@ test("adjacent explicit text parts concatenate without added separators", () => 
   expect(openaiChat.encode(request).body).toMatchObject({
     messages: [{ role: "user", content: "ab" }],
   });
+});
+
+test("Google profiles encode audio MIME types and bytes natively in content order", async () => {
+  const { AUDIO_MEDIA_KINDS } = await import("../agent/content.ts");
+  const { googleGenerateV2, googleGenerateV3 } = await import("./index.ts");
+  const bytes = new Uint8Array([1, 2, 3]);
+  for (const profile of [googleGenerate, googleGenerateV2, googleGenerateV3]) {
+    for (const media of AUDIO_MEDIA_KINDS) {
+      const ref = BlobRefSchema.parse({ id: hashBlob(bytes), media, bytes: bytes.length });
+      const request = CompletionRequestSchema.parse({
+        provider: profile.id,
+        model: "audio-model",
+        tools: [],
+        successors: [],
+        messages: [
+          {
+            role: "user",
+            text: "beforeafter",
+            parts: [
+              { type: "text", text: "before" },
+              { type: "blob", ref },
+              { type: "text", text: "after" },
+            ],
+          },
+        ],
+      });
+      const body = profile.encode(request, () => bytes).body as any;
+      expect(body.contents[0].parts).toEqual([
+        { text: "before" },
+        { inlineData: { mimeType: media, data: "AQID" } },
+        { text: "after" },
+      ]);
+      expect(profile.capabilities.media).toContain(media);
+    }
+  }
 });

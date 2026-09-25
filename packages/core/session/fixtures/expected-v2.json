@@ -23572,6 +23572,20 @@
                 "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
                 "event": {
                   "type": "model_settled",
+                  "usage": {
+                    "status": "reported",
+                    "outputTokens": 4,
+                    "native": {
+                      "completion_tokens": 4
+                    },
+                    "source": {
+                      "provider": "openai-chat@2",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "openai-chat@2",
+                      "httpRequestId": "fixture-http-1"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/2"
@@ -23741,6 +23755,20 @@
                 "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
                 "event": {
                   "type": "model_settled",
+                  "usage": {
+                    "status": "reported",
+                    "outputTokens": 4,
+                    "native": {
+                      "completion_tokens": 4
+                    },
+                    "source": {
+                      "provider": "openai-chat@2",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "openai-chat@2",
+                      "httpRequestId": "fixture-http-2"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/5"
@@ -23803,7 +23831,25 @@
               }
             }
           }
-        ]
+        ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/5",
+          "usage": {
+            "status": "reported",
+            "outputTokens": 4,
+            "native": {
+              "completion_tokens": 4
+            },
+            "source": {
+              "provider": "openai-chat@2",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "openai-chat@2",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        }
       },
       "restored": {
         "conversation": {
@@ -24086,6 +24132,20 @@
                 "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
                 "event": {
                   "type": "model_settled",
+                  "usage": {
+                    "status": "reported",
+                    "outputTokens": 4,
+                    "native": {
+                      "completion_tokens": 4
+                    },
+                    "source": {
+                      "provider": "openai-chat@2",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "openai-chat@2",
+                      "httpRequestId": "fixture-http-1"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/2"
@@ -24255,6 +24315,20 @@
                 "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
                 "event": {
                   "type": "model_settled",
+                  "usage": {
+                    "status": "reported",
+                    "outputTokens": 4,
+                    "native": {
+                      "completion_tokens": 4
+                    },
+                    "source": {
+                      "provider": "openai-chat@2",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "openai-chat@2",
+                      "httpRequestId": "fixture-http-2"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/5"
@@ -24317,7 +24391,25 @@
               }
             }
           }
-        ]
+        ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/5",
+          "usage": {
+            "status": "reported",
+            "outputTokens": 4,
+            "native": {
+              "completion_tokens": 4
+            },
+            "source": {
+              "provider": "openai-chat@2",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "openai-chat@2",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        }
       }
     }
   },
@@ -24841,6 +24933,23 @@
                       ]
                     }
                   },
+                  "usage": {
+                    "status": "reported",
+                    "inputTokens": 1,
+                    "outputTokens": 4,
+                    "totalTokens": 5,
+                    "native": {
+                      "input_tokens": 1,
+                      "output_tokens": 4
+                    },
+                    "source": {
+                      "provider": "anthropic-messages@3",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "anthropic-messages@3",
+                      "httpRequestId": "fixture-http-1"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/2"
@@ -25049,6 +25158,23 @@
                       ]
                     }
                   },
+                  "usage": {
+                    "status": "reported",
+                    "inputTokens": 1,
+                    "outputTokens": 4,
+                    "totalTokens": 5,
+                    "native": {
+                      "input_tokens": 1,
+                      "output_tokens": 4
+                    },
+                    "source": {
+                      "provider": "anthropic-messages@3",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "anthropic-messages@3",
+                      "httpRequestId": "fixture-http-2"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/5"
@@ -25120,6 +25246,27 @@
             }
           }
         ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/5",
+          "usage": {
+            "status": "reported",
+            "inputTokens": 1,
+            "outputTokens": 4,
+            "totalTokens": 5,
+            "native": {
+              "input_tokens": 1,
+              "output_tokens": 4
+            },
+            "source": {
+              "provider": "anthropic-messages@3",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "anthropic-messages@3",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        },
         "continuations": [
           {
             "provider": "anthropic-messages@3",
@@ -25463,6 +25610,23 @@
                       ]
                     }
                   },
+                  "usage": {
+                    "status": "reported",
+                    "inputTokens": 1,
+                    "outputTokens": 4,
+                    "totalTokens": 5,
+                    "native": {
+                      "input_tokens": 1,
+                      "output_tokens": 4
+                    },
+                    "source": {
+                      "provider": "anthropic-messages@3",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "anthropic-messages@3",
+                      "httpRequestId": "fixture-http-1"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/2"
@@ -25671,6 +25835,23 @@
                       ]
                     }
                   },
+                  "usage": {
+                    "status": "reported",
+                    "inputTokens": 1,
+                    "outputTokens": 4,
+                    "totalTokens": 5,
+                    "native": {
+                      "input_tokens": 1,
+                      "output_tokens": 4
+                    },
+                    "source": {
+                      "provider": "anthropic-messages@3",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "anthropic-messages@3",
+                      "httpRequestId": "fixture-http-2"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/5"
@@ -25742,6 +25923,27 @@
             }
           }
         ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/5",
+          "usage": {
+            "status": "reported",
+            "inputTokens": 1,
+            "outputTokens": 4,
+            "totalTokens": 5,
+            "native": {
+              "input_tokens": 1,
+              "output_tokens": 4
+            },
+            "source": {
+              "provider": "anthropic-messages@3",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "anthropic-messages@3",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        },
         "continuations": [
           {
             "provider": "anthropic-messages@3",
@@ -26327,6 +26529,20 @@
                       ]
                     }
                   },
+                  "usage": {
+                    "status": "reported",
+                    "outputTokens": 4,
+                    "native": {
+                      "candidatesTokenCount": 4
+                    },
+                    "source": {
+                      "provider": "google-generate@3",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "google-generate@3",
+                      "httpRequestId": "fixture-http-1"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/2"
@@ -26556,6 +26772,20 @@
                       ]
                     }
                   },
+                  "usage": {
+                    "status": "reported",
+                    "outputTokens": 4,
+                    "native": {
+                      "candidatesTokenCount": 4
+                    },
+                    "source": {
+                      "provider": "google-generate@3",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "google-generate@3",
+                      "httpRequestId": "fixture-http-2"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/5"
@@ -26627,6 +26857,24 @@
             }
           }
         ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/5",
+          "usage": {
+            "status": "reported",
+            "outputTokens": 4,
+            "native": {
+              "candidatesTokenCount": 4
+            },
+            "source": {
+              "provider": "google-generate@3",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "google-generate@3",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        },
         "continuations": [
           {
             "provider": "google-generate@3",
@@ -27006,6 +27254,20 @@
                       ]
                     }
                   },
+                  "usage": {
+                    "status": "reported",
+                    "outputTokens": 4,
+                    "native": {
+                      "candidatesTokenCount": 4
+                    },
+                    "source": {
+                      "provider": "google-generate@3",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "google-generate@3",
+                      "httpRequestId": "fixture-http-1"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/2"
@@ -27235,6 +27497,20 @@
                       ]
                     }
                   },
+                  "usage": {
+                    "status": "reported",
+                    "outputTokens": 4,
+                    "native": {
+                      "candidatesTokenCount": 4
+                    },
+                    "source": {
+                      "provider": "google-generate@3",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "google-generate@3",
+                      "httpRequestId": "fixture-http-2"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/5"
@@ -27306,6 +27582,24 @@
             }
           }
         ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/5",
+          "usage": {
+            "status": "reported",
+            "outputTokens": 4,
+            "native": {
+              "candidatesTokenCount": 4
+            },
+            "source": {
+              "provider": "google-generate@3",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "google-generate@3",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        },
         "continuations": [
           {
             "provider": "google-generate@3",
@@ -27867,6 +28161,20 @@
                       ]
                     }
                   },
+                  "usage": {
+                    "status": "reported",
+                    "outputTokens": 4,
+                    "native": {
+                      "output_tokens": 4
+                    },
+                    "source": {
+                      "provider": "openai-responses@3",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "openai-responses@3",
+                      "httpRequestId": "fixture-http-1"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/2"
@@ -28076,6 +28384,20 @@
                       ]
                     }
                   },
+                  "usage": {
+                    "status": "reported",
+                    "outputTokens": 4,
+                    "native": {
+                      "output_tokens": 4
+                    },
+                    "source": {
+                      "provider": "openai-responses@3",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "openai-responses@3",
+                      "httpRequestId": "fixture-http-2"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/5"
@@ -28147,6 +28469,24 @@
             }
           }
         ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/5",
+          "usage": {
+            "status": "reported",
+            "outputTokens": 4,
+            "native": {
+              "output_tokens": 4
+            },
+            "source": {
+              "provider": "openai-responses@3",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "openai-responses@3",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        },
         "continuations": [
           {
             "provider": "openai-responses@3",
@@ -28490,6 +28830,20 @@
                       ]
                     }
                   },
+                  "usage": {
+                    "status": "reported",
+                    "outputTokens": 4,
+                    "native": {
+                      "output_tokens": 4
+                    },
+                    "source": {
+                      "provider": "openai-responses@3",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "openai-responses@3",
+                      "httpRequestId": "fixture-http-1"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/2"
@@ -28699,6 +29053,20 @@
                       ]
                     }
                   },
+                  "usage": {
+                    "status": "reported",
+                    "outputTokens": 4,
+                    "native": {
+                      "output_tokens": 4
+                    },
+                    "source": {
+                      "provider": "openai-responses@3",
+                      "model": "test-model",
+                      "wireModel": "test-model",
+                      "profile": "openai-responses@3",
+                      "httpRequestId": "fixture-http-2"
+                    }
+                  },
                   "child": {
                     "kind": "completion",
                     "id": "00000000-0000-4000-8000-000000000001/turn/1/5"
@@ -28770,6 +29138,24 @@
             }
           }
         ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/5",
+          "usage": {
+            "status": "reported",
+            "outputTokens": 4,
+            "native": {
+              "output_tokens": 4
+            },
+            "source": {
+              "provider": "openai-responses@3",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "openai-responses@3",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        },
         "continuations": [
           {
             "provider": "openai-responses@3",

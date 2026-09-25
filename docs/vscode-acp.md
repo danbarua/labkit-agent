@@ -1,5 +1,12 @@
 # Launch Labkit in VS Code through ACP
 
+The repository-owned client is in [`packages/vscode`](../packages/vscode/README.md).
+Run `bun run package:vscode` from the root to build its VSIX. Its tool-content and usage
+rendering has executable DOM tests, but native editor integration is still unverified.
+Use an isolated development profile and disable the upstream ACP Client there because
+the command and view identifiers overlap. The existing installed extension is not changed
+by building this package.
+
 Install [ACP Client by formulahendry](https://marketplace.visualstudio.com/items?itemName=formulahendry.acp-client)
 and run `bun install` in the Labkit checkout. This uses ACP stdio, not VS Code Agent Host/AHP.
 Run `bun run debug:acp` from the checkout root to verify the built stdio integration without an
@@ -66,7 +73,7 @@ authentication headers; OAuth remains unsupported. ACP-proxied MCP servers use t
 calls use the same permission picker and journaled results. External servers execute
 with their own process access; the workspace file sandbox does not constrain them. Read-only
 mode excludes MCP tools. The picker can remember approval for the named tool, across all arguments,
-until the live session closes or configuration changes. Tool approvals → Ask clears remembered
+until the live session closes or tool scope changes or permissions are explicitly reset. Tool approvals → Ask clears remembered
 grants; the other option explicitly allows all enabled tools without asking. Reopening a session
 requires fresh grants, without replaying old tools. **ACP: Set Agent Mode** switches between read-only
 and edit access; both still require approval. Hosts with configuration-selector support also expose

@@ -33,6 +33,7 @@ import {
   matchingContinuations,
   type Continuation,
 } from "../providers/types.ts";
+import type { CompletionUsage } from "../providers/usage.ts";
 import {
   INITIAL_REVISION,
   RevisionSchema,
@@ -55,7 +56,14 @@ import {
 
 export type ToolEntry = Extract<JournalBody, { kind: "tool" }>;
 
+export type LastCompletionUsage = Readonly<{
+  turnId: string;
+  operationId: string;
+  usage: CompletionUsage;
+}>;
+
 export type JournalState = Readonly<{
+  lastCompletionUsage?: LastCompletionUsage;
   conversation: ConversationState;
   continuations?: readonly Continuation[];
   policy: Policy;
@@ -643,6 +651,8 @@ function reduce(
     input.event.type === "child" && input.event.event.type === "model_settled"
       ? input.event.event
       : undefined;
+  if (settled?.usage && settled.result.kind !== "succeeded")
+    throw new Error("Completion usage requires an admitted completion");
   const envelope = settled?.continuation;
   if (envelope) {
     ContinuationSchema.parse(envelope);
@@ -673,6 +683,15 @@ function reduce(
     state: {
       ...state,
       conversation: decision.state,
+      ...(settled?.usage && decision.state !== state.conversation && input.event.type === "child"
+        ? {
+            lastCompletionUsage: {
+              turnId: input.event.turnId,
+              operationId: settled.child.id,
+              usage: settled.usage,
+            },
+          }
+        : {}),
       ...(envelope ? { continuations: [...(state.continuations ?? []), envelope] } : {}),
       partial:
         (input.event.type === "child" && input.event.event.type === "batch_settled") ||

@@ -66,7 +66,7 @@ test("invalid embedded data rejects the whole prompt before storing any blob", a
       mimeType: "image/png",
       data: Buffer.alloc(MAX_BLOB_BYTES + 1).toString("base64"),
     },
-    { type: "audio", mimeType: "audio/wav", data: "AQID" },
+    { type: "audio", mimeType: "image/png", data: "AQID" },
   ];
   for (const block of invalid) {
     await expect(
@@ -247,4 +247,50 @@ test("attachment diagnostics correlate stored refs and preserve ingestion failur
       ).not.toContain("private-document-content");
     },
   );
+});
+
+test("audio bytes are stored as refs and unsupported media is rejected before storage", async () => {
+  const persistence = createMemoryPersistence();
+  const data = Buffer.from([0, 1, 2, 255]).toString("base64");
+  const result = await promptInput(
+    [{ type: "audio", mimeType: "audio/wav", data }],
+    "/tmp",
+    persistence,
+    sessionId,
+    signal,
+    ["audio/wav"],
+  );
+  expect(result.attachments?.[0]).toMatchObject({ media: "audio/wav", bytes: 4 });
+  const ref = result.attachments![0]!;
+  const stored = await persistence.getBlob(sessionId, ref.id, signal);
+  expect("bytes" in stored && [...stored.bytes]).toEqual([0, 1, 2, 255]);
+  let puts = 0;
+  const rejected = {
+    ...persistence,
+    putBlob: async (...args: Parameters<typeof persistence.putBlob>) => {
+      puts++;
+      return persistence.putBlob(...args);
+    },
+  };
+  await expect(
+    promptInput(
+      [{ type: "audio", mimeType: "audio/wav", data }],
+      "/tmp",
+      rejected,
+      sessionId,
+      signal,
+      ["text/plain"],
+    ),
+  ).rejects.toThrow("does not support");
+  await expect(
+    promptInput(
+      [{ type: "audio", mimeType: "audio/wav", data: "not base64" }],
+      "/tmp",
+      rejected,
+      sessionId,
+      signal,
+      ["audio/wav"],
+    ),
+  ).rejects.toThrow("base64");
+  expect(puts).toBe(0);
 });

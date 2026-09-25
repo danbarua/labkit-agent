@@ -2,6 +2,7 @@ import type { z } from "zod";
 
 import { defineMachine, stay, type Decision } from "../fsm/fsm.ts";
 import type { Continuation } from "../providers/types.ts";
+import type { CompletionUsage } from "../providers/usage.ts";
 import type { PreparedModel } from "./agent.ts";
 import { validatePermissionDecisions, type PermissionDecisions } from "./permissions.ts";
 import type { BatchOutcome } from "./tool-batch.ts";
@@ -70,6 +71,7 @@ export type TurnEvent =
       child: Ref<"completion">;
       result: Result<AdmittedCompletion>;
       continuation?: Continuation;
+      usage?: CompletionUsage;
       permissionRequired?: true;
     }
   | { type: "handoff_prepared"; child: Ref<"handoff">; result: Result<readonly AgentMessage[]> }

@@ -48,7 +48,12 @@ Workspace file tools are `read_file` (read), `write_file` (edit), and `list_dir`
 location is absolute and bound to the session workspace roots. Parent traversal, outside paths, and the
 reserved `.labkit` directory are rejected. Local filesystem operations additionally reject symlink
 components and hard-linked files. Reads require UTF-8 and reads/writes are capped
-at 256 KiB. Listings are shallow and capped at 1,000 entries and 256 KiB of entry data. Writes
+at 256 KiB per result/write. `read_file` accepts optional `line` (1-based starting line) and `limit`
+(maximum line count). Omit both to read the complete file. A range can read part of a file larger
+than 256 KiB; local reads scan with bounded memory and retain original line endings. A start beyond
+EOF returns empty text. A single selected line larger than the result cap is rejected explicitly.
+The same range is forwarded to `fs/read_text_file` when the client owns reads, preserving unsaved
+editor content rather than substituting disk contents. Listings are shallow and capped at 1,000 entries and 256 KiB of entry data. Writes
 require existing parent directories. Rejected permission prevents execution. Cancellation after
 a write starts cannot undo bytes already written. These filesystem checks are not an OS sandbox
 against hostile concurrent ancestor-directory renames. Command execution is disabled by default.
@@ -69,12 +74,74 @@ handling, and editor write semantics. Local inode checks cannot constrain a remo
 
 Factories receive optional `SessionOptionsContext.clientFiles` methods (`readText`, `write`),
 with session identity and client capabilities already bound. Only advertised methods are present.
+`readText(path, signal, context?, range?)` accepts `{ line?, limit? }` as its final argument; range
+validation occurs before dispatch. Diagnostic request/completion/failure records include that range.
 Bind these ports inside tools, not during factory setup. The workspace example invokes them only
 inside the existing permission-gated tool operation; a rejection sends no filesystem request.
 RPCs use the tool AbortSignal and a 60-second timeout; disconnect cancels outstanding waits.
 Late responses cannot settle cancelled tool operations. Writes already dispatched may have taken
 effect despite cancellation or an ambiguous response. Read results and write input retain the
 256 KiB cap, and normal tool arguments/results are journaled through core.
+
+## Tool content bindings
+
+`AcpSessionOptions.toolContent?: ReadonlyMap<string, AcpToolContent>` binds a synchronous pure renderer
+to each named tool. `AcpToolContentContext` contains `toolName` and the successful serialized `output`.
+Both types are exported from the package entry point. The map is copied when the session opens;
+unknown tool names and non-function bindings reject opening. Renderers are not called for failed or
+cancelled tools. Results must be JSON arrays of ACP `content` or `diff` blocks. Diff paths must be
+absolute; `oldText: null` denotes a new file. Optional annotations and `_meta` pass through.
+Terminal blocks are rejected here because their handles require a live client-terminal lifetime.
+
+For a tool whose saved result explicitly contains a `changes` array, an application can validate its
+own result schema and return those changes as diffs. The renderer must not read current disk content
+to manufacture `oldText`: that would misrepresent the actual operation and change history on reload.
+The adapter retains raw output and sends an explicit display error if rendering or validation fails.
+Reload reconstructs display from saved results, marks the notification as reconstructed, and performs
+no tool, completion or permission invocation. Unbound tools retain plain-text display.
+
+### Workspace write evidence
+
+The workspace launcher registers the exported `workspaceToolContent` map. `write_file` returns
+`FileWriteResult`: `{ path, bytes, before, newText }`. `FileBefore` is one of:
+
+- `{ kind: "text", text, source: "filesystem" | "client" }` for observed prior contents.
+- `{ kind: "absent", source: "filesystem" }` when an exclusive create proved no file existed.
+- `{ kind: "unavailable", reasonCode: "read_not_supported" | "read_failed", reason, source }`.
+
+Only the first two yield diff blocks. Empty old text is an existing empty file; null means confirmed
+creation. Diff `_meta["labkit.dev/baseline"]` identifies the observation source. Unknown prior content
+produces an explanatory text block, never a fabricated new-file diff. Reload uses these saved values
+and makes no filesystem or editor request. Client errors cannot authorize reading local disk instead.
+
+Local baseline capture is bounded to 256 KiB and requires valid UTF-8; larger/binary prior content
+does not prevent writing a valid replacement within the write limit. Editor capture uses the same
+bounded `readText` port. Capture and write are sequential observations, not an atomic editor
+transaction; concurrent edits can intervene. Permission covers the write operation including its
+baseline read. Cancellation/timeouts stop it before the subsequent write. Failure after write
+starts can still leave partial effects and does not produce a completed diff.
+
+## Session usage
+
+`AcpSessionOptions.usage` implements the [session usage notification](https://agentclientprotocol.com/rfds/session-usage).
+Its public types are `AcpUsageBinding`, `AcpUsageContext` and `AcpUsage`; `AcpUsageSchema` validates
+source output. Required `used` is a finite nonnegative number and `size` a finite positive number. `used` can
+exceed `size` so a source can report an over-capacity context. Optional `cost` is null or
+`{ amount, currency, _meta? }`, with a finite nonnegative cumulative amount and an uppercase
+three-letter currency code. Top-level `_meta` is preserved. There is no implicit currency or price.
+
+The read context contains the immutable session snapshot and resolved bound model when available.
+Only committed journal revisions trigger reads. The optional subscription can trigger a refresh
+without a journal change. Reads are asynchronous and never hold up a prompt; updates may follow
+its terminal response. Each new read cancels the preceding one, and late or stale results are
+ignored. Close, logout, delete and disconnect cancel reads and unsubscribe. Setup/restore queries
+never dispatch a completion, tool or permission request.
+
+`undefined` emits nothing because the protocol has no unknown-capacity state. Invalid data or a
+thrown read logs `acp.usage.failed` and sends no replacement. If an earlier measurement was shown,
+that is still the last published measurement; the adapter does not fabricate a zero to clear it.
+The application must provide a measurement/billing source. No default workspace source is shipped
+by this notification binding.
 
 ## Slash commands
 
@@ -92,9 +159,12 @@ letters, digits, underscores, and hyphens, beginning with a letter; omit the lea
 A declared `/name` prefix in the first text block expands to the template plus the remaining
 unstructured argument text. Other blocks keep their order. Unknown command prefixes and ordinary
 slash-containing text are left unchanged. The expanded user text, including the command name,
-is journaled once; restore replays it without re-expanding against changed templates. Catalogs
-remain fixed for an open session and are rebound from the factory on load/resume. Dynamic command
-registration and commands with direct session lifecycle effects are not implemented.
+is journaled once; restore replays it without re-expanding against changed templates. `SessionOptionsContext.publishCommands(commands)` replaces the complete catalog for the live
+session and sends `available_commands_update`; an empty array clears it. Updates during opening
+are staged until publication. Invalid catalogs and updates after close are rejected without
+changing the active catalog. Already-admitted prompts retain their expanded text. Catalogs are
+environment resources rebound on load/resume, not journal data. Commands with direct session
+lifecycle effects are not implemented.
 
 ## Plans
 
@@ -299,8 +369,8 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
 
 ## Supported protocol surface
 
-- `initialize`: negotiates ACP v1; declares actual prompt/load/close capabilities. Credentials are
-  supplied by the environment, so no interactive authentication methods are advertised.
+- `initialize`: negotiates ACP v1; declares actual prompt/load/close capabilities. The default launcher uses
+  environment credentials; hosts can supply the authentication methods described above.
 - `session/new`: creates a journaled session. Each connection owns its loaded runtimes.
 - `session/prompt`: admits one active prompt per session and waits for durable terminal settlement.
   Separate sessions run independently; overlapping prompts in one session return an RPC error.
@@ -348,7 +418,7 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
   with the full configuration list. Requests during a prompt wait for its terminal boundary; new
   prompts wait for pending configuration commits. Cancellation before dispatch prevents the patch;
   cancellation after persistence dispatch does not imply rollback. Failed patches publish no change.
-- `session/set_mode`: compatibility alias for the single mode-category selector. Mode and config
+- `session/set_mode`: alias for the first mode-category selector. Mode and config
   notifications reflect the same committed policy. New/load/resume responses include current
   config options and legacy modes when bindings are provided. Boolean controls require the client's
   `session.configOptions.boolean` capability.
@@ -362,7 +432,9 @@ best-effort subscribers. Neither outgoing display updates nor an ACP response ce
 Both the admitted tool-intent receipt and approval receipt still precede execution.
 
 Prompt responses map completed → `end_turn`, exhausted → `max_turn_requests`, aborted → `cancelled`,
-and terminal error classification `permission_refused` → `refusal`. Provider, tool, storage and malformed-permission
+and terminal error classification `permission_refused` → `refusal`. Explicit provider token limits
+map to `max_tokens`; provider refusals map to `refusal`. These responses retain the structured
+failure in `_meta["labkit.dev/failure"]`. Other provider, tool, storage and malformed-permission
 failures return JSON-RPC errors. Partial stream text may already be visible when a stream fails;
 it never becomes a successful partial model_settled. Updates queued for a prompt are written before
 its response. EOF, output failure and SIGINT/SIGTERM close owned runtimes and cancel their children.
@@ -508,7 +580,7 @@ The initial agent manifest model remains unchanged by a policy selection, so kee
 
 ## Explicit limits
 
-This is an ACP v1 **session subset**, not a claim of full protocol conformance. Text, resource-link, image, and embedded-resource
+This is an ACP v1 **session subset**, not a claim of full protocol conformance. Text, resource-link, image, audio, and embedded-resource
 prompts are accepted. Local `file://` links and paths inside the session workspace roots are read through the
 workspace path checks and stored with `putBlob` in that session before admitting the user input.
 The journal contains attachment refs, never file bytes. Outside paths are rejected without reading
@@ -516,21 +588,24 @@ them. Non-file URLs remain textual references; the adapter never fetches them. C
 ingestion admits no user turn (an unreferenced blob may already have been stored).
 
 Local attachments retain the 8 MiB blob cap. Extensions select markdown, PDF, PNG, JPEG, or UTF-8
-plain text; the bound provider must support the selected media. The existing 64 KiB provider text
-inline cap is unchanged. Attaching a local resource is an explicit user input and does not create
+plain text; the bound provider must support the selected media. Accepted text attachments are sent in full within the blob limit; oversized model context
+is reported as a provider failure rather than silently substituted content. Attaching a local resource is an explicit user input and does not create
 a tool permission request. Model-initiated file access still uses the permission-gated tools.
-Image and embedded-context capabilities are advertised. PNG/JPEG image data and embedded binary
+Image, audio, and embedded-context capabilities are advertised. PNG/JPEG image data and embedded binary
 resources (PNG/JPEG/PDF or UTF-8 plain text/markdown) require canonical base64 and the same 8 MiB
 raw-byte cap. Binary resources require an explicit supported MIME type. Embedded text is stored
 as markdown when declared `text/markdown`, otherwise as plain text, including source-code MIME
 types. Embedded URIs are labels only: supplied bytes can represent unsaved or outside-workspace
 content, and no file read or URL fetch occurs. Blob refs, not content bytes, enter the journal.
 Provider media support is checked before storage/admission; attachments require a bound provider
-profile. Custom completion ports without a provider registry cannot resolve attachment media. Audio prompt blocks remain unadvertised and rejected.
-The existing provider text inline cap still applies to embedded resources.
+profile. Custom completion ports without a provider registry cannot resolve attachment media. Audio blocks require a declared supported audio MIME type and canonical base64 within the same
+8 MiB cap. Google bindings encode them as native audio; bindings without audio support reject
+before storage/admission. Local audio file links use the declared audio MIME type or a recognized
+extension. Reload displays the saved audio reference without invoking a model; a new prompt can
+resolve the saved bytes. Audio playback in the installed editor still needs verification.
+Embedded text resources follow the same full-content rule.
 
-Client-supplied stdio, HTTP, SSE, and ACP-proxied MCP servers are supported. MCP OAuth,
-remembered permissions, cross-provider switching,
+Client-supplied stdio, HTTP, SSE, and ACP-proxied MCP servers are supported. MCP OAuth, cross-provider switching,
 and ACP HTTP transport remain unimplemented. No usage_update is fabricated from provider usage deltas:
 ACP requires a context-window size that core does not currently supply.
 

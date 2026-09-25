@@ -9,6 +9,7 @@ import {
 
 import type { AcpOptions } from "../adapter.ts";
 import { terminalTool } from "../client-terminal.ts";
+import { workspaceToolContent } from "../file-write.ts";
 import { planTool } from "../plan.ts";
 import type { AcpConfigBinding } from "../session-config.ts";
 import { workspaceDirectory } from "../workspace-directory.ts";
@@ -126,7 +127,7 @@ export function workspaceAgent(
           id: "permissions",
           name: "Tool approvals",
           description:
-            "Remembered approvals cover one tool and all its arguments until the session closes or configuration changes. Select Ask to clear approvals.",
+            "Remembered approvals cover one tool and all its arguments until the session closes or tool scope changes or permissions are explicitly reset. Select Ask to clear approvals.",
           current: (policy) => policy.permissions ?? "off",
           options: [
             {
@@ -218,6 +219,7 @@ export function workspaceAgent(
       ];
       return {
         config,
+        toolContent: workspaceToolContent,
         commands: [
           {
             name: "review",

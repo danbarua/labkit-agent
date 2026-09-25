@@ -61,6 +61,8 @@ async function assertDiagnosticArtifacts(directory: string, runId: string) {
   ).toBe(true);
 }
 
+// These aggregate tests run each fixture twice, including durable debug artifacts.
+// Individual scenarios below retain the default per-scenario timeout.
 test("behavioral evidence and human transcripts are deterministic across repeated runs", async () => {
   const first = await runFixtures({ artifactDirectory: ".session-artifacts/test-first" });
   const second = await runFixtures({ artifactDirectory: ".session-artifacts/test-second" });
@@ -69,7 +71,7 @@ test("behavioral evidence and human transcripts are deterministic across repeate
   expect(second.runId).not.toBe(first.runId);
   expect(second.structured).toBe(first.structured);
   expect(second.markdown).toBe(first.markdown);
-});
+}, 30_000);
 
 test("policy fixture group remains independently runnable", async () => {
   const first = await runFixtures({ version: 2, artifactDirectory: ".session-artifacts/v2-first" });
@@ -86,7 +88,7 @@ test("policy fixture group remains independently runnable", async () => {
   ).toBe(true);
   expect(second.structured).toBe(first.structured);
   expect(second.markdown).toBe(first.markdown);
-});
+}, 30_000);
 
 // Each example is discoverable and runnable by its own name with bun test -t.
 for (const scenario of scenarios) {

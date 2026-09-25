@@ -10,6 +10,7 @@ import {
   systemAndMessages,
 } from "./shared.ts";
 import { parseRequest, validateProviderSettings, type CompletionProfile } from "./types.ts";
+import { decodeUsage } from "./usage.ts";
 
 const block = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
@@ -74,6 +75,7 @@ export const anthropicMessages: CompletionProfile = {
     };
   },
   decode(res) {
+    const usage = decodeUsage(res.body, "anthropic");
     const raw = z.record(z.string(), z.unknown()).parse(responseBody(res));
     anthropicStopReason(raw.stop_reason, raw.usage);
     const body = z
@@ -83,13 +85,16 @@ export const anthropicMessages: CompletionProfile = {
         content: z.array(block).min(1),
       })
       .parse(raw);
-    return completion(
-      body.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
-      body.content.flatMap((part) =>
-        part.type === "tool_use"
-          ? [ToolCallSchema.parse({ id: part.id, name: part.name, args: part.input })]
-          : [],
+    return {
+      ...completion(
+        body.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
+        body.content.flatMap((part) =>
+          part.type === "tool_use"
+            ? [ToolCallSchema.parse({ id: part.id, name: part.name, args: part.input })]
+            : [],
+        ),
       ),
-    );
+      ...(usage ? { usage } : {}),
+    };
   },
 };

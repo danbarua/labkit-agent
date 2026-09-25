@@ -3,6 +3,7 @@ import { z } from "zod";
 import { BlobRefSchema, type BlobResolver, type MediaKind } from "../agent/content.ts";
 import { CompletionOwnerSchema, MessagesSchema, ToolNameSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
+import type { CompletionUsage } from "./usage.ts";
 
 export const ThinkingSchema = z.enum(["off", "low", "medium", "high", "adaptive", "budget"]);
 
@@ -34,7 +35,11 @@ export const ContinuationSchema = z
 
 export type Continuation = z.infer<typeof ContinuationSchema>;
 
-export type DecodedCompletion = Readonly<{ completion: unknown; continuationPayload?: unknown }>;
+export type DecodedCompletion = Readonly<{
+  completion: unknown;
+  continuationPayload?: unknown;
+  usage?: CompletionUsage;
+}>;
 
 export function validateThinking(
   thinking: z.infer<typeof ThinkingSchema> | undefined,

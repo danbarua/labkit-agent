@@ -1,3 +1,5 @@
+import type { MediaKind as CoreMediaKind } from "../core/agent/content.ts";
+
 export const MEDIA_KINDS = [
   "text/markdown",
   "text/plain",
@@ -6,7 +8,7 @@ export const MEDIA_KINDS = [
   "application/pdf",
 ] as const;
 
-export type MediaKind = (typeof MEDIA_KINDS)[number];
+export type MediaKind = CoreMediaKind;
 
 export type BlobChip = {
   id: string;

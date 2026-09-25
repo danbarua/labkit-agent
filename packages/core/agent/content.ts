@@ -6,12 +6,29 @@ export const BlobIdSchema = z
   .regex(/^[a-f0-9]{64}$/)
   .brand<"BlobId">();
 export type BlobId = z.infer<typeof BlobIdSchema>;
+export const AUDIO_MEDIA_KINDS = [
+  "audio/wav",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/aiff",
+  "audio/aac",
+  "audio/ogg",
+  "audio/flac",
+  "audio/m4a",
+  "audio/l16",
+  "audio/opus",
+  "audio/alaw",
+  "audio/mulaw",
+  "audio/webm",
+] as const;
+
 export const MediaKindSchema = z.enum([
   "text/markdown",
   "text/plain",
   "image/png",
   "image/jpeg",
   "application/pdf",
+  ...AUDIO_MEDIA_KINDS,
 ]);
 export type MediaKind = z.infer<typeof MediaKindSchema>;
 export const BlobRefSchema = z

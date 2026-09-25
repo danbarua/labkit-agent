@@ -50,6 +50,8 @@ import {
   type AcpConfigBinding,
 } from "./session-config.ts";
 import { parseSessionInfo } from "./session-info.ts";
+import { usageReporter, type AcpUsageBinding } from "./session-usage.ts";
+import { mcpToolContent, renderToolContent, type AcpToolContent } from "./tool-content.ts";
 
 export type SessionOptionsContext = Readonly<{
   cwd: string;
@@ -60,12 +62,16 @@ export type SessionOptionsContext = Readonly<{
   elicitation?: ClientElicitation;
   terminal?: ClientTerminal;
   publishPlan?: PlanSink;
+  /** Replace this session’s command catalog; admitted prompts retain their expanded text. */
+  publishCommands?: (commands: readonly AcpCommand[]) => void;
   signal: AbortSignal;
 }>;
 
 export type AcpSessionOptions = SessionOptions & {
   config?: readonly AcpConfigBinding[];
   commands?: readonly AcpCommand[];
+  usage?: AcpUsageBinding;
+  toolContent?: ReadonlyMap<string, AcpToolContent>;
   /** Persist host metadata after runtime initialization, before visible lifecycle publication. */
   onReady?: (sessionId: string, signal: AbortSignal) => void | Promise<void>;
 };
@@ -101,6 +107,7 @@ export type AcpOptions = Readonly<{
 
 type Session = {
   runtime: SessionRuntime;
+  usage?: ReturnType<typeof usageReporter>;
   dispose: () => Promise<void>;
   persistence: SessionPersistence;
   promptController?: AbortController;
@@ -130,7 +137,11 @@ function locatedTitle(title: string, locations?: readonly { path: string; line?:
     : title;
 }
 
-function toolUpdate(event: HostToolNotification, terminals: readonly string[] = []): SessionUpdate {
+function toolUpdate(
+  event: HostToolNotification,
+  terminals: readonly string[] = [],
+  renderers: ReadonlyMap<string, AcpToolContent> = new Map(),
+): SessionUpdate {
   if (event.sessionUpdate === "tool_call")
     return {
       sessionUpdate: "tool_call",
@@ -151,16 +162,19 @@ function toolUpdate(event: HostToolNotification, terminals: readonly string[] = 
           rawOutput: event.rawOutput,
           content: [
             ...terminals.map((terminalId) => ({ type: "terminal" as const, terminalId })),
-            {
-              type: "content",
-              content: {
-                type: "text",
-                text:
-                  typeof event.rawOutput === "string"
-                    ? event.rawOutput
-                    : JSON.stringify(event.rawOutput),
+            ...renderToolContent(
+              event.status === "completed" && event.name ? renderers.get(event.name) : undefined,
+              event.rawOutput,
+              {
+                sessionId: event.sessionId,
+                toolCallId: event.toolCallId,
+                toolName: event.name,
+                turnId: event.turnId,
+                batchId: event.batchId,
+                callId: event.callId,
+                reconstructed: false,
               },
-            },
+            ),
           ],
         }
       : {}),
@@ -342,6 +356,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     snapshot: SessionState,
   ) => {
     if (!entry.acceptingUpdates) return;
+    entry.usage?.refresh();
     const id = snapshot.durable.conversation.sessionId;
     const configuration = configState(entry.config, snapshot.durable.policy);
     const signature = JSON.stringify(configuration);
@@ -377,8 +392,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     messages: readonly AgentMessage[],
     prefix: string,
     evidence: Map<string, "completed" | "failed">,
+    renderers: ReadonlyMap<string, AcpToolContent>,
   ) => {
-    const calls = new Map<string, { toolCallId: string; status?: "completed" | "failed" }>();
+    const calls = new Map<
+      string,
+      { toolCallId: string; toolName: string; status?: "completed" | "failed" }
+    >();
     messages.forEach((message, index) => {
       const messageId =
         message.role === "assistant" && message.owner
@@ -408,7 +427,11 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       if (message.role === "assistant")
         for (const call of message.calls ?? []) {
           const toolCallId = `${messageId}/tool/${call.id}`;
-          calls.set(call.id, { toolCallId, status: evidence.get(`${messageId}/${call.id}`) });
+          calls.set(call.id, {
+            toolCallId,
+            toolName: call.name,
+            status: evidence.get(`${messageId}/${call.id}`),
+          });
           send(client, id, {
             sessionUpdate: "tool_call",
             toolCallId,
@@ -421,13 +444,18 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       if (message.role === "tool") {
         const call = calls.get(message.callId);
         if (call) {
-          const { toolCallId, status } = call;
+          const { toolCallId, toolName, status } = call;
           send(client, id, {
             sessionUpdate: "tool_call_update",
             toolCallId,
             ...(status ? { status } : {}),
             rawOutput: message.text,
-            content: [{ type: "content", content: { type: "text", text: message.text } }],
+            _meta: { "labkit.dev/reconstructed": true },
+            content: renderToolContent(
+              status === "completed" ? renderers.get(toolName) : undefined,
+              message.text,
+              { sessionId: id, toolCallId, toolName, reconstructed: true },
+            ),
           });
           calls.delete(message.callId);
         }
@@ -482,6 +510,9 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     let initializedId: string | undefined;
     let cancelOpening: (() => void) | undefined;
     let boundSessionId: string | undefined;
+    let commandEntry: Session | undefined;
+    let commandPublisherActive = true;
+    let pendingCommands: readonly AcpCommand[] | undefined;
     const sessionIdentity = () => {
       if (!boundSessionId || !sessions.has(boundSessionId)) throw new Error("Session is not open");
       return boundSessionId;
@@ -511,6 +542,8 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         );
       }
       const cleanup = async () => {
+        commandPublisherActive = false;
+        commandEntry?.usage?.close();
         elicitation.close();
         try {
           await mcp.close();
@@ -568,6 +601,39 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         mcpTools,
         clientFiles: filesystem,
         elicitation: elicitation.port,
+        publishCommands: (commands) => {
+          try {
+            if (!commandPublisherActive || signal.aborted || connection.signal.aborted || closing)
+              throw new Error("Cannot update commands for a closed ACP session");
+            const next = bindCommands(commands);
+            if (!commandEntry) {
+              pendingCommands = next;
+              return;
+            }
+            const sessionId = commandEntry.runtime.snapshot.durable.conversation.sessionId;
+            if (sessions.get(sessionId) !== commandEntry || !commandEntry.acceptingUpdates)
+              throw new Error("Cannot update commands for an unpublished ACP session");
+            commandEntry.commands = next;
+            send(client, sessionId, {
+              sessionUpdate: "available_commands_update",
+              availableCommands: availableCommands(next),
+            });
+            diagnostic("acp", "info", "acp.commands.updated", {
+              connectionId,
+              sessionId,
+              count: next.length,
+              names: next.map((command) => command.name),
+            });
+          } catch (error) {
+            diagnostic("acp", "warning", "acp.commands.rejected", {
+              connectionId,
+              sessionId: boundSessionId ?? id,
+              reason: "Command catalog unchanged; update was invalid or session is no longer open",
+              error: diagnosticError(error),
+            });
+            throw error;
+          }
+        },
         publishPlan: (entries, operationSignal) => {
           if (operationSignal.aborted || connection.signal.aborted) return;
           const sessionId = sessionIdentity();
@@ -586,6 +652,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           throw new Error("MCP tool collides with a bound tool");
         tools.set(name, tool);
       }
+      const renderers = new Map(original.toolContent);
+      for (const name of mcpTools.keys())
+        if (!renderers.has(name)) renderers.set(name, mcpToolContent);
+      for (const [name, render] of renderers)
+        if (!tools.has(name) || typeof render !== "function")
+          throw new Error(`Tool content renderer requires a bound tool and a function: ${name}`);
       const subscribers = { ...original.bindings };
       requireAccess();
       signal.throwIfAborted();
@@ -656,7 +728,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
             }
             if (entry.acceptingUpdates && event.sessionId)
               send(client, event.sessionId, {
-                ...toolUpdate(event, entry.terminals.get(event.toolCallId)),
+                ...toolUpdate(event, entry.terminals.get(event.toolCallId), renderers),
                 ...(card ? { title: card.title, status: card.status } : {}),
               });
             if (event.status === "completed" || event.status === "failed") {
@@ -790,22 +862,47 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         await runtime.close();
         throw error;
       }
+      entry.commands = pendingCommands ?? entry.commands;
       entry.configSignature = JSON.stringify(configuration);
       entry.modeId = configuration.modes?.currentModeId;
-      sessions.set(sessionId, Object.assign(entry, { runtime }));
+      commandEntry = Object.assign(entry, { runtime });
+      sessions.set(sessionId, commandEntry);
       entry.revision = runtime.snapshot.durable.revision;
       if (id && replay) {
         const durable = runtime.snapshot.durable;
         const state = durable.conversation;
         const evidence = toolEvidence(durable);
-        replayMessages(client, id, state.context, `${id}/context`, evidence);
+        replayMessages(client, id, state.context, `${id}/context`, evidence, renderers);
         state.log.forEach((record, index) => {
-          replayMessages(client, id, record.messages, `${id}/history/${index}`, evidence);
+          replayMessages(
+            client,
+            id,
+            record.messages,
+            `${id}/history/${index}`,
+            evidence,
+            renderers,
+          );
         });
       }
       boundSessionId = sessionId;
       entry.acceptingUpdates = visible;
       published = true;
+      if (visible && original.usage) {
+        commandEntry.usage = usageReporter(
+          original.usage,
+          () => ({
+            sessionId,
+            cwd: params.cwd,
+            snapshot: runtime.snapshot,
+            model: runtime.model,
+          }),
+          (update) => {
+            if (sessions.get(sessionId) === commandEntry && commandEntry?.acceptingUpdates)
+              send(client, sessionId, update);
+          },
+          connectionId,
+        );
+      }
       if (visible) refreshInfo(sessions.get(sessionId)!, client);
       if (visible && entry.commands.length)
         send(client, sessionId, {
@@ -921,6 +1018,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     authLifetime = new AbortController();
     const active = [...sessions.entries()];
     for (const [, entry] of active) {
+      entry.usage?.close();
       entry.acceptingUpdates = false;
       entry.promptController?.abort();
     }
@@ -948,7 +1046,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         agentCapabilities: {
           loadSession,
           ...(auth.logoutSupported ? { auth: { logout: {} } } : {}),
-          promptCapabilities: { image: true, audio: false, embeddedContext: true },
+          promptCapabilities: { image: true, audio: true, embeddedContext: true },
           mcpCapabilities: { http: true, sse: true, acp: true },
           sessionCapabilities: {
             close: {},
@@ -1123,6 +1221,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         if (borrowed) {
           try {
             if (entry) {
+              entry.usage?.close();
               entry.acceptingUpdates = false;
               try {
                 await entry.runtime.close();
@@ -1164,6 +1263,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       const remove = options.deleteSession;
       const operation = (async () => {
         if (entry) {
+          entry.usage?.close();
           entry.acceptingUpdates = false;
           entry.promptController?.abort();
           try {
@@ -1384,6 +1484,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     .onRequest("session/close", async ({ params }) => {
       const entry = lookup(params.sessionId, true);
       // Close is terminal for this runtime, even if the client never answers permission requests.
+      entry.usage?.close();
       entry.acceptingUpdates = false;
       entry.promptController?.abort();
       try {
@@ -1400,7 +1501,10 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
   const closed = connection.closed.then(async () => {
     diagnostic("acp", "info", "acp.connection.closing", { connectionId, count: sessions.size });
     closing = true;
-    for (const entry of sessions.values()) entry.acceptingUpdates = false;
+    for (const entry of sessions.values()) {
+      entry.usage?.close();
+      entry.acceptingUpdates = false;
+    }
     await Promise.allSettled([...sessions.values()].map((entry) => entry.runtime.close()));
     await Promise.allSettled([...resources].map((dispose) => dispose()));
     sessions.clear();

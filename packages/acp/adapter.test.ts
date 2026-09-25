@@ -120,7 +120,7 @@ test("JSON-RPC initialization, framing, validation and baseline text/resource-li
     protocolVersion: 1,
     agentCapabilities: {
       loadSession: true,
-      promptCapabilities: { image: true, embeddedContext: true, audio: false },
+      promptCapabilities: { image: true, embeddedContext: true, audio: true },
     },
   });
   expect((await h.initialize()).error?.code).toBe(-32600);
@@ -1501,6 +1501,18 @@ for (const decision of ["allow_once", "reject_once", "invalid_args"] as const) {
       expect((await events()).filter((event) => event.method === "tools/call")).toHaveLength(
         decision === "allow_once" ? 1 : 0,
       );
+      if (decision === "allow_once") {
+        const completed = h
+          .updates()
+          .map(({ update }) => update)
+          .find(
+            (update) =>
+              update.sessionUpdate === "tool_call_update" && update.status === "completed",
+          );
+        expect(completed).toMatchObject({
+          content: [{ type: "content", content: { type: "text", text: "hello" } }],
+        });
+      }
       const loaded = await persistence.load(
         SessionIdSchema.parse(sessionId),
         new AbortController().signal,
@@ -1516,6 +1528,20 @@ for (const decision of ["allow_once", "reject_once", "invalid_args"] as const) {
       expect((await events()).filter((event) => event.method === "tools/call")).toHaveLength(
         decision === "allow_once" ? 1 : 0,
       );
+      if (decision === "allow_once") {
+        expect(
+          h
+            .updates()
+            .map(({ update }) => update)
+            .find(
+              (update) =>
+                update.sessionUpdate === "tool_call_update" && update.status === "completed",
+            ),
+        ).toMatchObject({
+          content: [{ type: "content", content: { type: "text", text: "hello" } }],
+          _meta: { "labkit.dev/reconstructed": true },
+        });
+      }
       await h.close();
       expect((await events()).filter((event) => event.method === "closed")).toHaveLength(2);
     } finally {
@@ -1687,93 +1713,113 @@ for (const type of ["http", "sse"] as const) {
   });
 }
 
-test("ACP embedded image, PDF, and editor text reach provider wire through blobs only", async () => {
+test("ACP embedded image, PDF, and large editor text reach provider wire through blobs only", async () => {
   const { anthropicMessagesV2 } = await import("@labkit-agent/core/providers");
   const { SessionIdSchema } = await import("@labkit-agent/core/types");
-  const base = setup();
-  const text = "UNSAVED_EDITOR_CONTENT_SENTINEL";
-  const image = Buffer.from("IMAGE_CONTENT_SENTINEL").toString("base64");
-  const pdf = Buffer.from("PDF_CONTENT_SENTINEL").toString("base64");
-  let wire: any;
-  const h = harness({
-    ...base.options,
-    sessionOptions: async (context) => {
-      const original = await base.options.sessionOptions(context);
-      return {
-        ...original,
-        configuration: {
-          ...original.configuration,
-          policy: { maxOutputTokens: 16384, provider: anthropicMessagesV2.id },
-        },
-        bindings: {
-          ...original.bindings,
-          complete: undefined,
-          providers: new Map([
-            [
-              anthropicMessagesV2.id,
-              {
-                profile: anthropicMessagesV2,
-                transport: {
-                  baseUrl: "https://provider.invalid",
-                  fetch: (async (_url, init) => {
-                    wire = JSON.parse(String(init?.body));
-                    return Response.json({
-                      role: "assistant",
-                      content: [{ type: "text", text: "Done" }],
-                      stop_reason: "end_turn",
-                    });
-                  }) as typeof fetch,
-                },
-              },
-            ],
-          ]),
-        },
-      };
-    },
-  });
-  try {
-    await h.initialize();
-    const id = await h.newSession();
-    const response = await h.request("session/prompt", {
-      sessionId: id,
-      prompt: [
-        { type: "image", mimeType: "image/png", data: image },
-        {
-          type: "resource",
-          resource: { uri: "file:///outside/unsaved.md", mimeType: "text/markdown", text },
-        },
-        {
-          type: "resource",
-          resource: {
-            uri: "https://must-not-fetch.invalid/doc.pdf",
-            mimeType: "application/pdf",
-            blob: pdf,
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = `.session-artifacts/acp-full-text/${crypto.randomUUID()}`;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    const base = setup();
+    const text = "Documentation body. ".repeat(4000) + "UNSAVED_EDITOR_CONTENT_SENTINEL";
+    const image = Buffer.from("IMAGE_CONTENT_SENTINEL").toString("base64");
+    const pdf = Buffer.from("PDF_CONTENT_SENTINEL").toString("base64");
+    let wire: any;
+    const h = harness({
+      ...base.options,
+      sessionOptions: async (context) => {
+        const original = await base.options.sessionOptions(context);
+        return {
+          ...original,
+          configuration: {
+            ...original.configuration,
+            policy: { maxOutputTokens: 16384, provider: anthropicMessagesV2.id },
           },
-        },
-      ],
+          bindings: {
+            ...original.bindings,
+            complete: undefined,
+            providers: new Map([
+              [
+                anthropicMessagesV2.id,
+                {
+                  profile: anthropicMessagesV2,
+                  transport: {
+                    baseUrl: "https://provider.invalid",
+                    capture: async (event) => {
+                      await Bun.write(
+                        `${directory}/${event.kind}.json`,
+                        JSON.stringify(event, null, 2),
+                      );
+                    },
+                    fetch: (async (_url, init) => {
+                      wire = JSON.parse(String(init?.body));
+                      return Response.json({
+                        role: "assistant",
+                        content: [{ type: "text", text: "Done" }],
+                        stop_reason: "end_turn",
+                      });
+                    }) as typeof fetch,
+                  },
+                },
+              ],
+            ]),
+          },
+        };
+      },
     });
-    expect(response.error).toBeUndefined();
-    expect(response.result.stopReason).toBe("end_turn");
-    const content = wire.messages[0].content;
-    expect(content).toContainEqual({
-      type: "image",
-      source: { type: "base64", media_type: "image/png", data: image },
-    });
-    expect(content).toContainEqual({
-      type: "document",
-      source: { type: "base64", media_type: "application/pdf", data: pdf },
-    });
-    expect(JSON.stringify(content)).toContain(text);
-    const journal = await base.persistence.load(
-      SessionIdSchema.parse(id),
-      new AbortController().signal,
-    );
-    expect(JSON.stringify(journal)).not.toContain(text);
-    expect(JSON.stringify(journal)).not.toContain(image);
-    expect(JSON.stringify(journal)).not.toContain(pdf);
-  } finally {
-    await h.close();
-  }
+    try {
+      await h.initialize();
+      const id = await h.newSession();
+      const response = await h.request("session/prompt", {
+        sessionId: id,
+        prompt: [
+          { type: "image", mimeType: "image/png", data: image },
+          {
+            type: "resource",
+            resource: { uri: "file:///outside/unsaved.md", mimeType: "text/markdown", text },
+          },
+          {
+            type: "resource",
+            resource: {
+              uri: "https://must-not-fetch.invalid/doc.pdf",
+              mimeType: "application/pdf",
+              blob: pdf,
+            },
+          },
+        ],
+      });
+      expect(response.error).toBeUndefined();
+      expect(response.result.stopReason).toBe("end_turn");
+      const content = wire.messages[0].content;
+      expect(content).toContainEqual({
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: image },
+      });
+      expect(content).toContainEqual({
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: pdf },
+      });
+      expect(JSON.stringify(content)).toContain(text);
+      const journal = await base.persistence.load(
+        SessionIdSchema.parse(id),
+        new AbortController().signal,
+      );
+      expect(JSON.stringify(journal)).not.toContain(text);
+      expect(JSON.stringify(journal)).not.toContain(image);
+      expect(JSON.stringify(journal)).not.toContain(pdf);
+    } finally {
+      await h.close();
+    }
+  });
+  const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(
+    records.find(
+      (record) => record.event === "attachment.stored" && record.media === "text/markdown",
+    ).bytes,
+  ).toBeGreaterThan(65536);
+  expect(records.filter((record) => ["warning", "error"].includes(record.level))).toHaveLength(0);
 });
 
 for (const scenario of [
@@ -1791,6 +1837,7 @@ for (const scenario of [
     const { join } = await import("node:path");
     const { workspaceFiles, MAX_FILE_BYTES } = await import("./workspace-files.ts");
     const { workspaceTools } = await import("./workspace-tools.ts");
+    const { workspaceToolContent } = await import("./file-write.ts");
     const cwd = await mkdtemp(join(tmpdir(), "labkit-client-fs-"));
     await writeFile(join(cwd, "README.md"), "disk contents");
     const files = await workspaceFiles(cwd);
@@ -1820,7 +1867,7 @@ for (const scenario of [
         return answer;
       },
     });
-    const h = harness({
+    const options: AcpOptions = {
       ...base.options,
       sessionOptions: async (context) => {
         const original = await base.options.sessionOptions(context);
@@ -1834,9 +1881,11 @@ for (const scenario of [
             agents: new Map([["a", { model: "m", tools: [...tools.keys()] }]]),
           },
           bindings: { ...original.bindings, tools },
+          toolContent: workspaceToolContent,
         };
       },
-    });
+    };
+    let h = harness(options);
     try {
       await h.request("initialize", {
         protocolVersion: 1,
@@ -1866,7 +1915,19 @@ for (const scenario of [
       });
       if (scenario !== "reject" && scenario !== "unsupported") {
         await until(() => h.messages.some((message) => message.method?.startsWith("fs/")));
-        const file = h.messages.find((message) => message.method?.startsWith("fs/"))!;
+        if (writing) {
+          const baseline = h.messages.find((message) => message.method === "fs/read_text_file")!;
+          expect(baseline.params.path).toBe(join(files.root, "README.md"));
+          await h.send({
+            jsonrpc: "2.0",
+            id: baseline.id,
+            result: { content: "unsaved editor contents" },
+          });
+          await until(() => h.messages.some((message) => message.method === "fs/write_text_file"));
+        }
+        const file = h.messages.find(
+          (message) => message.method === (writing ? "fs/write_text_file" : "fs/read_text_file"),
+        )!;
         expect(file.method).toBe(writing ? "fs/write_text_file" : "fs/read_text_file");
         expect(file.params).toEqual({
           sessionId: id,
@@ -1903,6 +1964,52 @@ for (const scenario of [
       if (scenario === "reject" || scenario === "unsupported")
         expect(h.messages.some((message) => message.method?.startsWith("fs/"))).toBe(false);
       expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("disk contents");
+      if (scenario === "write") {
+        const expected = {
+          type: "diff",
+          path: join(files.root, "README.md"),
+          oldText: "unsaved editor contents",
+          newText: "editor write",
+        };
+        expect(
+          h
+            .updates()
+            .map(({ update }) => update)
+            .find(
+              (update) =>
+                update.sessionUpdate === "tool_call_update" && update.status === "completed",
+            ),
+        ).toMatchObject({ content: [expected] });
+        await h.close();
+        await writeFile(join(cwd, "README.md"), "later disk edit");
+        h = harness(options);
+        await h.request("initialize", {
+          protocolVersion: 1,
+          clientCapabilities: {
+            fs: { readTextFile: true, writeTextFile: true },
+          },
+        });
+        expect(
+          (await h.request("session/load", { cwd, sessionId: id, mcpServers: [] })).error,
+        ).toBeUndefined();
+        expect(
+          h
+            .updates()
+            .map(({ update }) => update)
+            .find(
+              (update) =>
+                update.sessionUpdate === "tool_call_update" && update.status === "completed",
+            ),
+        ).toMatchObject({ content: [expected], _meta: { "labkit.dev/reconstructed": true } });
+        expect(
+          h.messages.some(
+            (message) =>
+              message.method?.startsWith("fs/") || message.method === "session/request_permission",
+          ),
+        ).toBe(false);
+        expect(completions).toBe(2);
+        expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("later disk edit");
+      }
     } finally {
       await h.close();
       await rm(cwd, { recursive: true, force: true });
@@ -4767,3 +4874,766 @@ for (const stream of [false, true]) {
     });
   }
 }
+
+test("live command catalogs update and clear without changing admitted prompts or leaking after close", async () => {
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = `.session-artifacts/acp-commands/${crypto.randomUUID()}`;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    const pending = deferred<unknown>();
+    let admittedText = "";
+    let publish: NonNullable<Parameters<AcpOptions["sessionOptions"]>[0]["publishCommands"]>;
+    const base = setup({
+      complete: (request) => {
+        admittedText = request.messages.at(-1)!.content;
+        return pending.promise;
+      },
+    });
+    const h = harness({
+      ...base.options,
+      sessionOptions: async (context) => {
+        publish = context.publishCommands!;
+        publish([{ name: "review", description: "Staged", prompt: "Initial instructions" }]);
+        return base.options.sessionOptions(context);
+      },
+    });
+    try {
+      await h.initialize();
+      const sessionId = await h.newSession();
+      const catalogs = () =>
+        h
+          .updates()
+          .filter((message) => message.update.sessionUpdate === "available_commands_update");
+      expect(catalogs()).toHaveLength(1);
+      const turn = await h.start("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: "/review this" }],
+      });
+      await until(() => admittedText !== "");
+      publish!([{ name: "review", description: "Changed", prompt: "Replacement instructions" }]);
+      await until(() => catalogs().length === 2);
+      expect(admittedText).toContain("Initial instructions");
+      expect(admittedText).not.toContain("Replacement instructions");
+      expect(() =>
+        publish!([{ name: "INVALID COMMAND", description: "bad", prompt: "bad" }]),
+      ).toThrow();
+      expect(catalogs()).toHaveLength(2);
+      pending.resolve(answer);
+      expect((await h.response(turn)).result.stopReason).toBe("end_turn");
+      await h.request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: "/review again" }],
+      });
+      expect(admittedText).toContain("Replacement instructions");
+      publish!([]);
+      await until(() => catalogs().length === 3);
+      expect(catalogs().at(-1)!.update).toMatchObject({ availableCommands: [] });
+      await h.request("session/close", { sessionId });
+      expect(() => publish!([])).toThrow("closed ACP session");
+      expect(catalogs()).toHaveLength(3);
+    } finally {
+      pending.resolve(answer);
+      await h.close();
+    }
+  });
+  const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const updated = records.filter((record) => record.event === "acp.commands.updated");
+  expect(updated.map((record) => record.count)).toEqual([1, 0]);
+  expect(updated[0]).toMatchObject({ level: "info", names: ["review"] });
+  expect(updated[0].sessionId).toBeString();
+  expect(records.filter((record) => record.event === "acp.commands.rejected")).toHaveLength(2);
+});
+
+test("read_file forwards line ranges to the ACP client and retains range diagnostics", async () => {
+  const { workspaceFiles } = await import("./workspace-files.ts");
+  const { workspaceTools } = await import("./workspace-tools.ts");
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = `.session-artifacts/acp-file-range/${crypto.randomUUID()}`;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    let completions = 0;
+    const base = setup({
+      complete: (request) => {
+        if (++completions === 1)
+          return {
+            kind: "tools",
+            text: "Read the relevant lines",
+            calls: [
+              { id: "range", name: "read_file", args: { path: "note.txt", line: 10, limit: 3 } },
+            ],
+          };
+        expect(request.messages.find((message) => message.role === "tool")!.content).toContain(
+          "Unsaved editor lines",
+        );
+        return answer;
+      },
+    });
+    const h = harness({
+      ...base.options,
+      sessionOptions: async (context) => {
+        const options = await base.options.sessionOptions(context);
+        return {
+          ...options,
+          configuration: {
+            ...options.configuration,
+            policy: { permissions: "off" },
+            agents: new Map([["a", { model: "m", tools: ["read_file"] }]]),
+          },
+          bindings: {
+            ...options.bindings,
+            tools: workspaceTools(await workspaceFiles(context.cwd), context.clientFiles),
+          },
+        };
+      },
+    });
+    try {
+      await h.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: { fs: { readTextFile: true } },
+      });
+      const sessionId = await h.newSession();
+      const turn = await h.start("session/prompt", prompt(sessionId));
+      await until(() => h.messages.some((message) => message.method === "fs/read_text_file"));
+      const request = h.messages.find((message) => message.method === "fs/read_text_file")!;
+      expect(request.params).toMatchObject({ sessionId, line: 10, limit: 3 });
+      expect(request.params.path).toEndWith("/note.txt");
+      await h.send({ jsonrpc: "2.0", id: request.id, result: { content: "Unsaved editor lines" } });
+      expect((await h.response(turn)).result.stopReason).toBe("end_turn");
+    } finally {
+      await h.close();
+    }
+  });
+  const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(records.find((record) => record.event === "client_file.completed")).toMatchObject({
+    line: 10,
+    limit: 3,
+  });
+  expect(records.filter((record) => ["warning", "error"].includes(record.level))).toHaveLength(0);
+});
+
+test("ACP audio reaches Google as exact inline bytes, remains a journal ref, and reload performs no HTTP", async () => {
+  const { googleGenerateV3 } = await import("../core/providers/index.ts");
+  const { SessionIdSchema } = await import("../core/agent/types.ts");
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = `.session-artifacts/acp-audio/${crypto.randomUUID()}`;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    const wav = Buffer.alloc(44 + 320);
+    wav.write("RIFF", 0);
+    wav.writeUInt32LE(wav.length - 8, 4);
+    wav.write("WAVEfmt ", 8);
+    wav.writeUInt32LE(16, 16);
+    wav.writeUInt16LE(1, 20);
+    wav.writeUInt16LE(1, 22);
+    wav.writeUInt32LE(16000, 24);
+    wav.writeUInt32LE(32000, 28);
+    wav.writeUInt16LE(2, 32);
+    wav.writeUInt16LE(16, 34);
+    wav.write("data", 36);
+    wav.writeUInt32LE(320, 40);
+    const data = wav.toString("base64");
+    const wires: any[] = [];
+    const base = setup();
+    const options: AcpOptions = {
+      ...base.options,
+      sessionOptions: async (context) => {
+        const original = await base.options.sessionOptions(context);
+        return {
+          ...original,
+          configuration: {
+            ...original.configuration,
+            policy: { provider: "google", model: "audio-test", thinking: "off" },
+          },
+          bindings: {
+            ...original.bindings,
+            complete: undefined,
+            providers: new Map([
+              [
+                "google",
+                {
+                  profile: googleGenerateV3,
+                  transport: {
+                    baseUrl: "https://example.invalid",
+                    fetch: (async (_url, init) => {
+                      wires.push(JSON.parse(String(init?.body)));
+                      return Response.json({
+                        candidates: [
+                          {
+                            finishReason: "STOP",
+                            content: {
+                              role: "model",
+                              parts: [{ text: "Scripted audio response" }],
+                            },
+                          },
+                        ],
+                      });
+                    }) as typeof fetch,
+                  },
+                },
+              ],
+            ]),
+          },
+        };
+      },
+    };
+    let h = harness(options);
+    try {
+      await h.initialize();
+      const id = await h.newSession();
+      const response = await h.request("session/prompt", {
+        sessionId: id,
+        prompt: [
+          { type: "text", text: "Describe this recording" },
+          { type: "audio", mimeType: "audio/wav", data },
+        ],
+      });
+      expect(response.result.stopReason).toBe("end_turn");
+      expect(wires[0].contents[0].parts).toContainEqual({
+        inlineData: { mimeType: "audio/wav", data },
+      });
+      const loaded = await base.persistence.load(
+        SessionIdSchema.parse(id),
+        new AbortController().signal,
+      );
+      expect(JSON.stringify(loaded)).toContain("audio/wav");
+      expect(JSON.stringify(loaded)).not.toContain(data);
+      await h.close();
+      h = harness(options);
+      await h.initialize();
+      expect(
+        (await h.request("session/load", { sessionId: id, cwd: "/tmp", mcpServers: [] })).error,
+      ).toBeUndefined();
+      expect(wires).toHaveLength(1);
+      expect(
+        h
+          .updates()
+          .some(
+            (message) =>
+              message.update.sessionUpdate === "user_message_chunk" &&
+              message.update.content.type === "resource_link" &&
+              message.update.content.mimeType === "audio/wav",
+          ),
+      ).toBe(true);
+      await h.request("session/prompt", {
+        sessionId: id,
+        prompt: [{ type: "text", text: "Describe the recording again" }],
+      });
+      expect(wires).toHaveLength(2);
+      expect(wires[1].contents[0].parts).toContainEqual({
+        inlineData: { mimeType: "audio/wav", data },
+      });
+    } finally {
+      await h.close();
+      await Bun.write(`${directory}/requests.json`, JSON.stringify(wires, null, 2));
+    }
+  });
+  const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(records.find((record) => record.event === "attachment.stored")).toMatchObject({
+    media: "audio/wav",
+    bytes: 364,
+  });
+  expect(records.filter((record) => ["warning", "error"].includes(record.level))).toHaveLength(0);
+});
+
+test("ACP publishes bound session usage on open, prompt, external change and restore without replaying work", async () => {
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = `.session-artifacts/acp-usage/${crypto.randomUUID()}`;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    let completions = 0;
+    let measurement = { used: 1200, size: 32000, cost: { amount: 0.02, currency: "EUR" } };
+    let changed: (() => void) | undefined;
+    let cleanup = 0;
+    const reads: { sessionId: string; revision: number }[] = [];
+    const base = setup({
+      complete: () => {
+        completions++;
+        measurement = { ...measurement, used: 1700, cost: { amount: 0.03, currency: "EUR" } };
+        return answer;
+      },
+    });
+    const options: AcpOptions = {
+      ...base.options,
+      sessionOptions: async (context) => ({
+        ...(await base.options.sessionOptions(context)),
+        usage: {
+          read: ({ sessionId, snapshot }) => {
+            reads.push({ sessionId, revision: snapshot.durable.revision });
+            return {
+              ...measurement,
+              _meta: { "labkit.dev/source": "scripted measurement service" },
+            };
+          },
+          subscribe: (notify, signal) => {
+            changed = notify;
+            expect(signal.aborted).toBe(false);
+            return () => {
+              cleanup++;
+            };
+          },
+        },
+      }),
+    };
+    const h = harness(options);
+    const updates = () =>
+      h.updates().filter(({ update }) => update.sessionUpdate === "usage_update");
+    try {
+      await h.initialize();
+      const id = await h.newSession();
+      await until(() => updates().length === 1);
+      expect(updates()[0]?.update).toMatchObject({
+        used: 1200,
+        size: 32000,
+        cost: { amount: 0.02, currency: "EUR" },
+      });
+      const priorRead = reads.length;
+      changed!();
+      await until(() => reads.length > priorRead);
+      expect(updates()).toHaveLength(1);
+      expect((await h.request("session/prompt", prompt(id))).result.stopReason).toBe("end_turn");
+      await until(() => updates().some(({ update }) => "used" in update && update.used === 1700));
+      measurement = { used: 1800, size: 64000, cost: { amount: 0.04, currency: "EUR" } };
+      changed!();
+      await until(() => updates().some(({ update }) => "size" in update && update.size === 64000));
+      const oldChanged = changed!;
+      const count = updates().length;
+      await h.request("session/close", { sessionId: id });
+      expect(cleanup).toBe(1);
+      oldChanged();
+      expect(updates()).toHaveLength(count);
+      const readsBefore = reads.length;
+      expect(
+        (await h.request("session/load", { sessionId: id, cwd: "/tmp", mcpServers: [] })).error,
+      ).toBeUndefined();
+      await until(() => updates().length > count);
+      expect(reads.length).toBeGreaterThan(readsBefore);
+      expect(updates().at(-1)?.update).toMatchObject({
+        used: 1800,
+        size: 64000,
+        cost: { amount: 0.04, currency: "EUR" },
+      });
+      expect(completions).toBe(1);
+      expect(reads.every((read) => read.sessionId === id)).toBe(true);
+      await Bun.write(`${directory}/protocol.json`, JSON.stringify(h.messages, null, 2));
+    } finally {
+      await h.close();
+    }
+    expect(cleanup).toBe(2);
+  });
+  const logs = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(
+    logs.some(
+      (line) =>
+        line.event === "acp.usage.updated" &&
+        line.used === 1800 &&
+        line.size === 64000 &&
+        line.sessionId &&
+        line.connectionId &&
+        line.revision,
+    ),
+  ).toBe(true);
+  expect(logs.filter((line) => ["warning", "error", "fatal"].includes(line.level))).toEqual([]);
+});
+
+test("ACP discards superseded usage reads and cancels subscription work when the session closes", async () => {
+  const { AcpUsageSchema } = await import("./session-usage.ts");
+  const base = setup();
+  const emitted = spyOn(getLogger(["labkit", "acp"]), "emit");
+  const first = deferred<import("./session-usage.ts").AcpUsage>();
+  const second = deferred<import("./session-usage.ts").AcpUsage>();
+  let changed: (() => void) | undefined;
+  const signals: AbortSignal[] = [];
+  let subscriptionSignal: AbortSignal | undefined;
+  const h = harness({
+    ...base.options,
+    sessionOptions: async (context) => ({
+      ...(await base.options.sessionOptions(context)),
+      usage: {
+        read: (_context, signal) => {
+          signals.push(signal);
+          return signals.length === 1 ? first.promise : second.promise;
+        },
+        subscribe: (notify, signal) => {
+          changed = notify;
+          subscriptionSignal = signal;
+        },
+      },
+    }),
+  });
+  try {
+    await h.initialize();
+    const id = await h.newSession();
+    await until(() => signals.length === 1);
+    changed!();
+    await until(() => signals.length === 2);
+    expect(signals[0]?.aborted).toBe(true);
+    second.resolve(AcpUsageSchema.parse({ used: 120.5, size: 100, cost: null }));
+    await until(() => h.updates().some(({ update }) => update.sessionUpdate === "usage_update"));
+    first.resolve({ used: 99, size: 100 });
+    await h.request("session/close", { sessionId: id });
+    expect(subscriptionSignal?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(true);
+    changed!();
+    expect(signals).toHaveLength(2);
+    const diagnostics = emitted.mock.calls.map((call) => call[0].properties);
+    expect(
+      diagnostics.some(
+        (fields) =>
+          fields.event === "acp.usage.cancelled" &&
+          fields.sessionId === id &&
+          typeof fields.usageRequestId === "string" &&
+          fields.reason,
+      ),
+    ).toBe(true);
+    expect(
+      diagnostics.some((fields) => fields.event === "acp.usage.closed" && fields.sessionId === id),
+    ).toBe(true);
+    expect(
+      h
+        .updates()
+        .filter(({ update }) => update.sessionUpdate === "usage_update")
+        .map(({ update }) => update),
+    ).toEqual([{ sessionUpdate: "usage_update", used: 120.5, size: 100, cost: null }]);
+  } finally {
+    first.resolve({ used: 99, size: 100 });
+    second.resolve({ used: 120.5, size: 100 });
+    await h.close();
+    emitted.mockRestore();
+  }
+});
+
+test("invalid or unavailable ACP usage emits no invented capacity and does not stop a prompt", async () => {
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = `.session-artifacts/acp-usage-invalid/${crypto.randomUUID()}`;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    const base = setup();
+    let changed: (() => void) | undefined;
+    let calls = 0;
+    let value: unknown;
+    const h = harness({
+      ...base.options,
+      sessionOptions: async (context) => ({
+        ...(await base.options.sessionOptions(context)),
+        usage: {
+          read: () => {
+            calls++;
+            return value as import("./session-usage.ts").AcpUsage | undefined;
+          },
+          subscribe: (notify) => {
+            changed = notify;
+          },
+        },
+      }),
+    });
+    try {
+      await h.initialize();
+      const id = await h.newSession();
+      await until(() => calls === 1);
+      value = { used: 300, size: 0, cost: { amount: -1, currency: "euro" } };
+      changed!();
+      expect((await h.request("session/prompt", prompt(id))).result.stopReason).toBe("end_turn");
+      await until(() => calls > 2);
+      expect(h.updates().filter(({ update }) => update.sessionUpdate === "usage_update")).toEqual(
+        [],
+      );
+    } finally {
+      await h.close();
+    }
+  });
+  const logs = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(logs.some((line) => line.event === "acp.usage.unavailable")).toBe(true);
+  const rejected = logs.find((line) => line.event === "acp.usage.failed");
+  expect(rejected.level).toBe("warning");
+  expect(rejected.reason).toContain("agent execution continues");
+  expect(rejected.reportedUsage).toEqual({ used: 300, size: 0, amount: -1, currency: "euro" });
+  expect(JSON.stringify(rejected.error)).toContain('"size"');
+  expect(rejected.sessionId).toBeString();
+  expect(rejected.connectionId).toBeString();
+});
+
+test("ACP usage observes committed configuration and publishes independently for forks and resume", async () => {
+  const base = setup();
+  const { openaiChat } = await import("../core/providers/index.ts");
+  const gate = deferred<void>();
+  let committing = false;
+  const h = harness({
+    ...base.options,
+    forkSession: true,
+    sessionOptions: async (context) => {
+      const original = await base.options.sessionOptions(context);
+      const { complete: _complete, ...bindings } = original.bindings;
+      return {
+        ...original,
+        configuration: { ...original.configuration, policy: { provider: "openai", model: "m" } },
+        bindings: {
+          ...bindings,
+          providers: new Map([
+            [
+              "openai",
+              {
+                profile: openaiChat,
+                transport: {
+                  baseUrl: "https://scripted.invalid",
+                  fetch: (() => {
+                    throw new Error("Usage lifecycle must not invoke HTTP completion");
+                  }) as unknown as typeof fetch,
+                },
+              },
+            ],
+          ]),
+        },
+        persistence: {
+          ...base.persistence,
+          append: async (request, signal) => {
+            if (request.records.some((raw) => JSON.parse(raw).body.kind === "policy")) {
+              committing = true;
+              await gate.promise;
+            }
+            return base.persistence.append(request, signal);
+          },
+        },
+        config: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            current: (policy) => policy.model ?? "m",
+            options: [
+              { value: "m", name: "Standard", patch: { model: "m" } },
+              { value: "large", name: "Large", patch: { model: "large" } },
+            ],
+          },
+        ],
+        usage: {
+          read: ({ snapshot }) => ({
+            used: 20,
+            size: snapshot.durable.policy.model === "large" ? 2000 : 1000,
+          }),
+        },
+      };
+    },
+  });
+  const updates = () => h.updates().filter(({ update }) => update.sessionUpdate === "usage_update");
+  try {
+    await h.initialize();
+    const id = await h.newSession();
+    await until(() => updates().length === 1);
+    const change = await h.start("session/set_config_option", {
+      sessionId: id,
+      configId: "model",
+      value: "large",
+    });
+    await until(() => committing);
+    expect(updates().map(({ update }) => ("size" in update ? update.size : undefined))).toEqual([
+      1000,
+    ]);
+    gate.resolve();
+    expect((await h.response(change)).error).toBeUndefined();
+    await until(() => updates().length === 2);
+    const fork = await h.request("session/fork", { sessionId: id, cwd: "/tmp" });
+    expect(fork.error).toBeUndefined();
+    const childId = fork.result.sessionId;
+    await until(() => updates().some((update) => update.sessionId === childId));
+    expect(updates().find((update) => update.sessionId === childId)?.update).toMatchObject({
+      used: 20,
+      size: 2000,
+    });
+    await h.request("session/close", { sessionId: id });
+    const count = updates().length;
+    expect(
+      (await h.request("session/resume", { sessionId: id, cwd: "/tmp", mcpServers: [] })).error,
+    ).toBeUndefined();
+    await until(() => updates().length > count);
+    expect(updates().at(-1)).toMatchObject({ sessionId: id, update: { used: 20, size: 2000 } });
+  } finally {
+    gate.resolve();
+    await h.close();
+  }
+});
+
+test("named tool content renders rich blocks and diffs from saved results without repeating effects", async () => {
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = `.session-artifacts/acp-tool-content/${crypto.randomUUID()}`;
+  const content = [
+    {
+      type: "content",
+      content: {
+        type: "text",
+        text: "Observed result",
+        annotations: { audience: ["user"], priority: 1 },
+        _meta: { "example.org/id": "text-1" },
+      },
+    },
+    { type: "content", content: { type: "image", data: "AA==", mimeType: "image/png" } },
+    { type: "content", content: { type: "audio", data: "AA==", mimeType: "audio/wav" } },
+    {
+      type: "content",
+      content: {
+        type: "resource",
+        resource: { uri: "file:///tmp/report.txt", text: "Saved report", mimeType: "text/plain" },
+      },
+    },
+    {
+      type: "content",
+      content: { type: "resource_link", uri: "file:///tmp/report.txt", name: "report.txt" },
+    },
+    { type: "diff", path: "/tmp/report.txt", oldText: "before", newText: "after" },
+  ];
+  let runs = 0;
+  let completions = 0;
+  const base = setup({
+    complete: () => (++completions === 1 ? tools : answer),
+    tools: new Map([
+      [
+        "echo",
+        defineTool({
+          input: z.object({ text: z.string() }),
+          run: () => {
+            runs++;
+            return { content };
+          },
+        }),
+      ],
+    ]),
+  });
+  const options: AcpOptions = {
+    ...base.options,
+    sessionOptions: async (context) => ({
+      ...(await base.options.sessionOptions(context)),
+      toolContent: new Map([["echo", ({ output }) => JSON.parse(output).content]]),
+    }),
+  };
+  await withFixtureDiagnostics(directory, {}, async () => {
+    let h = harness(options);
+    try {
+      await h.initialize();
+      const sessionId = await h.newSession();
+      const turn = await h.start("session/prompt", prompt(sessionId));
+      await until(() =>
+        h.messages.some((message) => message.method === "session/request_permission"),
+      );
+      const permission = h.messages.find(
+        (message) => message.method === "session/request_permission",
+      )!;
+      await h.send({
+        jsonrpc: "2.0",
+        id: permission.id,
+        result: { outcome: { outcome: "selected", optionId: "allow-once" } },
+      });
+      expect((await h.response(turn)).result.stopReason).toBe("end_turn");
+
+      const rendered = () =>
+        h
+          .updates()
+          .map(({ update }) => update)
+          .find(
+            (update) =>
+              update.sessionUpdate === "tool_call_update" && update.status === "completed",
+          );
+
+      expect(rendered()).toMatchObject({ content, rawOutput: JSON.stringify({ content }) });
+      await h.close();
+      h = harness(options);
+      await h.initialize();
+      expect(
+        (await h.request("session/load", { cwd: "/tmp", sessionId, mcpServers: [] })).error,
+      ).toBeUndefined();
+      expect(rendered()).toMatchObject({ content, _meta: { "labkit.dev/reconstructed": true } });
+      expect(h.messages.some((message) => message.method === "session/request_permission")).toBe(
+        false,
+      );
+      expect(runs).toBe(1);
+      expect(completions).toBe(2);
+    } finally {
+      await h.close();
+    }
+  });
+  const logs = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const rendered = logs.filter((entry) => entry.event === "acp.tool_content.rendered");
+  expect(rendered.map((entry) => entry.reconstructed)).toEqual([false, true]);
+  expect(
+    rendered.every((entry) => entry.sessionId && entry.toolCallId && entry.toolName === "echo"),
+  ).toBe(true);
+  expect(rendered[0].contentTypes).toEqual([
+    "text",
+    "image",
+    "audio",
+    "resource",
+    "resource_link",
+    "diff",
+  ]);
+  expect(logs.filter((entry) => ["warning", "error"].includes(entry.level))).toEqual([]);
+  expect(JSON.stringify(logs)).not.toContain("Saved report");
+});
+
+test("invalid tool display preserves successful execution and explains the display failure", async () => {
+  const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
+  const directory = `.session-artifacts/acp-tool-content-invalid/${crypto.randomUUID()}`;
+  let completions = 0;
+  const base = setup({ complete: () => (++completions === 1 ? tools : answer) });
+  await withFixtureDiagnostics(directory, {}, async () => {
+    const h = harness({
+      ...base.options,
+      sessionOptions: async (context) => ({
+        ...(await base.options.sessionOptions(context)),
+        toolContent: new Map([
+          ["echo", () => [{ type: "diff", path: "relative.txt", newText: "after" }]],
+        ]),
+      }),
+    });
+    try {
+      await h.initialize();
+      const sessionId = await h.newSession();
+      const turn = await h.start("session/prompt", prompt(sessionId));
+      await until(() =>
+        h.messages.some((message) => message.method === "session/request_permission"),
+      );
+      const permission = h.messages.find(
+        (message) => message.method === "session/request_permission",
+      )!;
+      await h.send({
+        jsonrpc: "2.0",
+        id: permission.id,
+        result: { outcome: { outcome: "selected", optionId: "allow-once" } },
+      });
+      expect((await h.response(turn)).result.stopReason).toBe("end_turn");
+      const update = h
+        .updates()
+        .map(({ update }) => update)
+        .find(
+          (update) => update.sessionUpdate === "tool_call_update" && update.status === "completed",
+        );
+      expect(update).toMatchObject({ rawOutput: "contents" });
+      expect(JSON.stringify(update)).toContain("Diff path must be absolute");
+      expect(completions).toBe(2);
+    } finally {
+      await h.close();
+    }
+  });
+  const logs = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const warnings = logs.filter((entry) => ["warning", "error"].includes(entry.level));
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0].event).toBe("acp.tool_content.failed");
+  expect(warnings[0].reason).toContain("execution result is unchanged");
+  expect(warnings[0].error.message).toContain("Diff path must be absolute");
+  expect(warnings[0].sessionId).toBeTruthy();
+  expect(warnings[0].toolCallId).toBeTruthy();
+  expect(warnings[0].toolName).toBe("echo");
+});

@@ -38,6 +38,7 @@ import {
   type Continuation,
   type StreamDelta,
 } from "../providers/types.ts";
+import { CompletionUsageSchema } from "../providers/usage.ts";
 import { notify } from "./notifications.ts";
 import {
   copyRegistries,
@@ -73,6 +74,7 @@ export type HostToolNotification = Readonly<
       }
     | {
         sessionUpdate: "tool_call_update";
+        name?: string;
         status?: "pending" | "in_progress" | "completed" | "failed";
         locations?: readonly ToolLocation[];
         rawOutput?: unknown;
@@ -151,7 +153,6 @@ export function createHost(
   >();
   const requestPermission = bindings.requestPermission;
   const remembered = new Map<string, string>();
-  let permissionPolicyVersion: number | undefined;
 
   const grants = new Map<
     ActorId,
@@ -298,18 +299,6 @@ export function createHost(
     context: ExecutionContext,
   ): undefined => {
     if (closed) throw new Error("Host closed");
-    if (permissionPolicyVersion !== context.policyVersion) {
-      if (remembered.size)
-        diagnostic("host", "info", "permission.grants_cleared", {
-          sessionId: bindings.sessionId,
-          reason: "Committed policy changed; previous tool approvals no longer apply",
-          previousPolicyVersion: permissionPolicyVersion,
-          policyVersion: context.policyVersion,
-          toolNames: [...remembered.keys()],
-        });
-      remembered.clear();
-      permissionPolicyVersion = context.policyVersion;
-    }
     context = freeze({
       ...context,
       prompt: context.prompt ? structuredClone(context.prompt) : undefined,
@@ -466,6 +455,7 @@ export function createHost(
                     .strictObject({
                       completion: z.unknown(),
                       continuationPayload: z.unknown().optional(),
+                      usage: CompletionUsageSchema.optional(),
                     })
                     .parse(raw)
                 : { completion: raw };
@@ -484,17 +474,30 @@ export function createHost(
                       signal,
                     );
               signal.throwIfAborted();
-              return { completion, continuation };
+              if (output.usage)
+                diagnostic("provider", "info", "completion.usage.received", {
+                  sessionId: bindings.sessionId,
+                  turnId,
+                  childId: command.child.id,
+                  model: request.model,
+                  usage: output.usage,
+                  message: "Completion response usage validated; awaiting runtime settlement",
+                });
+              return { completion, continuation, usage: output.usage };
             },
             parseOutput: z.strictObject({
               completion: admitted,
               continuation: ContinuationSchema.optional(),
+              usage: CompletionUsageSchema.optional(),
             }).parseAsync,
           },
           (result) =>
             post(turnId, {
               type: "model_settled",
               child: command.child,
+              ...(result.kind === "succeeded" && result.value.usage
+                ? { usage: result.value.usage }
+                : {}),
               result:
                 result.kind === "succeeded"
                   ? { kind: "succeeded", value: result.value.completion }
@@ -601,6 +604,7 @@ export function createHost(
                     batchId: command.batch.id,
                     callId: call.id,
                     toolCallId: ref("tool", `${command.batch.id}/${call.id}`).id,
+                    name: call.name,
                   };
                   const display = {
                     ...identity,
@@ -803,7 +807,7 @@ export function createHost(
             scope: "live-session-tool",
             policyVersion: context.policyVersion,
             reason:
-              "User approved this tool for all arguments until this session closes or its policy changes",
+              "User approved this tool for all arguments until this session closes, tool scope changes, or permissions are explicitly reset",
           });
         }
         if (command.permission) grants.delete(command.permission.id);
@@ -818,6 +822,7 @@ export function createHost(
                 batchId: command.child.id,
                 callId: batchCommand.call.id,
                 toolCallId: batchCommand.child.id,
+                name: batchCommand.call.name,
               };
               diagnostic("host", "debug", "tool.admitted", {
                 ...identity,
@@ -998,6 +1003,15 @@ export function createHost(
 
   return {
     dispatch,
+    resetPermissions(reason: string, correlation: { policyVersion: number; appendId: string }) {
+      diagnostic("host", "info", "permission.grants_cleared", {
+        sessionId: bindings.sessionId,
+        reason,
+        ...correlation,
+        toolNames: [...remembered.keys()],
+      });
+      remembered.clear();
+    },
     releaseTool(outcome: HostToolOutcome) {
       const key = `${outcome.batchId}/${outcome.callId}`;
       const pending = pendingTools.get(key);

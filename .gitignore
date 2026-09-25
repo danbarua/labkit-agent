@@ -145,6 +145,8 @@ vite.config.ts.timestamp-*
 # Generated session inspection runs; approved fixtures remain tracked
 .session-artifacts/
 
+# Local Coding Agent config, plans, etc
+.omp/
 
 # Jetbrains crap
 .junie/
@@ -153,3 +155,4 @@ vite.config.ts.timestamp-*
 
 # Workspace ACP journals and blobs
 .labkit/
+

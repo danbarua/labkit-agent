@@ -5,6 +5,7 @@ import { createAgentRuntime } from "../agent/agent-runtime.ts";
 import type { HostToolNotification } from "../host/host.ts";
 import type { PermissionPort, PermissionRequest } from "../host/ports.ts";
 import { builtinResolvers } from "../policy/policy.ts";
+import { openaiChat } from "../providers/index.ts";
 import { journalJSONL, replay } from "./session-log.ts";
 import {
   createSession,
@@ -375,17 +376,64 @@ test("permission mode changes only at idle policy boundaries; off keeps existing
   await Promise.all([session.close(), restored.close()]);
 });
 
-test("session tool approval is committed before reuse, revoked by policy, and absent on restore", async () => {
+test("session tool approval is committed before reuse, retained across model changes, explicitly revoked, and absent on restore", async () => {
   const { withFixtureDiagnostics } = await import("../logging/fixture-capture.ts");
   const directory = `.session-artifacts/permission-grants/${crypto.randomUUID()}`;
   await withFixtureDiagnostics(directory, {}, async () => {
     const setupResult = setup(() => ({
       outcome: { outcome: "selected", optionId: "allow-session" },
     }));
-    const { options, requests, ran, parses } = setupResult;
+    const { options: originalOptions, requests, ran, parses } = setupResult;
+    let httpCalls = 0;
+    const options: SessionOptions = {
+      ...originalOptions,
+      configuration: {
+        ...originalOptions.configuration,
+        policy: { permissions: "ask", provider: "scripted" },
+      },
+      bindings: {
+        ...originalOptions.bindings,
+        complete: undefined,
+        providers: new Map([
+          [
+            "scripted",
+            {
+              profile: openaiChat,
+              transport: {
+                baseUrl: "https://scripted.invalid/v1",
+                fetch: (async () =>
+                  Response.json({
+                    choices: [
+                      {
+                        finish_reason: ++httpCalls % 2 ? "tool_calls" : "stop",
+                        message:
+                          httpCalls % 2
+                            ? {
+                                content: calls.text,
+                                tool_calls: calls.calls.map((call) => ({
+                                  id: call.id,
+                                  type: "function",
+                                  function: {
+                                    name: call.name,
+                                    arguments: JSON.stringify(call.args),
+                                  },
+                                })),
+                              }
+                            : { content: "Done" },
+                      },
+                    ],
+                  })) as unknown as typeof fetch,
+              },
+            },
+          ],
+        ]),
+      },
+    };
     const base = options.persistence;
     const receipt = deferred<void>();
     let awaitingReceipt = false;
+    const resetReceipt = deferred<void>();
+    let awaitingReset = false;
     const session = await createSession({
       ...options,
       persistence: {
@@ -399,6 +447,15 @@ test("session tool approval is committed before reuse, revoked by policy, and ab
           ) {
             awaitingReceipt = true;
             await receipt.promise;
+          }
+          if (
+            request.records.some((raw) => {
+              const body = JSON.parse(raw).body;
+              return body.kind === "policy" && body.patch.permissions === "ask";
+            })
+          ) {
+            awaitingReset = true;
+            await resetReceipt.promise;
           }
           return base.append(request, signal);
         },
@@ -416,24 +473,48 @@ test("session tool approval is committed before reuse, revoked by policy, and ab
       expect(ran).toHaveLength(4);
       expect(parses()).toBe(4);
       expect(journalJSONL(session.snapshot.durable)).toContain('"source":"remembered"');
-      expect(await session.updatePolicy({ permissions: "ask" })).toMatchObject({
-        kind: "accepted",
-      });
+      for (const patch of [
+        { model: "another-model" },
+        { thinking: "off" as const },
+        { steps: 8, completionTimeoutMs: 1000, toolTimeoutMs: 1000 },
+        { tools: { a: ["echo"] } },
+      ]) {
+        expect((await session.updatePolicy(patch)).kind).toBe("accepted");
+        expect(await session.input("Keep the existing tool approval").settled).toMatchObject({
+          kind: "terminal",
+          record: { outcome: { kind: "completed" } },
+        });
+        expect(requests).toHaveLength(1);
+      }
+      const beforeReset = session.snapshot.durable.policy!.version;
+      const reset = session.updatePolicy({ permissions: "ask" });
+      await until(() => awaitingReset);
+      expect(session.snapshot.durable.policy!.version).toBe(beforeReset);
+      expect(await Bun.file(`${directory}/diagnostics.jsonl`).text()).not.toContain(
+        '"event":"permission.grants_cleared"',
+      );
+      resetReceipt.resolve();
+      expect((await reset).kind).toBe("accepted");
       await session.input("Ask again after revocation").settled;
       expect(requests).toHaveLength(2);
+      expect((await session.updatePolicy({ tools: { a: [] } })).kind).toBe("accepted");
+      expect((await session.updatePolicy({ tools: { a: ["echo"] } })).kind).toBe("accepted");
+      await session.input("Ask after removing and re-enabling the tool").settled;
+      expect(requests).toHaveLength(3);
       const restored = await restoreSession(
         options,
         session.snapshot.durable.conversation.sessionId,
       );
       try {
-        expect(requests).toHaveLength(2);
-        await restored.input("Ask again after reopening").settled;
         expect(requests).toHaveLength(3);
+        await restored.input("Ask again after reopening").settled;
+        expect(requests).toHaveLength(4);
       } finally {
         await restored.close();
       }
     } finally {
       receipt.resolve();
+      resetReceipt.resolve();
       await session.close();
     }
   });
@@ -455,7 +536,23 @@ test("session tool approval is committed before reuse, revoked by policy, and ab
         entry.event === "permission.reused" && entry.grantId && entry.turnId && entry.toolCallId,
     ),
   ).toBe(true);
-  expect(logs.some((entry) => entry.event === "permission.grants_cleared")).toBe(true);
+  const resets = logs.filter((entry) => entry.event === "permission.grants_cleared");
+  expect(resets).toHaveLength(3);
+  expect(resets[0].reason).toContain("Permission mode explicitly committed");
+  expect(resets[0].toolNames).toEqual(["echo"]);
+  expect(resets[1].reason).toContain("Allowed tool scope changed");
+  for (const reset of resets) {
+    expect(reset.sessionId).toBeTruthy();
+    expect(reset.policyVersion).toBeGreaterThan(0);
+    const persisted = logs.findIndex(
+      (entry) =>
+        entry.event === "append.settled" &&
+        entry.appendId === reset.appendId &&
+        entry.outcome === "committed",
+    );
+    expect(persisted).toBeGreaterThanOrEqual(0);
+    expect(persisted).toBeLessThan(logs.indexOf(reset));
+  }
   expect(logs.filter((entry) => ["warning", "error"].includes(entry.level))).toEqual([]);
 });
 

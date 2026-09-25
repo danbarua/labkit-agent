@@ -129,7 +129,7 @@ and its persisted diagnostics contain no warnings or errors.
 
 The once-only ACP picker made repeated tool use require repeated user intervention. It now offers
 `allow-session`: approval of the named tool for all arguments until the live session closes or
-configuration changes. The host owns grants. It installs a grant only when the committed permission
+tool scope changes or permissions are explicitly reset. The host owns grants. It installs a grant only when the committed permission
 outcome releases the batch; refused/cancelled batches discard new grants. Every later call still
 validates inputs and commits a permission decision with the original grant identity and source.
 Restoration makes no calls and does not recreate live approvals. An already committed grant survives

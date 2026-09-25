@@ -89,6 +89,7 @@ export function fixtureEnvironment(scenario: Dependencies) {
     { promise: Promise<unknown>; resolve: (value: unknown) => void; value?: unknown }
   >();
   let completionIndex = 0;
+  let httpIndex = 0;
   let permissionIndex = 0;
   const options = testOptions({
     persistence: port,
@@ -172,6 +173,7 @@ export function fixtureEnvironment(scenario: Dependencies) {
                   profile,
                   transport: {
                     baseUrl: "https://example.invalid",
+                    requestId: () => `fixture-http-${++httpIndex}`,
                     fetch: (async (_url, init) => {
                       requests.push(JSON.parse(String(init?.body)));
                       const response = scenario.completions[completionIndex++];
