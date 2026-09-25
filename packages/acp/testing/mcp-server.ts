@@ -83,6 +83,8 @@ for await (const bytes of Bun.stdin.stream()) {
           isError: true,
           content: [{ type: "text", text: "fixture tool error" }],
         });
+      // The process dies mid-call, as a crashed server would: the call fails at the transport.
+      else if (request.params.arguments.text === "drop") process.exit(1);
       else if (request.params.arguments.text === "binary")
         result(request.id, { content: [{ type: "image", mimeType: "image/png", data: "AA==" }] });
       else

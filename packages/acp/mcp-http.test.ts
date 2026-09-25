@@ -49,7 +49,9 @@ for (const type of ["http", "sse"] as const) {
         () => null,
         (error) => error as Error,
       );
-      expect(error?.message).toBe("Failed to connect to MCP server remote");
+      expect(error?.message).toStartWith(
+        `Failed to connect to MCP server "remote": ${type === "http" ? "Streamable HTTP error: Error POSTing to endpoint: Unauthorized" : "SSE error: Non-200 status code (401)"}`,
+      );
       expect(error?.message).not.toContain("mcp-test-secret");
     } finally {
       await connection.close();
