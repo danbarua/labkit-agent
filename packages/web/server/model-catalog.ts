@@ -1,0 +1,249 @@
+import {
+  anthropicMessagesV3,
+  anthropicMessagesV4,
+  googleGenerateV3,
+  openaiChatV2,
+  openaiResponsesV3,
+  type CompletionProfile,
+} from "../../core/providers/index.ts";
+
+const SNAPSHOT = new URL("./models.dev.json", import.meta.url);
+
+type ReasoningOption = {
+  type?: string;
+  values?: string[];
+  min?: number;
+  max?: number;
+};
+
+type CatalogModelRecord = {
+  id: string;
+  name: string;
+  release_date?: string;
+  reasoning?: boolean;
+  reasoning_options?: ReasoningOption[];
+  tool_call?: boolean;
+  modalities?: { output?: string[] };
+  limit?: { output?: number };
+};
+
+type CatalogProviderRecord = {
+  id: string;
+  name: string;
+  env?: string[];
+  models: CatalogModelRecord[] | Record<string, CatalogModelRecord>;
+};
+
+export type WiredModel = {
+  id: string;
+  label: string;
+  wireModel: string;
+  profile: CompletionProfile;
+  thinking: string[];
+  maxOutputTokens?: number;
+  thinkingBudgetMin?: number;
+  omitThinkingWhenOff: boolean;
+};
+
+export type WiredProvider = {
+  id: string;
+  label: string;
+  defaultModel: string;
+  baseUrl: string;
+  headers: Record<string, string>;
+  models: WiredModel[];
+};
+
+const EFFORT = new Set(["low", "medium", "high"]);
+
+const TRANSPORTS: Record<
+  string,
+  { baseUrl: string; header: (key: string) => Record<string, string> }
+> = {
+  anthropic: {
+    baseUrl: "https://api.anthropic.com/v1",
+    header: (key) => ({ "x-api-key": key }),
+  },
+  openai: {
+    baseUrl: "https://api.openai.com/v1",
+    header: (key) => ({ Authorization: `Bearer ${key}` }),
+  },
+  google: {
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    header: (key) => ({ "x-goog-api-key": key }),
+  },
+  xai: {
+    baseUrl: "https://api.x.ai/v1",
+    header: (key) => ({ Authorization: `Bearer ${key}` }),
+  },
+  localhost: {
+    baseUrl: process.env.LABKIT_LOCAL_BASE_URL || "http://localhost:8000/v1",
+    header: () => ({}),
+  },
+};
+
+const SKIP =
+  /realtime|computer-use|transcribe|live-translate|deep-research|image|voice|tts|stt|omni-flash/i;
+
+let cached: Promise<WiredProvider[]> | undefined;
+
+function modelList(models: CatalogProviderRecord["models"]) {
+  return Array.isArray(models) ? models : Object.values(models);
+}
+
+function chatModels(models: CatalogProviderRecord["models"]) {
+  return modelList(models)
+    .filter((model) => {
+      if (model.tool_call === false) return false;
+      if (model.modalities?.output && !model.modalities.output.includes("text")) return false;
+      if (model.limit?.output === 0) return false;
+      return !SKIP.test(model.id);
+    })
+    .sort(
+      (left, right) =>
+        String(right.release_date ?? "").localeCompare(String(left.release_date ?? "")) ||
+        left.name.localeCompare(right.name),
+    );
+}
+
+function option(model: CatalogModelRecord, type: string) {
+  return model.reasoning_options?.find((entry) => entry.type === type);
+}
+
+function adaptive(model: CatalogModelRecord) {
+  const effort = option(model, "effort");
+  return (
+    Boolean(option(model, "toggle")) ||
+    Boolean(effort?.values?.some((value) => value === "max" || value === "xhigh"))
+  );
+}
+
+function profileFor(providerId: string, model: CatalogModelRecord) {
+  if (providerId === "anthropic") {
+    if (adaptive(model)) return anthropicMessagesV4;
+    return anthropicMessagesV3;
+  }
+  if (providerId === "google") return googleGenerateV3;
+  if (providerId === "xai" || providerId === "localhost") return openaiChatV2;
+  return openaiResponsesV3;
+}
+
+function thinkingFor(providerId: string, model: CatalogModelRecord, profile: CompletionProfile) {
+  const values: string[] = [];
+  const effort = option(model, "effort");
+  const budget = option(model, "budget_tokens");
+  const mode = profile.capabilities.thinking.mode;
+  const alwaysOn = providerId === "anthropic" && /fable|mythos/i.test(model.id);
+  if (!alwaysOn) values.push("off");
+  if (providerId === "anthropic" && mode === "adaptive") values.push("adaptive");
+  if (mode === "budget" && budget) values.push("budget");
+  if (mode === "effort") {
+    const allowed = effort?.values?.filter((value) => EFFORT.has(value)) ?? [];
+    if (allowed.length) values.push(...allowed);
+    else if (model.reasoning && !effort && !budget && providerId === "xai")
+      values.push("low", "medium", "high");
+  }
+  return values.length ? values : ["off"];
+}
+
+function wire(provider: CatalogProviderRecord, key: string): WiredProvider | undefined {
+  const transport = TRANSPORTS[provider.id];
+  if (!transport) return undefined;
+  const models = chatModels(provider.models).map((model) => {
+    const profile = profileFor(provider.id, model);
+    const budget = option(model, "budget_tokens");
+    return {
+      id: model.id,
+      label: model.name,
+      wireModel: model.id,
+      profile,
+      thinking: thinkingFor(provider.id, model, profile),
+      ...(model.limit?.output ? { maxOutputTokens: model.limit.output } : {}),
+      ...(budget?.min ? { thinkingBudgetMin: budget.min } : {}),
+      omitThinkingWhenOff: profile.capabilities.thinking.mode === "effort",
+    };
+  });
+  const preferred: Record<string, string> = {
+    anthropic: "claude-sonnet-4-6",
+    openai: "gpt-5.4",
+    google: "gemini-2.5-flash",
+    xai: "grok-4.5",
+  };
+  const first = models.find((entry) => entry.id === preferred[provider.id]) ?? models[0];
+  if (!first) return undefined;
+  return {
+    id: provider.id,
+    label: provider.name,
+    defaultModel: first.id,
+    baseUrl: transport.baseUrl,
+    headers: transport.header(key),
+    models,
+  };
+}
+
+async function readSnapshot() {
+  return (await Bun.file(SNAPSHOT).json()) as { providers: Record<string, CatalogProviderRecord> };
+}
+
+async function loadProviders() {
+  return (await readSnapshot()).providers;
+}
+
+const LOCAL_BASE_URL = TRANSPORTS.localhost!.baseUrl;
+
+type LocalList = {
+  data?: Array<{ id?: string }>;
+  models?: Array<{
+    slug?: string;
+    display_name?: string;
+    supported_in_api?: boolean;
+    supported_reasoning_levels?: Array<{ effort?: string }>;
+  }>;
+};
+
+async function localProvider(): Promise<WiredProvider | undefined> {
+  try {
+    const response = await fetch(`${LOCAL_BASE_URL}/models`, { signal: AbortSignal.timeout(2000) });
+    if (!response.ok) return undefined;
+    const body = (await response.json()) as LocalList;
+    const listed = (body.models ?? [])
+      .filter((model) => model.supported_in_api !== false && model.slug)
+      .map((model) => ({
+        id: model.slug!,
+        name: model.display_name || model.slug!,
+        reasoning: true,
+        reasoning_options: [
+          {
+            type: "effort",
+            values: (model.supported_reasoning_levels ?? [])
+              .map((level) => level.effort)
+              .filter((effort): effort is string => Boolean(effort)),
+          },
+        ],
+      }));
+    const models =
+      listed.length > 0
+        ? listed
+        : (body.data ?? []).flatMap((model) => (model.id ? [{ id: model.id, name: model.id }] : []));
+    if (!models.length) return undefined;
+    return wire({ id: "localhost", name: "Localhost", models }, "");
+  } catch {
+    return undefined;
+  }
+}
+
+export async function wiredProviders() {
+  const keyed = await (cached ??= loadProviders().then((providers) => {
+    const bound: WiredProvider[] = [];
+    for (const id of ["anthropic", "openai", "google", "xai"]) {
+      const provider = providers[id];
+      const key = provider?.env?.map((name) => process.env[name]).find((value) => value);
+      if (!provider || !key) continue;
+      const wired = wire(provider, key);
+      if (wired) bound.push(wired);
+    }
+    return bound;
+  }));
+  const local = await localProvider();
+  return local ? [...keyed, local] : keyed;
+}

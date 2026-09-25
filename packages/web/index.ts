@@ -29,7 +29,7 @@ async function readJson(req: Request) {
 const server = serve({
   port: Number(process.env.PORT) || 3000,
   routes: {
-    "/api/host": () => json(hostInfo()),
+    "/api/host": async () => json(await hostInfo()),
 
     "/api/session": {
       async POST(req) {

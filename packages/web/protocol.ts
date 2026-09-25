@@ -61,6 +61,8 @@ export type CatalogModelOption = {
   label: string;
   stream: boolean;
   thinking: string[];
+  maxOutputTokens?: number;
+  thinkingBudgetMin?: number;
 };
 
 export type ProviderOption = {
