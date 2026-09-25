@@ -25,6 +25,7 @@ import {
   patchPolicy,
   PolicyPatchSchema,
   projectPolicy,
+  resolverPolicyFields,
   validatePolicy,
   type Policy,
   type PolicyResolvers,
@@ -81,6 +82,16 @@ export type JournalState = Readonly<{
   records: readonly JournalRecord[];
 }>;
 
+/**
+ * How records fold into state. `stage` admits new work and enforces every commit-time rule against
+ * the live resolvers. `load` rebuilds state from committed records: each stored record is taken as
+ * written, and only what the fold needs to apply it is checked.
+ */
+type Fold = Readonly<{ mode: "stage"; resolvers: PolicyResolvers }> | Readonly<{ mode: "load" }>;
+
+const load: Fold = { mode: "load" };
+
+/** Staging a creation record: every commit-time rule applies to the seed. */
 export function seedConversation(
   raw: Seed,
   resolvers: PolicyResolvers = builtinResolvers,
@@ -105,11 +116,7 @@ export function seedConversation(
   if (seed.continuations) {
     const owners = new Set<string>();
     for (const entry of seed.continuations) {
-      if (
-        !resolvers.historical &&
-        resolvers.providerIds &&
-        !resolvers.providerIds.has(entry.provider)
-      )
+      if (resolvers.providerIds && !resolvers.providerIds.has(entry.provider))
         throw new Error("Missing continuation provider binding");
       const key = JSON.stringify(entry.owner);
       if (
@@ -126,6 +133,26 @@ export function seedConversation(
       owners.add(key);
     }
   }
+  const state = foldSeed(seed);
+  // Validate inherited history as well as the replacement context.
+  projectConversationPrompt({
+    context: seed.context,
+    log: seed.log,
+    agent: { model: "validation", tools: [] },
+    turn: {
+      id: state.conversation.turnId,
+      agent: seed.agent,
+      generation: 0,
+      steps: seed.allowance,
+      messages: [],
+      view: { kind: "history" },
+    },
+  });
+  return state;
+}
+
+/** Loading a creation record: the committed seed is the initial state, as written. */
+function foldSeed(seed: Seed): JournalState {
   const initial = initialConversation(seed.agent, seed.allowance, seed.sessionId);
   const id = ActorIdSchema.parse(`${seed.sessionId}/turn/${seed.sequence}`);
   const conversation: ConversationState = {
@@ -137,20 +164,6 @@ export function seedConversation(
     turnId: id,
     turn: { ...initial.turn, status: "idle", id, agent: seed.agent, steps: seed.allowance },
   };
-  // Validate inherited history as well as the replacement context.
-  projectConversationPrompt({
-    context: seed.context,
-    log: seed.log,
-    agent: { model: "validation", tools: [] },
-    turn: {
-      id,
-      agent: seed.agent,
-      generation: 0,
-      steps: seed.allowance,
-      messages: [],
-      view: { kind: "history" },
-    },
-  });
   return freeze({
     conversation,
     ...(seed.continuations?.length ? { continuations: seed.continuations } : {}),
@@ -248,43 +261,54 @@ export function wireEvent(event: ConversationEvent): WireEvent {
   return WireEventSchema.parse(event);
 }
 
-export function accepts(state: JournalState, input: SessionInput): boolean {
+/**
+ * Why a record cannot apply: it names a turn, operation, batch or tool call that does not exist in
+ * the folded state. Load checks only this; staging (`accepts`) adds the commit-time rules.
+ */
+function missingTarget(state: JournalState, input: SessionInput): string | undefined {
   const c = state.conversation;
   if (input.kind === "event" && input.event.type === "child") {
-    const e = input.event;
-    if (e.turnId !== c.turnId || c.turn.status === "idle") return false;
-    return e.event.child.id === c.turn.child.id && e.event.child.kind === c.turn.child.kind;
+    const { turnId, event } = input.event;
+    if (turnId !== c.turnId) return `Event for turn ${turnId}; the current turn is ${c.turnId}`;
+    if (c.turn.status === "idle")
+      return `Event for ${event.child.kind} ${event.child.id}; turn ${turnId} is idle`;
+    if (event.child.id !== c.turn.child.id || event.child.kind !== c.turn.child.kind)
+      return `Event for ${event.child.kind} ${event.child.id}; the active operation is ${c.turn.child.kind} ${c.turn.child.id}`;
+    return undefined;
   }
-  if (input.kind === "tool") {
-    if (
-      input.turnId !== c.turnId ||
-      c.turn.status !== "executing_tools" ||
-      input.batchId !== c.turn.child.id
-    )
-      return false;
-    const calls = c.turn.turn.messages.at(-1);
-    return (
-      calls?.role === "assistant" &&
-      Boolean(calls.calls?.some((call) => call.id === input.callId)) &&
-      !state.partial.some(
-        (entry) =>
-          entry.callId === input.callId ||
-          effectiveToolResult(entry.result, state.policy).kind !== "succeeded",
-      )
-    );
-  }
-  return true;
+  if (input.kind !== "tool") return undefined;
+  if (input.turnId !== c.turnId)
+    return `Tool result for turn ${input.turnId}; the current turn is ${c.turnId}`;
+  if (c.turn.status !== "executing_tools" && c.turn.status !== "cancelling_tools")
+    return `Tool result for batch ${input.batchId}; turn ${c.turnId} has no tool batch`;
+  if (input.batchId !== c.turn.child.id)
+    return `Tool result for batch ${input.batchId}; the active batch is ${c.turn.child.id}`;
+  const intents = c.turn.turn.messages.at(-1);
+  if (intents?.role !== "assistant" || !intents.calls?.some((call) => call.id === input.callId))
+    return `Tool result for call ${input.callId}; batch ${input.batchId} has no such call`;
+  return undefined;
 }
 
-function domainEvent(
-  state: JournalState,
-  event: WireEvent,
-  resolvers: PolicyResolvers,
-): ConversationEvent {
+export function accepts(state: JournalState, input: SessionInput): boolean {
+  if (missingTarget(state, input)) return false;
+  if (input.kind !== "tool") return true;
+  // New results arrive only while the batch runs, once per call, and none after a failure.
+  return (
+    state.conversation.turn.status === "executing_tools" &&
+    !state.partial.some(
+      (entry) =>
+        entry.callId === input.callId ||
+        effectiveToolResult(entry.result, state.policy).kind !== "succeeded",
+    )
+  );
+}
+
+function domainEvent(state: JournalState, event: WireEvent, fold: Fold): ConversationEvent {
   if (event.type !== "child") return event;
   const child = event.event;
   if (child.type === "prepared") {
-    if (child.result.kind === "succeeded") {
+    // Staging only: the captured prompt must be today's projection of the folded session.
+    if (child.result.kind === "succeeded" && fold.mode === "stage") {
       const c = state.conversation;
       if (c.turn.status !== "preparing_model") throw new Error("Prompt outside preparation phase");
       const activeAgent = c.turn.turn.agent;
@@ -319,7 +343,12 @@ function domainEvent(
       )
         throw new Error("Prompt provider selection mismatch");
       const projectionInput = { context: c.context, log: c.log, turn: c.turn.turn, agent };
-      const expected = projectPolicy(projectionInput, state.systemInputs, state.policy, resolvers);
+      const expected = projectPolicy(
+        projectionInput,
+        state.systemInputs,
+        state.policy,
+        fold.resolvers,
+      );
       const expectedContinuations = matchingContinuations(
         expected,
         state.continuations ?? [],
@@ -385,7 +414,7 @@ function domainEvent(
       },
     };
   }
-  if (child.type === "model_settled") {
+  if (fold.mode === "stage" && child.type === "model_settled") {
     const required =
       state.policy?.permissions === "ask" &&
       child.result.kind === "succeeded" &&
@@ -393,7 +422,11 @@ function domainEvent(
     if (!!child.permissionRequired !== required)
       throw new Error("Permission phase differs from captured policy");
   }
-  if (child.type === "model_settled" && child.result.kind === "succeeded") {
+  if (
+    fold.mode === "stage" &&
+    child.type === "model_settled" &&
+    child.result.kind === "succeeded"
+  ) {
     const result = child.result.value;
     const c = state.conversation;
     const activeAgent = c.turn.status === "idle" ? c.turn.agent : c.turn.turn.agent;
@@ -412,8 +445,9 @@ function domainEvent(
       throw new Error("Unpermitted tool");
   }
   if (child.type !== "batch_settled") return { ...event, event: child };
-  const results = partialResults(state);
-  if (JSON.stringify(results) !== JSON.stringify(child.outcome.results))
+  // Load takes the committed outcome as written; staging requires it to match the tool records.
+  const results = fold.mode === "stage" ? partialResults(state) : child.outcome.results;
+  if (fold.mode === "stage" && JSON.stringify(results) !== JSON.stringify(child.outcome.results))
     throw new Error("Batch results differ from committed individual results");
   if (child.outcome.kind !== "succeeded")
     return { ...event, event: { ...child, outcome: child.outcome } };
@@ -499,88 +533,120 @@ function withUserParts(
 function reduce(
   state: JournalState,
   input: Exclude<JournalBody, { kind: "created" | "terminal" }>,
-  resolvers: PolicyResolvers,
+  fold: Fold,
 ): { state: JournalState; commands: readonly ConversationCommand[] } {
-  if (!accepts(state, input)) throw new Error("Stale or uncorrelated journal input");
+  if (fold.mode === "stage") {
+    if (!accepts(state, input)) throw new Error("Stale or uncorrelated journal input");
+  } else {
+    const missing = missingTarget(state, input);
+    if (missing) throw new Error(missing);
+  }
   if (input.kind === "policy") {
     const c = state.conversation;
-    if (c.turn.status !== "idle" || state.pendingInputs?.length)
-      throw new Error("Policy changes require an idle boundary");
-    const policy = validatePolicy(input.policy, state.configuration, resolvers);
-    if (
-      !state.policy ||
-      JSON.stringify(policy) !==
-        JSON.stringify(patchPolicy(state.policy, input.patch, state.configuration, resolvers))
-    )
-      throw new Error("Invalid policy patch/version");
+    // Load: the stored policy is the policy, whatever today's patch rules would derive.
+    let policy = input.policy;
+    if (fold.mode === "stage") {
+      if (c.turn.status !== "idle" || state.pendingInputs?.length)
+        throw new Error("Policy changes require an idle boundary");
+      policy = validatePolicy(input.policy, state.configuration, fold.resolvers);
+      if (
+        !state.policy ||
+        JSON.stringify(policy) !==
+          JSON.stringify(
+            patchPolicy(state.policy, input.patch, state.configuration, fold.resolvers),
+          )
+      )
+        throw new Error("Invalid policy patch/version");
+    }
     return {
       state: {
         ...state,
         policy,
         pendingInputs: state.pendingInputs ?? [],
-        conversation: { ...c, allowance: policy.steps, turn: { ...c.turn, steps: policy.steps } },
+        // A running turn keeps the allowance it started with.
+        conversation: {
+          ...c,
+          allowance: policy.steps,
+          turn: c.turn.status === "idle" ? { ...c.turn, steps: policy.steps } : c.turn,
+        },
       },
       commands: [],
     };
   }
   if (input.kind === "configuration") {
     const c = state.conversation;
-    if (c.turn.status !== "idle" || state.pendingInputs?.length)
+    if (fold.mode === "stage" && (c.turn.status !== "idle" || state.pendingInputs?.length))
       throw new Error("Configuration changes require an idle boundary");
-    const registered = new Set(input.configuration.agents.map(([id]) => id));
-    // An agent switch is recorded only when the idle conversation's agent was unregistered.
-    if (input.agent !== undefined && registered.has(c.turn.agent))
-      throw new Error("Configuration agent switch requires an unregistered current agent");
-    const agent = input.agent ?? c.turn.agent;
-    if (!registered.has(agent)) throw new Error(`Configuration omits the current agent: ${agent}`);
-    let policy = state.policy;
-    if (input.policy) {
-      // Reconciliation may rewrite only tool permissions and binding-dependent selection fields.
-      const previous = state.policy;
-      const keys = new Set([...Object.keys(previous ?? {}), ...Object.keys(input.policy)]);
-      for (const key of ["tools", "version", ...bindingPolicyFields]) keys.delete(key);
-      if (
-        !previous ||
-        input.policy.version !== previous.version + 1 ||
-        [...keys].some(
-          (key) =>
-            JSON.stringify(previous[key as keyof Policy]) !==
-            JSON.stringify(input.policy![key as keyof Policy]),
+    // The switch replaces the idle conversation's agent; a running turn has none to replace.
+    if (input.agent !== undefined && c.turn.status !== "idle")
+      throw new Error("Configuration agent switch during a running turn");
+    const current = c.turn.status === "idle" ? c.turn.agent : c.turn.turn.agent;
+    const agent = input.agent ?? current;
+    // Load: the stored configuration, policy and agent replace the folded ones as written.
+    let policy = input.policy ?? state.policy;
+    if (fold.mode === "stage") {
+      const registered = new Set(input.configuration.agents.map(([id]) => id));
+      // An agent switch is recorded only when the idle conversation's agent was unregistered.
+      if (input.agent !== undefined && registered.has(current))
+        throw new Error("Configuration agent switch requires an unregistered current agent");
+      if (!registered.has(agent))
+        throw new Error(`Configuration omits the current agent: ${agent}`);
+      if (input.policy) {
+        // Reconciliation may rewrite only tool permissions, resolver IDs and binding selections.
+        const previous = state.policy;
+        const keys = new Set([...Object.keys(previous ?? {}), ...Object.keys(input.policy)]);
+        for (const key of ["tools", "version", ...resolverPolicyFields, ...bindingPolicyFields])
+          keys.delete(key);
+        if (
+          !previous ||
+          input.policy.version !== previous.version + 1 ||
+          [...keys].some(
+            (key) =>
+              JSON.stringify(previous[key as keyof Policy]) !==
+              JSON.stringify(input.policy![key as keyof Policy]),
+          )
         )
-      )
-        throw new Error("Configuration policy may only reconcile tools and binding selections");
-      policy = validatePolicy(input.policy, input.configuration, resolvers);
-    } else if (state.policy) validatePolicy(state.policy, input.configuration, resolvers);
+          throw new Error(
+            "Configuration policy may only reconcile tools, resolvers and binding selections",
+          );
+        policy = validatePolicy(input.policy, input.configuration, fold.resolvers);
+      } else if (state.policy) validatePolicy(state.policy, input.configuration, fold.resolvers);
+    }
     return {
       state: {
         ...state,
         configuration: input.configuration,
         policy,
         pendingInputs: state.pendingInputs ?? [],
-        conversation: agent === c.turn.agent ? c : { ...c, turn: { ...c.turn, agent } },
+        conversation:
+          c.turn.status === "idle" && agent !== c.turn.agent
+            ? { ...c, turn: { ...c.turn, agent } }
+            : c,
       },
       commands: [],
     };
   }
   if (input.kind === "queued") {
     const c = state.conversation;
-    if (
-      !state.policy ||
-      input.policyVersion !== state.policy.version ||
-      c.turn.status === "idle" ||
-      state.records.some(
-        (record) => record.body.kind === "queued" && record.body.inputId === input.inputId,
+    if (fold.mode === "stage") {
+      if (
+        !state.policy ||
+        input.policyVersion !== state.policy.version ||
+        c.turn.status === "idle" ||
+        state.records.some(
+          (record) => record.body.kind === "queued" && record.body.inputId === input.inputId,
+        )
       )
-    )
-      throw new Error("Invalid queued input");
-    if (
-      state.policy.admission !== "queue-user" &&
-      !(
-        state.policy.admission === "abort-tools-on-user" &&
-        ["awaiting_permission", "executing_tools", "cancelling_tools"].includes(c.turn.status)
+        throw new Error("Invalid queued input");
+      if (
+        state.policy.admission !== "queue-user" &&
+        !(
+          state.policy.admission === "abort-tools-on-user" &&
+          ["awaiting_permission", "executing_tools", "cancelling_tools"].includes(c.turn.status)
+        )
       )
-    )
-      throw new Error("Policy does not queue this input");
+        throw new Error("Policy does not queue this input");
+    }
     return {
       state: {
         ...state,
@@ -608,14 +674,16 @@ function reduce(
     };
   }
   if (input.kind === "dequeued") {
-    const pending = state.pendingInputs?.[0];
     if (
-      state.conversation.turn.status !== "idle" ||
-      !pending ||
-      pending.inputId !== input.inputId ||
-      input.policyVersion !== state.policy?.version
+      fold.mode === "stage" &&
+      (state.conversation.turn.status !== "idle" ||
+        state.pendingInputs?.[0]?.inputId !== input.inputId ||
+        input.policyVersion !== state.policy?.version)
     )
       throw new Error("Invalid dequeue boundary");
+    // Load needs only the queued input whose text starts the turn.
+    const pending = state.pendingInputs?.find((entry) => entry.inputId === input.inputId);
+    if (!pending) throw new Error(`Dequeued input ${input.inputId} is not queued`);
     const decision = withUserParts(
       decideConversation(state.conversation, { type: "user", text: pending.text }),
       pending.text,
@@ -625,15 +693,17 @@ function reduce(
       state: {
         ...state,
         conversation: decision.state,
-        pendingInputs: state.pendingInputs!.slice(1),
+        pendingInputs: state.pendingInputs!.filter((entry) => entry !== pending),
       },
       commands: decision.commands,
     };
   }
   if (input.kind === "system") {
-    if (state.conversation.turn.status !== "idle")
-      throw new Error("System inputs require idle boundary");
-    if (input.version !== state.systemVersion + 1) throw new Error("Invalid system version");
+    if (fold.mode === "stage") {
+      if (state.conversation.turn.status !== "idle")
+        throw new Error("System inputs require idle boundary");
+      if (input.version !== state.systemVersion + 1) throw new Error("Invalid system version");
+    }
     return {
       state: { ...state, systemInputs: input.inputs, systemVersion: input.version },
       commands: [],
@@ -645,7 +715,8 @@ function reduce(
     const c = state.conversation;
     if (input.turnId !== c.turnId) throw new Error("Recovery turn mismatch");
     if (c.turn.status === "idle") {
-      if (!state.pendingInputs?.length) throw new Error("Recovery requires interrupted work");
+      if (fold.mode === "stage" && !state.pendingInputs?.length)
+        throw new Error("Recovery requires interrupted work");
       return { state, commands: [] };
     }
     const messages = MessagesSchema.parse([
@@ -681,41 +752,48 @@ function reduce(
     );
     return { state: { ...state, conversation: recovered.state, partial: [] }, commands: [] };
   }
-  if (input.systemVersion !== state.systemVersion) throw new Error("Turn system version mismatch");
-  if (input.policyVersion !== state.policy?.version)
-    throw new Error("Turn policy version mismatch");
-  if (
-    input.event.type === "user" &&
-    state.policy &&
-    state.conversation.turn.status !== "idle" &&
-    (!state.policy.bargeIn || state.policy.admission === "queue-user")
-  )
-    throw new Error("Policy rejects barge-in");
+  if (fold.mode === "stage") {
+    if (input.systemVersion !== state.systemVersion)
+      throw new Error("Turn system version mismatch");
+    if (input.policyVersion !== state.policy?.version)
+      throw new Error("Turn policy version mismatch");
+    if (
+      input.event.type === "user" &&
+      state.policy &&
+      state.conversation.turn.status !== "idle" &&
+      (!state.policy.bargeIn || state.policy.admission === "queue-user")
+    )
+      throw new Error("Policy rejects barge-in");
+  }
   const settled =
     input.event.type === "child" && input.event.event.type === "model_settled"
       ? input.event.event
       : undefined;
-  if (settled?.usage && settled.result.kind !== "succeeded")
+  if (fold.mode === "stage" && settled?.usage && settled.result.kind !== "succeeded")
     throw new Error("Completion usage requires an admitted completion");
   const envelope = settled?.continuation;
   if (envelope) {
     ContinuationSchema.parse(envelope);
     const active = state.conversation.turn;
     if (
-      settled?.result.kind !== "succeeded" ||
-      active.status !== "awaiting_model" ||
-      envelope.owner.turnId !== state.conversation.turnId ||
-      envelope.owner.generation !== active.turn.generation ||
-      envelope.provider !== state.policy?.provider ||
-      state.continuations?.some(
-        (entry) =>
-          entry.owner.turnId === envelope.owner.turnId &&
-          entry.owner.generation === envelope.owner.generation,
-      )
+      fold.mode === "stage" &&
+      (settled?.result.kind !== "succeeded" ||
+        active.status !== "awaiting_model" ||
+        envelope.owner.turnId !== state.conversation.turnId ||
+        envelope.owner.generation !== active.turn.generation ||
+        envelope.provider !== state.policy?.provider ||
+        state.continuations?.some(
+          (entry) =>
+            entry.owner.turnId === envelope.owner.turnId &&
+            entry.owner.generation === envelope.owner.generation,
+        ))
     )
       throw new Error("Continuation owner/provider mismatch");
+    // Load keeps the stored owner, but the envelope needs the assistant message its completion made.
+    if (settled?.result.kind !== "succeeded")
+      throw new Error("Continuation without an admitted completion");
   }
-  let decision = decideConversation(state.conversation, domainEvent(state, input.event, resolvers));
+  let decision = decideConversation(state.conversation, domainEvent(state, input.event, fold));
   if (input.event.type === "user")
     decision = withUserParts(decision, input.event.text, input.event.attachments);
   if (envelope)
@@ -771,12 +849,13 @@ export function stage(
       throw new Error("Creation requires an absent stream");
     return stageCreation(input.seed, appendId, resolvers);
   }
+  const fold: Fold = { mode: "stage", resolvers };
   let next = state;
   const bodies: JournalBody[] = [];
   const commands: ConversationCommand[] = [];
   const apply = (body: Exclude<JournalBody, { kind: "created" | "terminal" }>) => {
     const before = next;
-    const decision = reduce(next, body, resolvers);
+    const decision = reduce(next, body, fold);
     next = decision.state;
     bodies.push(body);
     commands.push(...decision.commands);
@@ -875,69 +954,206 @@ export function stageCreation(
   return packageRecords(state, state, [{ kind: "created", seed }], appendId);
 }
 
+/** Integrity rules a committed journal must satisfy to load. Nothing else is checked on load. */
+export type JournalIntegrityRule =
+  /** Each append ID is committed once. */
+  | "append_unique"
+  /** A batch is non-empty and continues the journal at its expected revision. */
+  | "batch_continuity"
+  /** A record decodes as a current-format journal record. */
+  | "record_decode"
+  /** Every record belongs to the batch's and the creation record's session. */
+  | "session_identity"
+  /** A record carries its batch's append ID. */
+  | "append_identity"
+  /** Record revisions increase by one from 1. */
+  | "revision_sequence"
+  /** An entry ID is `<appendId>/<index in batch>`; unique append IDs make entry IDs unique. */
+  | "entry_format"
+  /** The first record, and only the first, creates the session. */
+  | "creation_first"
+  /** A record that ends a turn is followed by that turn's terminal record. */
+  | "terminal_required"
+  /** A terminal record follows a record that ended its turn. */
+  | "terminal_unexpected"
+  /** A turn's terminal record is committed in the same batch as the record that ended it. */
+  | "terminal_same_batch"
+  /** The record names a turn, operation, batch, call or queued input the folded state has. */
+  | "record_applicable";
+
+/** Position of an offending record: its own fields, or where it was expected when undecodable. */
+export type JournalLocation = Readonly<{ revision?: number; appendId?: string; entryId?: string }>;
+
+/** A committed journal that cannot load, naming the violated rule and the offending record. */
+export class JournalIntegrityError extends Error {
+  readonly rule: JournalIntegrityRule;
+  readonly revision?: number;
+  readonly appendId?: string;
+  readonly entryId?: string;
+
+  constructor(
+    rule: JournalIntegrityRule,
+    detail: string,
+    at: JournalLocation,
+    options?: ErrorOptions,
+  ) {
+    super(`Journal integrity (${rule}) at ${at.entryId ?? "journal"}: ${detail}`, options);
+    this.name = "JournalIntegrityError";
+    this.rule = rule;
+    this.revision = at.revision;
+    this.appendId = at.appendId;
+    this.entryId = at.entryId;
+  }
+}
+
 /**
- * Committed records are validated structurally, not against today's bindings: a record written
- * with a provider or model that is no longer bound still replays. The live runtime reconciles
- * the current policy before new work instead.
+ * Load a journal: fold committed batches into state, checking only journal integrity
+ * (`JournalIntegrityRule`). Each stored record is taken as written. Commit-time rules (prompt
+ * projection, policy patches, permissions, admission, bindings) are not re-run, so a journal the
+ * runtime committed keeps loading after code, configuration or bindings change.
  */
-export function replay(
-  batches: readonly CommittedBatch[],
-  live: PolicyResolvers = builtinResolvers,
-): JournalState {
-  const resolvers: PolicyResolvers = { ...live, historical: true };
+export function replay(batches: readonly CommittedBatch[]): JournalState {
   let state: JournalState | undefined;
-  let expectedTerminal: { turnId: string; record: TurnRecord } | undefined;
-  const entries = new Set<string>();
+  let ended: { turnId: string; at: JournalLocation } | undefined;
   const appends = new Set<string>();
+  const fold = (at: JournalLocation, apply: () => JournalState) => {
+    try {
+      return apply();
+    } catch (error) {
+      throw new JournalIntegrityError(
+        "record_applicable",
+        error instanceof Error ? error.message : String(error),
+        at,
+        { cause: error },
+      );
+    }
+  };
   for (const batch of batches) {
+    const revision = state?.revision ?? 0;
+    // A batch-level failure names the batch's first record as the batch itself describes it.
+    const first = {
+      revision: batch.expectedRevision + 1,
+      appendId: batch.appendId,
+      entryId: `${batch.appendId}/0`,
+    };
+    if (appends.has(batch.appendId))
+      throw new JournalIntegrityError(
+        "append_unique",
+        `Append ${batch.appendId} is committed twice`,
+        first,
+      );
     if (
-      appends.has(batch.appendId) ||
-      batch.expectedRevision !== (state?.revision ?? 0) ||
-      batch.revision !== batch.expectedRevision + batch.records.length ||
-      !batch.records.length
+      !batch.records.length ||
+      batch.expectedRevision !== revision ||
+      batch.revision !== batch.expectedRevision + batch.records.length
     )
-      throw new Error("Invalid committed batch continuity");
+      throw new JournalIntegrityError(
+        "batch_continuity",
+        `Batch of ${batch.records.length} records from revision ${batch.expectedRevision} to ${batch.revision}; the journal is at revision ${revision}`,
+        first,
+      );
     appends.add(batch.appendId);
     for (const [index, serialized] of batch.records.entries()) {
-      const record = decodeRecord(serialized);
-      if (
-        record.sessionId !== batch.sessionId ||
-        record.appendId !== batch.appendId ||
-        record.revision !== (state?.revision ?? 0) + 1 ||
-        entries.has(record.entryId) ||
-        record.entryId !== `${batch.appendId}/${index}`
-      )
-        throw new Error("Invalid journal identity or revision");
-      entries.add(record.entryId);
+      const expected = {
+        revision: (state?.revision ?? 0) + 1,
+        appendId: batch.appendId,
+        entryId: `${batch.appendId}/${index}`,
+      };
+      let record: JournalRecord;
+      try {
+        record = decodeRecord(serialized);
+      } catch (error) {
+        throw new JournalIntegrityError(
+          "record_decode",
+          "Record does not decode as a version 1 journal record",
+          expected,
+          { cause: error },
+        );
+      }
+      const at = { revision: record.revision, appendId: record.appendId, entryId: record.entryId };
+      const sessionId = state?.conversation.sessionId ?? batch.sessionId;
+      if (record.sessionId !== batch.sessionId || record.sessionId !== sessionId)
+        throw new JournalIntegrityError(
+          "session_identity",
+          `Record of session ${record.sessionId} in the journal of session ${sessionId}`,
+          at,
+        );
+      if (record.appendId !== batch.appendId)
+        throw new JournalIntegrityError(
+          "append_identity",
+          `Record of append ${record.appendId} in batch ${batch.appendId}`,
+          at,
+        );
+      if (record.revision !== expected.revision)
+        throw new JournalIntegrityError(
+          "revision_sequence",
+          `Record revision ${record.revision} does not follow revision ${expected.revision - 1}`,
+          at,
+        );
+      if (record.entryId !== expected.entryId)
+        throw new JournalIntegrityError(
+          "entry_format",
+          `Entry ID ${record.entryId} should be ${expected.entryId}`,
+          at,
+        );
       const body = record.body;
       if (!state) {
-        if (body.kind !== "created" || body.seed.sessionId !== record.sessionId)
-          throw new Error("Missing creation record");
-        state = seedConversation(body.seed, resolvers);
+        if (body.kind !== "created")
+          throw new JournalIntegrityError(
+            "creation_first",
+            `The first record is ${body.kind}, not created`,
+            at,
+          );
+        if (body.seed.sessionId !== record.sessionId)
+          throw new JournalIntegrityError(
+            "session_identity",
+            `Creation record seeds session ${body.seed.sessionId} in the journal of session ${record.sessionId}`,
+            at,
+          );
+        const seed = body.seed;
+        state = fold(at, () => foldSeed(seed));
+      } else if (body.kind === "created") {
+        throw new JournalIntegrityError("creation_first", "A second creation record", at);
+      } else if (ended) {
+        if (body.kind !== "terminal" || body.turnId !== ended.turnId)
+          throw new JournalIntegrityError(
+            "terminal_required",
+            `Turn ${ended.turnId} ended at ${ended.at.entryId}, but the next record is ${body.kind === "terminal" ? `the terminal record of turn ${body.turnId}` : body.kind}`,
+            at,
+          );
+        // The stored terminal record is the turn's log entry, whatever the fold derived.
+        const c = state.conversation;
+        state = {
+          ...state,
+          conversation: {
+            ...c,
+            log: [...c.log.slice(0, -1), body.record],
+            turn: c.turn.status === "idle" ? { ...c.turn, agent: body.record.agent } : c.turn,
+          },
+        };
+        ended = undefined;
+      } else if (body.kind === "terminal") {
+        throw new JournalIntegrityError(
+          "terminal_unexpected",
+          `Terminal record of turn ${body.turnId}, but no turn ended`,
+          at,
+        );
       } else {
-        if (record.sessionId !== state.conversation.sessionId || body.kind === "created")
-          throw new Error("Invalid session identity");
-        if (expectedTerminal) {
-          if (
-            body.kind !== "terminal" ||
-            body.turnId !== expectedTerminal.turnId ||
-            JSON.stringify(body.record) !== JSON.stringify(expectedTerminal.record)
-          )
-            throw new Error("Missing or mismatched terminal record");
-          expectedTerminal = undefined;
-        } else {
-          if (body.kind === "terminal") throw new Error("Unexpected terminal record");
-          const before = state.conversation;
-          state = reduce(state, body, resolvers).state;
-          if (state.conversation.sequence !== before.sequence)
-            expectedTerminal = { turnId: before.turnId, record: state.conversation.log.at(-1)! };
-        }
+        const before = state;
+        state = fold(at, () => reduce(before, body, load).state);
+        if (state.conversation.sequence !== before.conversation.sequence)
+          ended = { turnId: before.conversation.turnId, at };
       }
       state = { ...state, revision: record.revision, records: [...state.records, record] };
     }
-    if (expectedTerminal) throw new Error("Terminal must share atomic transition batch");
+    if (ended)
+      throw new JournalIntegrityError(
+        "terminal_same_batch",
+        `Turn ${ended.turnId} ended without a terminal record in append ${batch.appendId}`,
+        ended.at,
+      );
   }
-  if (!state) throw new Error("Empty journal");
+  if (!state) throw new JournalIntegrityError("creation_first", "The journal has no records", {});
   return freeze(state);
 }
 

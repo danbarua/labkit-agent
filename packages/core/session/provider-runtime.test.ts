@@ -9,8 +9,8 @@ import {
   openaiResponses,
   type CompletionProfile,
 } from "../providers/index.ts";
-import type { SessionPersistence } from "./persistence.ts";
-import { decodeRecord, journalJSONL, replay } from "./session-log.ts";
+import { AppendIdSchema, type SessionPersistence } from "./persistence.ts";
+import { decodeRecord, journalJSONL, replay, stage } from "./session-log.ts";
 import {
   createSession,
   defineTool,
@@ -179,7 +179,7 @@ test("rejected policy append never starts dependent work or changes durable sele
   expect(session.snapshot.durable.policy?.provider).toBe(openaiChat.id);
   await session.close();
 });
-test("provider configuration changes retain format and reject tampering", async () => {
+test("provider configuration changes retain format; staging rejects a tampered prompt model", async () => {
   const legacy = testOptions();
   const old = await createSession(legacy);
   await old.input("old history").settled;
@@ -208,20 +208,27 @@ test("provider configuration changes retain format and reject tampering", async 
     new AbortController().signal,
   );
   if (loaded.kind !== "loaded") throw new Error("missing journal");
-  const resolvers = { ...builtinResolvers, providerIds: new Set(opts.bindings.providers?.keys()) };
-  expect(replay(loaded.batches, resolvers)).toEqual(restored.snapshot.durable);
+  expect(replay(loaded.batches)).toEqual(restored.snapshot.durable);
   const record = restored.snapshot.durable.records.find((r) => r.version === 1)!;
   expect(() => decodeRecord(JSON.stringify({ ...record, version: 2 }))).toThrow();
-  const altered = loaded.batches.map((batch) => ({
-    ...batch,
-    records: batch.records.map((serialized) => {
-      const entry = JSON.parse(serialized);
-      if (entry.body.event?.event?.type === "prepared")
-        entry.body.event.event.result.value.model = "tampered";
-      return JSON.stringify(entry);
-    }),
-  }));
-  expect(() => replay(altered, resolvers)).toThrow("model mismatch");
+  const at = loaded.batches.findLastIndex((batch) =>
+    batch.records.some(
+      (serialized) => JSON.parse(serialized).body.event?.event?.type === "prepared",
+    ),
+  );
+  const captured = JSON.parse(loaded.batches[at]!.records[0]!);
+  captured.body.event.event.result.value.model = "tampered";
+  const tampered = decodeRecord(JSON.stringify(captured)).body;
+  if (tampered.kind !== "event") throw new Error("Expected the captured prompt");
+  const resolvers = { ...builtinResolvers, providerIds: new Set(opts.bindings.providers?.keys()) };
+  expect(() =>
+    stage(
+      replay(loaded.batches.slice(0, at)),
+      tampered,
+      AppendIdSchema.parse(loaded.batches[at]!.appendId),
+      resolvers,
+    ),
+  ).toThrow("model mismatch");
   await restored.close();
 });
 test("interrupted provider request recovers without invoking HTTP again", async () => {

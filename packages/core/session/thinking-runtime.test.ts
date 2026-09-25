@@ -3,8 +3,8 @@ import { z } from "zod";
 
 import { builtinResolvers } from "../policy/policy.ts";
 import { anthropicMessagesV2, googleGenerate } from "../providers/index.ts";
-import type { SessionPersistence } from "./persistence.ts";
-import { decodeRecord, replay } from "./session-log.ts";
+import { AppendIdSchema, type CommittedBatch, type SessionPersistence } from "./persistence.ts";
+import { decodeRecord, replay, stage } from "./session-log.ts";
 import {
   createSession,
   defineTool,
@@ -130,7 +130,7 @@ test("thinking survives two tool rounds, restore, fork; projection/switch omit a
   await Promise.all([session.close(), restored.close(), fork.close(), compact.close()]);
 });
 
-test("v4 gates and replay reject altered owners/payloads/prepared joins; envelope order is irrelevant", async () => {
+test("v4 staging rejects altered owners and prepared joins; load keeps stored envelopes", async () => {
   const { opts } = setup();
   const session = await createSession(opts);
   await session.input("Go").settled;
@@ -156,31 +156,62 @@ test("v4 gates and replay reject altered owners/payloads/prepared joins; envelop
         ["prepared", "model_settled"].includes(r.body.event.event.type)),
   ))
     expect(() => decodeRecord(JSON.stringify({ ...record, version: 3 }))).toThrow();
-  expect(() =>
-    replay(
-      altered((e) => {
-        const c = e.body.event?.event?.continuation;
-        if (c) c.owner.generation++;
-      }),
-      resolvers,
-    ),
-  ).toThrow("owner");
+  const staging = (batches: readonly CommittedBatch[], at: number) => {
+    const body = decodeRecord(batches[at]!.records[0]!).body;
+    if (body.kind !== "event") throw new Error("Expected an event record");
+    return () =>
+      stage(
+        replay(loaded.batches.slice(0, at)),
+        body,
+        AppendIdSchema.parse(batches[at]!.appendId),
+        resolvers,
+      );
+  };
+  const settled = loaded.batches.findIndex((batch) => {
+    const body = decodeRecord(batch.records[0]!).body;
+    return (
+      body.kind === "event" &&
+      body.event.type === "child" &&
+      body.event.event.type === "model_settled" &&
+      body.event.event.continuation !== undefined
+    );
+  });
+  const joined = loaded.batches.findIndex((batch) => {
+    const body = decodeRecord(batch.records[0]!).body;
+    return (
+      body.kind === "event" &&
+      body.event.type === "child" &&
+      body.event.event.type === "prepared" &&
+      body.event.event.result.kind === "succeeded" &&
+      body.event.event.result.value.continuations !== undefined
+    );
+  });
+  const moved = altered((e) => {
+    const c = e.body.event?.event?.continuation;
+    if (c) c.owner.generation++;
+  });
+  expect(staging(moved, settled)).toThrow("owner");
+  expect(replay(moved).continuations).toEqual(
+    session.snapshot.durable.continuations?.map((entry) => ({
+      ...entry,
+      owner: { ...entry.owner, generation: entry.owner.generation + 1 },
+    })),
+  );
   expect(() =>
     replay(
       altered((e) => {
         const c = e.body.event?.event?.continuation;
         if (c) c.payload = "x".repeat(65537);
       }),
-      resolvers,
     ),
-  ).toThrow();
-  expect(() =>
-    replay(
+  ).toThrow("record_decode");
+  expect(
+    staging(
       altered((e) => {
         const v = e.body.event?.event?.result?.value;
         if (v?.continuations) v.continuations = [];
       }),
-      resolvers,
+      joined,
     ),
   ).toThrow("continuation mismatch");
   expect(
@@ -188,7 +219,6 @@ test("v4 gates and replay reject altered owners/payloads/prepared joins; envelop
       altered((e) => {
         e.body.event?.event?.result?.value?.continuations?.reverse();
       }),
-      resolvers,
     ).continuations,
   ).toEqual(session.snapshot.durable.continuations);
   await session.close();

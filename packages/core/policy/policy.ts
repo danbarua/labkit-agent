@@ -66,11 +66,6 @@ export type PolicyPack = Readonly<
 >;
 
 export type PolicyResolvers = Readonly<{
-  /**
-   * Replaying committed records: skip checks of what the live environment binds (permission port,
-   * providers, models, profile settings). Which models existed when a record was written is history.
-   */
-  historical?: boolean;
   permissionRequests?: boolean;
   validateSelection?: (
     provider: string,
@@ -137,7 +132,6 @@ export const builtinResolvers: PolicyResolvers = {
 
 export function copyResolvers(resolvers: PolicyResolvers = builtinResolvers): PolicyResolvers {
   return {
-    historical: resolvers.historical,
     permissionRequests: resolvers.permissionRequests,
     validateSelection: resolvers.validateSelection,
     providerStreams: resolvers.providerStreams ? new Map(resolvers.providerStreams) : undefined,
@@ -182,6 +176,23 @@ export const bindingPolicyFields = [
   "maxOutputTokens",
   "permissions",
 ] as const satisfies readonly (keyof Policy)[];
+
+/** Policy fields naming a versioned resolver the environment supplies: pack, projection, handoff. */
+export const resolverPolicyFields = [
+  "id",
+  "project",
+  "handoff",
+] as const satisfies readonly (keyof Policy)[];
+
+/** The resolver fields of `policy` whose pack, projection or handoff `resolvers` do not supply. */
+export function unresolvedPolicyFields(policy: Policy, resolvers: PolicyResolvers) {
+  const supplied = {
+    id: (resolvers.packs ?? packs).has(policy.id),
+    project: resolvers.projections.has(policy.project),
+    handoff: resolvers.handoffs.has(policy.handoff),
+  };
+  return resolverPolicyFields.filter((field) => !supplied[field]);
+}
 
 /** Live-environment checks: the permission port, provider, model and profile settings are bound. */
 function validateBindings(policy: Policy, resolvers: PolicyResolvers) {
@@ -240,7 +251,7 @@ export function validatePolicy(
     capabilities.agents.some(([, agent]) => agent.tools.includes("handoff_to"))
   )
     throw new Error("Reserved handoff tool name");
-  if (!resolvers.historical) validateBindings(policy, resolvers);
+  validateBindings(policy, resolvers);
   const agents = new Map(capabilities.agents);
   if (
     Object.keys(policy.tools).length !== agents.size ||
@@ -252,9 +263,9 @@ export function validatePolicy(
     )
   )
     throw new Error("Policy tool permissions exceed host capabilities");
-  if (!(resolvers.packs ?? packs).has(policy.id)) throw new Error("Missing versioned policy pack");
-  if (!resolvers.projections.has(policy.project) || !resolvers.handoffs.has(policy.handoff))
-    throw new Error("Missing versioned policy resolver");
+  const unresolved = unresolvedPolicyFields(policy, resolvers);
+  if (unresolved.includes("id")) throw new Error("Missing versioned policy pack");
+  if (unresolved.length) throw new Error("Missing versioned policy resolver");
   return freeze(policy);
 }
 

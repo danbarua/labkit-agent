@@ -2,7 +2,6 @@ import { expect, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
 
 import { BlobRefSchema, hashBlob } from "../agent/content.ts";
-import { builtinResolvers } from "../policy/policy.ts";
 import {
   anthropicMessages,
   anthropicMessagesV2,
@@ -203,9 +202,7 @@ test("thinking and image attachments retain independent owners and refs across t
     signal(),
   );
   if (loaded.kind !== "loaded") throw new Error("Missing journal");
-  expect(
-    replay(loaded.batches, { ...builtinResolvers, providerIds: new Set([anthropicMessagesV2.id]) }),
-  ).toEqual(session.snapshot.durable);
+  expect(replay(loaded.batches)).toEqual(session.snapshot.durable);
   const restored = await restoreSession(opts, session.snapshot.durable.conversation.sessionId);
   await Promise.all([session.close(), restored.close()]);
 });

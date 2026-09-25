@@ -28,6 +28,8 @@ import {
   PolicySchema,
   projectPolicy,
   initialPolicy as resolveInitialPolicy,
+  resolverPolicyFields,
+  unresolvedPolicyFields,
   validatePolicy,
   type Policy,
   type PolicyPatch,
@@ -54,6 +56,7 @@ import {
   type SessionState,
 } from "./session-fsm.ts";
 import {
+  JournalIntegrityError,
   replay,
   seedConversation,
   toSeed,
@@ -343,8 +346,9 @@ function reconcileSelection(
 
 /**
  * Plan the journaled adoption of the live registry and bindings at an idle boundary. Only the
- * registry, per-agent tool permissions, binding-dependent policy fields and an unregistered current
- * agent change; committed history is kept verbatim. Returns undefined when nothing differs.
+ * registry, per-agent tool permissions, resolver IDs the live environment lacks, binding-dependent
+ * policy fields and an unregistered current agent change; committed history is kept verbatim.
+ * Returns undefined when nothing differs.
  */
 function planAdoption(state: JournalState, context: AdoptionContext): Adoption | undefined {
   const { live, resolvers } = context;
@@ -403,6 +407,15 @@ function planAdoption(state: JournalState, context: AdoptionContext): Adoption |
         ([id, allowed]) => JSON.stringify(allowed) !== JSON.stringify(previous[id]),
       );
     let candidate = toolsChanged ? PolicySchema.parse({ ...state.policy, tools }) : state.policy;
+    // A saved pack, projection or handoff the live resolvers lack takes the new-session default.
+    const unresolved = unresolvedPolicyFields(candidate, resolvers);
+    if (unresolved.length) {
+      const defaults = context.livePolicy();
+      candidate = PolicySchema.parse({
+        ...candidate,
+        ...Object.fromEntries(unresolved.map((field) => [field, defaults[field]])),
+      });
+    }
     let unavailable: string | undefined;
     try {
       validatePolicy(candidate, live, resolvers);
@@ -438,6 +451,30 @@ function planAdoption(state: JournalState, context: AdoptionContext): Adoption |
       }
       const saved = state.policy;
       const next = policy;
+      const resolved = resolverPolicyFields.filter((field) => saved[field] !== next[field]);
+      if (resolved.length) {
+        differences.push(...resolved.map((field) => `changed policy.${field}`));
+        const consequences = {
+          id: `later policy changes start from pack ${next.id}`,
+          project: `next turn projects history with ${next.project}`,
+          handoff: `handoffs project with ${next.handoff}`,
+        };
+        reconciliations.push({
+          // A new pack ID changes nothing the model sees; a new projection or handoff does.
+          level: resolved.some((field) => field !== "id") ? "warning" : "info",
+          fields: {
+            reconciliation: "policy",
+            policyVersion: next.version,
+            changedFields: resolved,
+            previous: Object.fromEntries(resolved.map((field) => [field, saved[field]])),
+            next: Object.fromEntries(resolved.map((field) => [field, next[field]])),
+            reason: `saved policy names resolvers the live environment does not supply: ${resolved
+              .map((field) => `${field} ${saved[field]}`)
+              .join(", ")}`,
+            consequence: resolved.map((field) => consequences[field]).join("; "),
+          },
+        });
+      }
       const changed = bindingPolicyFields.filter(
         (field) => JSON.stringify(saved[field]) !== JSON.stringify(next[field]),
       );
@@ -1029,7 +1066,7 @@ function configure(raw: SessionOptions, restoring = false) {
     }
     /**
      * Journal the live registry ahead of the first new work. That work queues behind this append in
-     * the session actor, so replay validates its prompt against the registry it actually used.
+     * the session actor, so its commit-time prompt checks run against the registry it actually uses.
      */
     function adopt() {
       if (!adoption || adoptionSubmitted) return;
@@ -1228,9 +1265,15 @@ export async function restoreSession(
         cause: loaded.kind === "failed" ? loaded.error : undefined,
       });
     stage = "replay_journal";
-    const journal = replay(loaded.batches, configured.resolvers);
-    if (journal.conversation.sessionId !== sessionId || journal.revision !== loaded.revision)
-      throw new Error("Loaded stream identity/revision mismatch");
+    const journal = replay(loaded.batches);
+    if (journal.conversation.sessionId !== sessionId || journal.revision !== loaded.revision) {
+      const last = journal.records.at(-1);
+      throw new JournalIntegrityError(
+        journal.conversation.sessionId !== sessionId ? "session_identity" : "revision_sequence",
+        `The stream of session ${sessionId} at revision ${loaded.revision} holds session ${journal.conversation.sessionId} at revision ${journal.revision}`,
+        { revision: last?.revision, appendId: last?.appendId, entryId: last?.entryId },
+      );
+    }
     stage = "open_session";
     const built = configured.build(
       freeze({ ...journal, conversation: { ...journal.conversation, pending: [] } }),
@@ -1309,6 +1352,14 @@ export async function restoreSession(
       sessionId,
       stage,
       durationMs: Math.round(performance.now() - startedAt),
+      ...(error instanceof JournalIntegrityError
+        ? {
+            rule: error.rule,
+            revision: error.revision,
+            appendId: error.appendId,
+            entryId: error.entryId,
+          }
+        : {}),
       error: diagnosticError(error),
     });
     throw error;

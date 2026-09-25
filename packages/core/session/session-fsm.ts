@@ -310,7 +310,7 @@ export function decideSession(
     const p = state.pending;
     if (loaded.kind === "loaded") {
       try {
-        if (replay(loaded.batches, resolvers).revision !== loaded.revision)
+        if (replay(loaded.batches).revision !== loaded.revision)
           throw new Error("Load revision mismatch");
       } catch (error) {
         return fail(state, error, "reconcile");

@@ -1,4 +1,5 @@
-import { expect, test } from "@logtape/testing-bun/autoload";
+import { getLogger } from "@logtape/logtape";
+import { expect, spyOn, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
 
 import { builtinResolvers } from "../policy/policy.ts";
@@ -217,7 +218,7 @@ test("tool failure continuation preserves raw evidence and deterministic correla
       .durable,
   ).toEqual(session.snapshot.durable);
 });
-test("named pure projection is required at restore and observer errors cannot fail a session", async () => {
+test("restore reconciles a projection the live environment lacks; observer errors cannot fail a session", async () => {
   const options = boundOptions();
   const seen: string[] = [];
   const policies = {
@@ -242,13 +243,57 @@ test("named pure projection is required at restore and observer errors cannot fa
   const session = await createSession(configured);
   await session.input("Go").settled;
   expect(seen).toContain("committing");
-  await expect(
-    restoreSession(options, session.snapshot.durable.conversation.sessionId),
-  ).rejects.toThrow("resolver");
+  const sessionId = session.snapshot.durable.conversation.sessionId;
+  const same = await restoreSession(configured, sessionId);
+  expect(same.snapshot.durable).toEqual(session.snapshot.durable);
+  expect(same.registry).toEqual({ kind: "current" });
+  await same.close();
+  const prompts: unknown[] = [];
+  const live: SessionOptions = {
+    ...options,
+    bindings: {
+      ...options.bindings,
+      complete: (request) => {
+        prompts.push(request.messages);
+        return { kind: "answer", text: "ok" };
+      },
+    },
+  };
+  const logger = getLogger(["labkit", "session"]);
+  const emit = logger.emit.bind(logger);
+  const reconciled: { level: string; fields: Record<string, unknown> }[] = [];
+  const spy = spyOn(logger, "emit").mockImplementation((record) => {
+    if (record.rawMessage === "session.registry.reconciled")
+      reconciled.push({ level: record.level, fields: record.properties });
+    emit(record);
+  });
+  const restored = await restoreSession(live, sessionId).finally(() => spy.mockRestore());
+  expect(restored.registry).toEqual({
+    kind: "pending_adoption",
+    differences: ["changed policy.project"],
+  });
+  expect(restored.policy?.project).toBe("history@1");
+  expect(reconciled).toEqual([
+    {
+      level: "warning",
+      fields: expect.objectContaining({
+        reconciliation: "policy",
+        changedFields: ["project"],
+        previous: { project: "custom@1" },
+        next: { project: "history@1" },
+        consequence: "next turn projects history with history@1",
+      }),
+    },
+  ]);
+  const next = await restored.input("Next").settled;
+  expect(next.kind === "terminal" && next.record.outcome.kind).toBe("completed");
+  expect(restored.registry).toEqual({ kind: "current" });
   expect(
-    (await restoreSession(configured, session.snapshot.durable.conversation.sessionId)).snapshot
-      .durable,
-  ).toEqual(session.snapshot.durable);
+    restored.snapshot.durable.records.find((record) => record.body.kind === "configuration")?.body,
+  ).toMatchObject({ policy: { project: "history@1" } });
+  expect(JSON.stringify(prompts.at(-1))).toContain("Go");
+  expect(JSON.stringify(prompts.at(-1))).not.toContain("custom");
+  await Promise.all([session.close(), restored.close()]);
 });
 
 test("rejected and uncertain policy appends preserve commit gating", async () => {

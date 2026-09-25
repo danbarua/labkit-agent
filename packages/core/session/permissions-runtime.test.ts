@@ -4,7 +4,6 @@ import { z } from "zod";
 import { createAgentRuntime } from "../agent/agent-runtime.ts";
 import type { HostToolNotification } from "../host/host.ts";
 import type { PermissionPort, PermissionRequest } from "../host/ports.ts";
-import { builtinResolvers } from "../policy/policy.ts";
 import { openaiChat } from "../providers/index.ts";
 import { journalJSONL, replay } from "./session-log.ts";
 import {
@@ -240,7 +239,6 @@ test("missing binding fails create/restore; journal version, marker, and owner d
     ),
   ).rejects.toThrow("Missing permission");
   const batches = backing.get(id)!;
-  const resolvers = { ...builtinResolvers, permissionRequests: true };
   for (const mutate of [
     (r: any) => {
       if (r.body.event?.event?.permissionRequired) delete r.body.event.event.permissionRequired;
@@ -261,7 +259,8 @@ test("missing binding fails create/restore; journal version, marker, and owner d
         return JSON.stringify(record);
       }),
     }));
-    expect(() => replay(changed, resolvers)).toThrow();
+    // The forged record names a permission operation or decisions the folded turn cannot take.
+    expect(() => replay(changed)).toThrow("record_applicable");
   }
   expect(() =>
     JournalRecordSchema.parse({ ...session.snapshot.durable.records[0], version: 5 }),

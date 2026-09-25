@@ -20,8 +20,8 @@ The ref schema admitting a media type does not imply a profile can encode it. Th
 media and hash against the ref before completion can start. Ref names are display labels, not paths.
 
 The environment puts bytes before admitting a user ref. The current journal format stores refs and content parts,
-never the raw bytes. Replay validates refs structurally and does not read the object store. Idle
-restoration therefore succeeds without blob access; missing bytes fail the next preparation.
+never the raw bytes. Loading decodes refs as part of each record and does not read the object store.
+Idle restoration therefore succeeds without blob access; missing bytes fail the next preparation.
 
 Large continuation payloads are serialized as UTF-8 JSON blobs before model_settled is journaled.
 Their envelopes carry `payloadBlob` instead of `payload`, using the same format. The inline cap stays at

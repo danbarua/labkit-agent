@@ -70,8 +70,11 @@ choice; a tolerant tool-error policy cannot override a user's refusal.
 ## Version behavior, not saved credentials
 
 Policy/projection/handoff resolver IDs such as `history@1` name behavior supplied by the environment.
-Restore needs the same IDs and compatible implementations. If you change a custom resolver's
-meaning, give it a new ID rather than making saved sessions silently project different requests.
+Restore does not require them: a saved ID the live environment lacks is reconciled to the value a new
+session would get, and the next work journals that change (see
+[registry adoption](../../../docs/session-runtime.md#restore-adopts-the-live-registry-and-bindings)).
+If you change a custom resolver's meaning, give it a new ID rather than making saved sessions
+silently project different requests.
 The policy revision records committed configuration changes; it is independent of the journal's
 single format identifier. Thinking, attachments, and permissions do not select journal versions.
 

@@ -83,10 +83,12 @@ and configuration changes. History is a record of facts. Reopening a session mus
 today's models, tools or settings to match those of the past.
 
 **Load.** Rebuilding session state from the journal. This is a fold over committed records, checked
-for integrity (ordering, revision continuity, identifiers, schema).
-Code today: `replay()` in `session-log.ts`. It also re-runs some commit-time checks, such as the
-captured prompt against its projection. Checks that the current environment has the right bindings
-were removed.
+for journal integrity only: schema, batch and revision continuity, append and entry identifiers,
+session identity, the creation record first, and terminal records where a turn ended. A record must
+also name a turn, operation or queued input that exists in the folded state. Commit-time rules are
+not re-run, and where a stored record and today's derivation disagree, the stored record wins.
+Code today: `replay()` in `session-log.ts`; a failure is a `JournalIntegrityError` naming the rule
+and the offending record.
 
 **Recovery.** Closing a turn that was interrupted by process exit when the session is reloaded. External
 effects are not repeated. Do not confuse it with **reconciliation**, which resolves a storage append

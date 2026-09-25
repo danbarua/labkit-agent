@@ -56,7 +56,8 @@ explicit provider policy. A model registry requires an explicit model selection 
 names with the supported alternatives. Bindings without a model registry accept the requested wire
 model directly, using their declared profile. Binding keys need not match profile IDs. Registries,
 capabilities, profiles and transport settings are captured at construction; credentials and origins
-are never journal data. Restore validates persisted selections before external work.
+are never journal data. Restore loads persisted selections as history and does not check them
+against these bindings; the first new work reconciles them with the live bindings before it runs.
 
 ## Model catalog
 

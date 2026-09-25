@@ -115,7 +115,7 @@ flowchart TD
   append[Append attempt] --> result{Result}
   result -->|matching receipt| release[Promote durable state and release work]
   result -->|conflict or rejection| stop[Stop session]
-  result -->|indeterminate| load[Consistent load and validation]
+  result -->|indeterminate| load[Consistent load and integrity check]
   load --> found{Identical append at stream tip?}
   found -->|yes| release
   found -->|no| absent{Absent at expected revision and retry unused?}
@@ -123,7 +123,7 @@ flowchart TD
   absent -->|no| stop
   retry -->|matching receipt| release
   retry -->|other outcome| stop
-  load -->|load or validation failure| stop
+  load -->|load or integrity failure| stop
 ```
 
 Only the storage append is retried. No completion or tool is repeated. The persistence adapter must
@@ -146,8 +146,8 @@ configuration; configuration changes do not change the journal format.
 
 ```mermaid
 flowchart TD
-  load[Load and validate journal and bindings] --> valid{Valid?}
-  valid -->|no| reject[Reject restore]
+  load[Load journal and check integrity] --> valid{Intact?}
+  valid -->|no| reject[Reject restore naming the violated rule and record]
   valid -->|yes| work{Unfinished work?}
   work -->|none| registry
   work -->|active turn or saved queued inputs| stage[Stage recovery batch]
@@ -169,10 +169,15 @@ action requires a new explicit invocation after restoration.
 
 ## Restore adopts the live registry and bindings
 
-Stored history is a record of what happened, not a constraint on what may happen next. Replay
-validates committed records structurally (schema, version sequence, patch-derived policies, prompt
-captures against their projection) but never asks whether a provider, model, profile setting or
-permission port named in them is bound today. New policy patches are still validated against live
+Stored history is a record of what happened, not a constraint on what may happen next. Loading checks
+journal integrity only: record decoding, batch continuity, the revision sequence, append and entry
+IDs, session identity, the creation record first, and each turn's terminal record in the same batch
+as the record that ended the turn. A record must also name a turn, operation, tool batch, call or
+queued input that exists in the folded state, because the fold cannot apply it otherwise. Load never
+re-runs commit-time rules (prompt projection, policy patches, permissions, admission) and never asks
+whether a provider, model, profile setting or permission port named in a record is bound today.
+Where a stored record and a value derived by today's code disagree, the stored record wins. New
+work is still staged under every commit-time rule, and new policy patches are validated against live
 bindings before they are admitted.
 
 If the live agents or tool schemas differ from the journal's registry, or the current policy does
@@ -196,18 +201,22 @@ sequenceDiagram
   S-->>A: turn runs with live tools; registry is current
 ```
 
-Replay validates prompt captures before that record against the old registry and later ones against
-the new registry. The record replaces the registry and, only when needed, reconciles:
+Staging checks prompt captures after that record against the new registry; load takes every
+captured prompt as written. The record replaces the registry and, only when needed, reconciles:
 
 - `policy`: a new policy version. Per-agent tool permissions drop unregistered tools and removed
-  agents; new agents are derived as creation does. Provider, model, thinking, thinking budget,
-  stream, output limit and permission mode that the live bindings reject are replaced by the policy
-  a new session would get, changing the fewest fields (the saved provider/model is kept when some
-  combination allows it). No other policy field may change; the result is validated.
+  agents; new agents are derived as creation does. A policy pack `id`, projection (`project`) or
+  `handoff` the live resolvers do not supply takes the value a new session would get. Provider,
+  model, thinking, thinking budget, stream, output limit and permission mode that the live bindings
+  reject are replaced by the policy a new session would get, changing the fewest fields (the saved
+  provider/model is kept when some combination allows it). No other policy field may change; the
+  result is validated.
 - `agent`: the live default agent, only when the idle conversation's agent is no longer registered.
 
-A changed model or agent is logged as a `session.registry.reconciled` warning with the previous and
-next values and the consequence (for example `next turn uses anthropic/claude-opus-4-5`).
+Each change is logged as `session.registry.reconciled` with the previous and next values and the
+consequence (for example `next turn uses anthropic/claude-opus-4-5` or `next turn projects history
+with history@1`). A changed model, agent, projection or handoff is a warning, because it changes
+what the model sees; a changed pack ID alone is info.
 
 History is never filtered or rewritten. The next prompt projects every earlier message, including
 calls to and results from tools that are no longer registered, and advertises only live tools. If
