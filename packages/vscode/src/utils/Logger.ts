@@ -38,6 +38,16 @@ export function getTrafficChannel(): vscode.OutputChannel {
   return (traffic ??= vscode.window.createOutputChannel("Labkit ACP Traffic"));
 }
 
+export function logDiagnostic(
+  level: "debug" | "info" | "warning" | "error",
+  event: string,
+  fields: Record<string, unknown>,
+): void {
+  const record =
+    durable?.write(level, event, fields) ?? redactDiagnostics({ level, event, ...fields }, secrets);
+  getOutputChannel().appendLine(JSON.stringify(record));
+}
+
 export function log(message: string, ...args: unknown[]): void {
   const fields = { message, details: args };
   const record =
