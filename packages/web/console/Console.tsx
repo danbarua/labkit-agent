@@ -129,6 +129,7 @@ export function Console() {
 
   useEffect(() => {
     if (!sessionId) return;
+    setKeptDrafts([]);
     const source = new EventSource(`/api/session/${sessionId}/events`);
     source.onerror = () => {
       if (source.readyState !== EventSource.CLOSED) return;
