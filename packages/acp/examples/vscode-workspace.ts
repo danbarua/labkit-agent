@@ -1,85 +1,225 @@
-import type { PolicyPatch } from "@labkit-agent/core";
+import { diagnostic } from "@labkit-agent/core/logging";
+import type { Policy, PolicyPatch } from "@labkit-agent/core/policy";
 import {
-  anthropicMessagesV3,
-  anthropicMessagesV4,
-  googleGenerateV3,
-  openaiChatV2,
-  openaiResponsesV3,
+  CATALOG_SOURCE,
+  catalogProviders,
+  LOCALHOST_BASE_URL,
+  localhostProvider,
+  type CatalogModel,
+  type CatalogProvider,
 } from "@labkit-agent/core/providers";
 
 import type { AcpOptions } from "../adapter.ts";
 import { terminalTool } from "../client-terminal.ts";
 import { workspaceToolContent } from "../file-write.ts";
 import { planTool } from "../plan.ts";
-import type { AcpConfigBinding } from "../session-config.ts";
+import type { AcpConfigBinding, AcpSelectOption } from "../session-config.ts";
 import { workspaceDirectory } from "../workspace-directory.ts";
 import { workspaceFiles } from "../workspace-files.ts";
 import { workspacePersistence } from "../workspace-persistence.ts";
 import { workspaceTools } from "../workspace-tools.ts";
 
-/** Exported separately for injected-environment tests. Keys stay in transport bindings. */
-export function workspaceAgent(
-  env: Readonly<Record<string, string | undefined>> = process.env,
-  directory = workspaceDirectory(),
-): AcpOptions {
-  const id = env.LABKIT_ACP_PROVIDER ?? "anthropic";
-  const profiles = new Map([
-    [
-      "anthropic",
-      env.LABKIT_ACP_THINKING_MODE === "budget" ? anthropicMessagesV3 : anthropicMessagesV4,
-    ],
-    ["openai", openaiChatV2],
-    ["openai-responses", openaiResponsesV3],
-    ["google", googleGenerateV3],
-  ]);
-  const profile = profiles.get(id);
-  if (!profile)
-    throw new Error(
-      `Unsupported LABKIT_ACP_PROVIDER ${JSON.stringify(id)}; choose anthropic, openai, openai-responses, or google. Adapter profile IDs are not provider selections.`,
-    );
-  const model = env.LABKIT_ACP_MODEL;
-  if (!model) throw new Error("Set LABKIT_ACP_MODEL to your provider's model ID");
-  const models = [
+type Env = Readonly<Record<string, string | undefined>>;
+
+type Selection = Readonly<{ provider: CatalogProvider; model: CatalogModel }>;
+
+type Catalog = Readonly<{ providers: readonly CatalogProvider[]; selection: Selection }>;
+
+const OUTPUT_PRESETS = [4096, 8192, 16384, 32768, 65536, 128000];
+
+const BUDGET_PRESETS = [1024, 4096, 8192, 16384];
+
+const DEFAULT_OUTPUT_TOKENS = 32768;
+
+/** Option values name the provider first; localhost model IDs themselves contain slashes. */
+function optionValue(provider: string | undefined, model: string | undefined) {
+  return `${provider ?? ""}/${model ?? ""}`;
+}
+
+function find(providers: readonly CatalogProvider[], provider?: string, model?: string) {
+  const bound = providers.find((entry) => entry.id === provider);
+  const chosen = bound?.models.find((entry) => entry.id === model);
+  return bound && chosen ? { provider: bound, model: chosen } : undefined;
+}
+
+/** `<provider>/<model>` or a bare model ID served by the first bound provider that lists it. */
+function requested(providers: readonly CatalogProvider[], value: string) {
+  const slash = value.indexOf("/");
+  const qualified =
+    slash > 0 ? find(providers, value.slice(0, slash), value.slice(slash + 1)) : undefined;
+  if (qualified) return qualified;
+  for (const provider of providers) {
+    const model = provider.models.find((entry) => entry.id === value);
+    if (model) return { provider, model };
+  }
+  return undefined;
+}
+
+function defaultThinking(model: CatalogModel) {
+  return model.thinking.includes("off")
+    ? "off"
+    : (model.thinking.find((value) => value !== "budget") ?? "off");
+}
+
+/** Presets up to the model limit, plus the limit and a carried-over value the model accepts. */
+function outputLimits(model: CatalogModel | undefined, policy: Policy) {
+  const limit = model?.maxOutputTokens;
+  const budget = policy.thinking === "budget" ? (policy.thinkingBudgetTokens ?? 0) : 0;
+  const current = policy.maxOutputTokens;
+  return [
     ...new Set([
-      model,
-      ...(env.LABKIT_ACP_MODELS ?? "")
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
+      ...OUTPUT_PRESETS,
+      ...(limit === undefined ? [] : [limit]),
+      ...(current === undefined ? [] : [current]),
     ]),
-  ];
-  const maxOutputTokens = Number(env.LABKIT_ACP_MAX_OUTPUT_TOKENS ?? 16384);
-  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0)
-    throw new Error("LABKIT_ACP_MAX_OUTPUT_TOKENS must be a positive integer");
-  const outputLimits = [...new Set([4096, 8192, 16384, 32768, maxOutputTokens])].sort(
-    (a, b) => a - b,
+  ]
+    .filter((tokens) => (limit === undefined || tokens <= limit) && tokens > budget)
+    .sort((a, b) => a - b);
+}
+
+function budgets(model: CatalogModel, maxOutputTokens: number | undefined) {
+  const capability = model.profile.capabilities.thinking;
+  const min = Math.max(
+    model.thinkingBudgetMin ?? 0,
+    capability.mode === "budget" ? capability.minTokens : 0,
   );
-  const capability = profile.capabilities.thinking;
-  const thinking =
-    capability.mode === "effort"
-      ? ["off" as const, ...capability.values.filter((value) => value !== "none")]
-      : capability.mode === "off"
-        ? ["off" as const]
-        : capability.mode === "budget"
-          ? ["off" as const, "budget" as const]
-          : ["off" as const, "adaptive" as const];
-  const anthropic = id.startsWith("anthropic");
-  const google = id.startsWith("google");
-  const keyName = anthropic ? "ANTHROPIC_API_KEY" : google ? "GOOGLE_API_KEY" : "OPENAI_API_KEY";
-  const key = env[keyName];
-  if (!key) throw new Error(`Set ${keyName} before launching Labkit`);
-  const baseUrl =
-    env.LABKIT_ACP_BASE_URL ??
-    (anthropic
-      ? "https://api.anthropic.com/v1"
-      : google
-        ? "https://generativelanguage.googleapis.com/v1beta"
-        : "https://api.openai.com/v1");
-  const headers: Record<string, string> = anthropic
-    ? { "x-api-key": key }
-    : google
-      ? { "x-goog-api-key": key }
-      : { Authorization: `Bearer ${key}` };
+  const max = capability.mode === "budget" ? capability.maxTokens : undefined;
+  return BUDGET_PRESETS.filter(
+    (tokens) =>
+      tokens >= min &&
+      (max === undefined || tokens <= max) &&
+      (maxOutputTokens === undefined || tokens < maxOutputTokens),
+  );
+}
+
+type Thinking = NonNullable<Policy["thinking"]>;
+
+/** Switch model and keep the policy valid for it: thinking, output limit and streaming. */
+function selectModel(policy: Policy, { provider, model }: Selection): PolicyPatch {
+  const limit = model.maxOutputTokens;
+  const maxOutputTokens =
+    policy.maxOutputTokens === undefined
+      ? Math.min(DEFAULT_OUTPUT_TOKENS, limit ?? DEFAULT_OUTPUT_TOKENS)
+      : Math.min(policy.maxOutputTokens, limit ?? policy.maxOutputTokens);
+  const wanted = policy.thinking ?? "off";
+  const budget = policy.thinkingBudgetTokens;
+  const keepsBudget =
+    wanted === "budget" &&
+    model.thinking.includes("budget") &&
+    budget != null &&
+    budgets(model, maxOutputTokens).includes(budget);
+  const thinking = (
+    keepsBudget || (wanted !== "budget" && model.thinking.includes(wanted))
+      ? wanted
+      : defaultThinking(model)
+  ) as Thinking;
+  // Effort-profile models send "off" as reasoning effort none; keep an omitted setting omitted.
+  const omit = thinking === "off" && model.omitThinkingWhenOff && policy.thinking === undefined;
+  return {
+    provider: provider.id,
+    model: model.id,
+    ...(omit ? {} : { thinking }),
+    ...(keepsBudget
+      ? {}
+      : policy.thinkingBudgetTokens === undefined
+        ? {}
+        : { thinkingBudgetTokens: null }),
+    maxOutputTokens,
+    ...(policy.stream && !model.profile.capabilities.stream ? { stream: false } : {}),
+  };
+}
+
+function thinkingChoices(model: CatalogModel | undefined, policy: Policy): AcpSelectOption[] {
+  return (model?.thinking ?? ["off"]).flatMap((value): AcpSelectOption[] =>
+    value === "budget"
+      ? budgets(model!, policy.maxOutputTokens).map((tokens) => ({
+          value: `budget:${tokens}`,
+          name: `Manual thinking: ${tokens.toLocaleString("en-US")} tokens`,
+          patch: { thinking: "budget", thinkingBudgetTokens: tokens },
+        }))
+      : [
+          {
+            value,
+            name:
+              value === "off"
+                ? "Off"
+                : value === "adaptive"
+                  ? "Adaptive"
+                  : value.charAt(0).toUpperCase() + value.slice(1),
+            patch: { thinking: value as Thinking, thinkingBudgetTokens: null },
+          },
+        ],
+  );
+}
+
+async function discover(env: Env, fetchImpl: typeof fetch | undefined): Promise<Catalog> {
+  const { providers: keyed, skipped } = catalogProviders(env);
+  const baseUrl = env.LABKIT_LOCAL_BASE_URL ?? LOCALHOST_BASE_URL;
+  const local = await localhostProvider({ baseUrl, ...(fetchImpl ? { fetch: fetchImpl } : {}) });
+  if (local.kind === "unavailable")
+    diagnostic("acp", "info", "acp.catalog.localhost_unavailable", {
+      baseUrl: local.baseUrl,
+      reason: local.reason,
+      status: local.status,
+      consequence: "localhost models are not offered; other providers are unaffected",
+    });
+  const providers = local.kind === "available" ? [...keyed, local.provider] : keyed;
+  diagnostic("acp", "info", "acp.catalog.loaded", {
+    source: CATALOG_SOURCE,
+    providers: providers.map((provider) => ({
+      id: provider.id,
+      label: provider.label,
+      models: provider.models.length,
+      credential: provider.credential,
+    })),
+    skipped,
+    localhost:
+      local.kind === "available"
+        ? { status: "available", baseUrl }
+        : { status: "unavailable", baseUrl: local.baseUrl, reason: local.reason },
+  });
+  const first = providers[0];
+  if (!first) {
+    const keys = skipped.map(({ id, checked }) => `${id}: ${checked.join(" or ")}`).join("; ");
+    const reason = local.kind === "unavailable" ? local.reason : "no models";
+    throw new Error(
+      `No model provider is available. Set an API key (${keys}) or start an OpenAI-compatible server at ${baseUrl} (LABKIT_LOCAL_BASE_URL); it was unavailable: ${reason}.`,
+    );
+  }
+  const fallback = find(providers, first.id, first.defaultModel);
+  if (!fallback) throw new Error(`Catalog provider ${first.id} lacks its default model`);
+  const wanted = env.LABKIT_ACP_MODEL;
+  const chosen = wanted ? requested(providers, wanted) : undefined;
+  if (wanted && !chosen)
+    diagnostic("acp", "warning", "acp.catalog.default_model_unresolved", {
+      requested: wanted,
+      fallbackProvider: fallback.provider.id,
+      fallbackModel: fallback.model.id,
+      available: providers.map((provider) => provider.id),
+      consequence: `new sessions start with ${optionValue(fallback.provider.id, fallback.model.id)}; saved sessions keep their model`,
+    });
+  return { providers, selection: chosen ?? fallback };
+}
+
+/**
+ * Exported separately for injected-environment tests. Keys stay in transport bindings. `fetch`
+ * replaces HTTP for localhost discovery and provider transports.
+ */
+export function workspaceAgent(
+  env: Env = process.env,
+  directory = workspaceDirectory(),
+  inject: Readonly<{ fetch?: typeof fetch }> = {},
+): AcpOptions {
+  // Discovered on first use so importing performs no I/O; retried while no provider is bound.
+  let catalog: Promise<Catalog> | undefined;
+  const loadCatalog = () => {
+    catalog ??= discover(env, inject.fetch);
+    const pending = catalog;
+    pending.catch(() => {
+      if (catalog === pending) catalog = undefined;
+    });
+    return pending;
+  };
   return {
     loadSession: true,
     forkSession: true,
@@ -97,8 +237,13 @@ export function workspaceAgent(
       publishPlan,
     }) {
       signal.throwIfAborted();
+      const { providers, selection } = await loadCatalog();
+      signal.throwIfAborted();
       const files = await workspaceFiles(cwd, additionalDirectories);
       signal.throwIfAborted();
+      const current = (policy: Policy) => find(providers, policy.provider, policy.model)?.model;
+      const initial = selection.model;
+      const thinking = defaultThinking(initial);
       directory.remember(files.root);
       const persistence = workspacePersistence(files.root);
       const tools = new Map([...workspaceTools(files, clientFiles), ...(mcpTools ?? [])]);
@@ -179,8 +324,17 @@ export function workspaceAgent(
           id: "model",
           name: "Model",
           category: "model",
-          current: (policy) => policy.model ?? model,
-          options: models.map((value) => ({ value, name: value, patch: { model: value } })),
+          current: (policy) => optionValue(policy.provider, policy.model),
+          options: (policy) =>
+            providers.map((provider) => ({
+              group: provider.id,
+              name: provider.label,
+              options: provider.models.map((model) => ({
+                value: optionValue(provider.id, model.id),
+                name: model.label,
+                patch: selectModel(policy, { provider, model }),
+              })),
+            })),
         },
         {
           id: "thinking",
@@ -190,31 +344,18 @@ export function workspaceAgent(
             policy.thinking === "budget"
               ? `budget:${policy.thinkingBudgetTokens}`
               : (policy.thinking ?? "off"),
-          options: thinking.flatMap<{ value: string; name: string; patch: PolicyPatch }>((value) =>
-            value === "budget"
-              ? [4096, 8192, 16384].map((tokens) => ({
-                  value: `budget:${tokens}`,
-                  name: `Manual thinking: ${tokens.toLocaleString("en-US")} tokens (output limit must be higher)`,
-                  patch: { thinking: "budget" as const, thinkingBudgetTokens: tokens },
-                }))
-              : [
-                  {
-                    value,
-                    name: value === "off" ? "Off" : value === "adaptive" ? "Adaptive" : value,
-                    patch: { thinking: value, thinkingBudgetTokens: null },
-                  },
-                ],
-          ),
+          options: (policy) => thinkingChoices(current(policy), policy),
         },
         {
           id: "max_output_tokens",
           name: "Maximum output tokens (thinking and answer)",
           current: (policy) => String(policy.maxOutputTokens),
-          options: outputLimits.map((tokens) => ({
-            value: String(tokens),
-            name: tokens.toLocaleString("en-US"),
-            patch: { maxOutputTokens: tokens },
-          })),
+          options: (policy) =>
+            outputLimits(current(policy), policy).map((tokens) => ({
+              value: String(tokens),
+              name: tokens.toLocaleString("en-US"),
+              patch: { maxOutputTokens: tokens },
+            })),
         },
       ];
       return {
@@ -252,7 +393,7 @@ export function workspaceAgent(
             [
               "workspace",
               {
-                model,
+                model: initial.id,
                 tools: [...tools.keys()],
                 // Omitting successors permits handoff to all registered agents, including self.
                 successors: [],
@@ -262,27 +403,42 @@ export function workspaceAgent(
           ]),
           steps: 12,
           policy: {
-            provider: id,
-            model,
+            provider: selection.provider.id,
+            model: initial.id,
             permissions: "ask",
             toolFailure: "return-error-and-continue",
-            stream: true,
-            thinking: "off",
-            maxOutputTokens,
+            stream: initial.profile.capabilities.stream,
+            ...(thinking === "off" && initial.omitThinkingWhenOff
+              ? {}
+              : { thinking: thinking as Thinking }),
+            maxOutputTokens: Math.min(
+              DEFAULT_OUTPUT_TOKENS,
+              initial.maxOutputTokens ?? DEFAULT_OUTPUT_TOKENS,
+            ),
           },
         },
         bindings: {
           tools,
-          providers: new Map([
-            [
-              id,
+          providers: new Map(
+            providers.map((provider) => [
+              provider.id,
               {
-                profile,
-                models: new Map(models.map((model) => [model, { wireModel: model, profile }])),
-                transport: { baseUrl, headers },
+                profile: (provider.models.find((model) => model.id === provider.defaultModel) ??
+                  provider.models[0])!.profile,
+                models: new Map(
+                  provider.models.map((model) => [
+                    model.id,
+                    { wireModel: model.wireModel, profile: model.profile },
+                  ]),
+                ),
+                transport: {
+                  baseUrl: provider.baseUrl,
+                  headers: { ...provider.headers },
+                  ...(inject.fetch ? { fetch: inject.fetch } : {}),
+                },
               },
-            ],
-          ]),
+            ]),
+          ),
         },
       };
     },

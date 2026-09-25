@@ -51,15 +51,15 @@ test("grouped choices retain protocol metadata, flatten only for legacy modes, a
   });
   expect(JSON.stringify(state)).not.toContain('"patch"');
   expect(state.modes?.availableModes.map((mode) => mode.id)).toEqual(["ask", "off"]);
-  const patch = configPatch(bound, "ask");
+  const patch = configPatch(bound, "ask", policy);
   expect(patch).toEqual({ permissions: "ask" });
   const committed = patchPolicy(policy, patch!, capabilities, {
     ...builtinResolvers,
     permissionRequests: true,
   });
   expect(configState([bound], committed).configOptions?.[0]?.currentValue).toBe("ask");
-  expect(configPatch(bound, "missing")).toBeUndefined();
-  expect(configPatch(bound, false, "boolean")).toBeUndefined();
+  expect(configPatch(bound, "missing", policy)).toBeUndefined();
+  expect(configPatch(bound, false, policy, "boolean")).toBeUndefined();
 });
 
 test("multiple mode categories preserve order and the first supplies the legacy mode alias", () => {
@@ -88,4 +88,56 @@ test("mixed groups, duplicate groups and cross-group values are rejected", () =>
     expect(() =>
       bindConfig([{ id: "mode", name: "Mode", current: () => "off", options } as AcpSelectBinding]),
     ).toThrow();
+});
+
+test("policy-derived choices follow the policy in effect and are validated on each resolution", () => {
+  const [bound] = bindConfig([
+    {
+      id: "failure",
+      name: "Failure",
+      current: (policy) => policy.toolFailure,
+      // Offer only the choice that differs from the current value.
+      options: (policy) =>
+        policy.toolFailure === "fail-turn"
+          ? [
+              {
+                value: "return-error-and-continue",
+                name: "Continue",
+                patch: { toolFailure: "return-error-and-continue" },
+              },
+            ]
+          : [{ value: "fail-turn", name: "Stop", patch: { toolFailure: "fail-turn" } }],
+    },
+  ]);
+  if (!bound) throw new Error("Missing binding");
+  const failing = initialPolicy(capabilities, 4);
+  const state = configState([bound], failing).configOptions?.[0];
+  expect(state).toMatchObject({ currentValue: "fail-turn" });
+  // The current value is not among the derived choices, so it is shown as a saved choice.
+  expect(
+    state?.type === "select" &&
+      state.options.map((option) => ("value" in option ? option.value : option.group)),
+  ).toEqual(["return-error-and-continue", "fail-turn"]);
+  expect(configPatch(bound, "return-error-and-continue", failing)).toEqual({
+    toolFailure: "return-error-and-continue",
+  });
+  const continuing = patchPolicy(
+    failing,
+    { toolFailure: "return-error-and-continue" },
+    capabilities,
+  );
+  expect(configPatch(bound, "return-error-and-continue", continuing)).toBeUndefined();
+  const [invalid] = bindConfig([
+    {
+      id: "dupe",
+      name: "Dupe",
+      current: () => "a",
+      options: () => [
+        { value: "a", name: "A", patch: {} },
+        { value: "a", name: "A again", patch: {} },
+      ],
+    },
+  ]);
+  if (!invalid) throw new Error("Missing binding");
+  expect(() => configState([invalid], failing)).toThrow("unique across groups");
 });

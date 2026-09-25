@@ -10,6 +10,7 @@ export {
   selectChoices,
   type AcpSelectOption,
   type AcpSelectGroup,
+  type AcpSelectOptions,
   type AcpConfigBinding,
   type AcpSelectBinding,
   type AcpBooleanBinding,

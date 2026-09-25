@@ -28,7 +28,7 @@ test("persisted CLI trace joins ACP, permission, tool and provider failure acros
     `
     import { workspaceAgent } from ${JSON.stringify(workspace)};
     let calls = 0;
-    const base = workspaceAgent({ LABKIT_ACP_MODEL: "test-model", LABKIT_ACP_PROVIDER: "anthropic", ANTHROPIC_API_KEY: ${JSON.stringify(secret)} });
+    const base = workspaceAgent({ LABKIT_ACP_MODEL: "anthropic/claude-sonnet-4-6", ANTHROPIC_API_KEY: ${JSON.stringify(secret)} }, undefined, { fetch: async () => { throw new Error("offline"); } });
     export default { ...base, async sessionOptions(context) {
       const options = await base.sessionOptions(context);
       return { ...options, configuration: { ...options.configuration, policy: { ...options.configuration.policy, stream: false } },
@@ -221,6 +221,15 @@ test("persisted CLI trace joins ACP, permission, tool and provider failure acros
     ).toBe(true);
     expect(trace.some((record) => record.appendId)).toBe(true);
     expect(new Set(records.map((record) => record.launcherId)).size).toBe(2);
+    const catalog = records.find((record) => record.event === "acp.catalog.loaded");
+    expect(catalog.providers).toEqual([
+      {
+        id: "anthropic",
+        label: "Anthropic",
+        models: expect.any(Number),
+        credential: "ANTHROPIC_API_KEY",
+      },
+    ]);
     expect(files.join("\n")).not.toContain(secret);
     expect(JSON.stringify(first.messages)).not.toContain(secret);
   } finally {

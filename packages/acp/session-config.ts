@@ -24,16 +24,15 @@ export type AcpSelectGroup = Readonly<{
   options: readonly AcpSelectOption[];
 }>;
 
+export type AcpSelectOptions = readonly AcpSelectOption[] | readonly AcpSelectGroup[];
+
 export type AcpSelectBinding = ConfigMetadata &
   Readonly<{
     type?: "select";
     current: (policy: Policy) => string;
-    options: readonly AcpSelectOption[] | readonly AcpSelectGroup[];
+    /** Static choices, or choices derived from the policy in effect (for example the current model). */
+    options: AcpSelectOptions | ((policy: Policy) => AcpSelectOptions);
   }>;
-
-export function selectChoices(binding: AcpSelectBinding): readonly AcpSelectOption[] {
-  return binding.options.flatMap((option) => ("group" in option ? [...option.options] : [option]));
-}
 
 export type AcpBooleanBinding = ConfigMetadata &
   Readonly<{
@@ -64,6 +63,37 @@ const group = z.object({
   options: z.array(choice).min(1),
 });
 
+function flatten(options: AcpSelectOptions): readonly AcpSelectOption[] {
+  return options.flatMap((option) => ("group" in option ? [...option.options] : [option]));
+}
+
+function parseOptions(raw: unknown): AcpSelectOptions {
+  const options = z
+    .union([z.array(choice).min(1), z.array(group).min(1)])
+    .parse(structuredClone(raw));
+  const choices = flatten(options);
+  if (new Set(choices.map((value) => value.value)).size !== choices.length)
+    throw new Error("ACP config choices must be nonempty and unique across groups");
+  const groups = options.filter((option) => "group" in option);
+  if (new Set(groups.map((option) => option.group)).size !== groups.length)
+    throw new Error("Duplicate ACP config group ID");
+  return options;
+}
+
+/** Choices offered under `policy`; policy-derived options are validated on every resolution. */
+export function selectOptions(binding: AcpSelectBinding, policy: Policy): AcpSelectOptions {
+  return typeof binding.options === "function"
+    ? parseOptions(binding.options(policy))
+    : binding.options;
+}
+
+export function selectChoices(
+  binding: AcpSelectBinding,
+  policy: Policy,
+): readonly AcpSelectOption[] {
+  return flatten(selectOptions(binding, policy));
+}
+
 export function bindConfig(
   bindings: readonly AcpConfigBinding[] = [],
   booleanSupported = false,
@@ -82,25 +112,46 @@ export function bindConfig(
           .parse(structuredClone(binding.patches));
         return { ...fields, type: "boolean", current: binding.current, patches };
       }
-      const options = z
-        .union([z.array(choice).min(1), z.array(group).min(1)])
-        .parse(structuredClone(binding.options));
-      const choices = selectChoices({ ...fields, current: binding.current, options });
-      if (new Set(choices.map((value) => value.value)).size !== choices.length)
-        throw new Error("ACP config choices must be nonempty and unique across groups");
-      const groups = options.filter((option) => "group" in option);
-      if (new Set(groups.map((option) => option.group)).size !== groups.length)
-        throw new Error("Duplicate ACP config group ID");
+      const options =
+        typeof binding.options === "function" ? binding.options : parseOptions(binding.options);
       return { ...fields, current: binding.current, options };
     })
     .filter((binding) => binding.type !== "boolean" || booleanSupported);
 }
+
+/** Present a saved value the live binding no longer offers, so reading config never fails. */
+function savedChoice(value: string) {
+  return {
+    value,
+    name: `${value} (saved)`,
+    description: "Saved session value; not offered by the current configuration",
+  };
+}
+
+function unlisted(choices: readonly AcpSelectOption[], value: string) {
+  return !choices.some((option) => option.value === value);
+}
+
+/** Select values in effect that the live bindings do not list as choices. */
+export function unlistedValues(
+  bindings: readonly AcpConfigBinding[],
+  policy: Policy | undefined,
+): { configId: string; value: string }[] {
+  if (!policy) return [];
+  return bindings.flatMap((binding) => {
+    if (binding.type === "boolean") return [];
+    const value = binding.current(policy);
+    return unlisted(selectChoices(binding, policy), value) ? [{ configId: binding.id, value }] : [];
+  });
+}
+
 export function configState(
   bindings: readonly AcpConfigBinding[],
   policy: Policy | undefined,
 ): { configOptions?: SessionConfigOption[]; modes?: SessionModeState } {
   if (!bindings.length) return {};
   if (!policy) throw new Error("ACP config requires journaled policy");
+  const modeChoices = new Map<string, readonly AcpSelectOption[]>();
   const configOptions: SessionConfigOption[] = bindings.map((binding) => {
     const { id, name, description, category, _meta } = binding;
     const fields = {
@@ -117,21 +168,29 @@ export function configState(
       return { ...fields, type: "boolean", currentValue };
     }
     const currentValue = binding.current(policy);
-    if (!selectChoices(binding).some((option) => option.value === currentValue))
-      throw new Error(`Stored policy is not represented by ACP config ${id}`);
+    const options = selectOptions(binding, policy);
+    const choices = flatten(options);
+    modeChoices.set(id, choices);
+    const saved = unlisted(choices, currentValue) ? savedChoice(currentValue) : undefined;
     return {
       ...fields,
       type: "select",
       currentValue,
       options:
-        binding.options.length && "group" in binding.options[0]!
-          ? (binding.options as readonly AcpSelectGroup[]).map(({ options, ...group }) => ({
-              ...structuredClone(group),
-              options: options.map(({ patch: _, ...option }) => structuredClone(option)),
-            }))
-          : (binding.options as readonly AcpSelectOption[]).map(({ patch: _, ...option }) =>
-              structuredClone(option),
-            ),
+        options.length && "group" in options[0]!
+          ? [
+              ...(options as readonly AcpSelectGroup[]).map(({ options, ...group }) => ({
+                ...structuredClone(group),
+                options: options.map(({ patch: _, ...option }) => structuredClone(option)),
+              })),
+              ...(saved ? [{ group: "labkit-saved", name: "Saved value", options: [saved] }] : []),
+            ]
+          : [
+              ...(options as readonly AcpSelectOption[]).map(({ patch: _, ...option }) =>
+                structuredClone(option),
+              ),
+              ...(saved ? [saved] : []),
+            ],
     };
   });
   const mode = configOptions.find(
@@ -141,13 +200,18 @@ export function configState(
     (binding): binding is AcpSelectBinding =>
       binding.category === "mode" && binding.type !== "boolean",
   );
+  const currentModeId = mode ? String(mode.currentValue) : "";
+  const modeOptions = modeBinding ? (modeChoices.get(modeBinding.id) ?? []) : [];
   return {
     configOptions,
     ...(mode && modeBinding
       ? {
           modes: {
-            currentModeId: String(mode.currentValue),
-            availableModes: selectChoices(modeBinding).map(({ value, name, description }) => ({
+            currentModeId,
+            availableModes: [
+              ...modeOptions,
+              ...(unlisted(modeOptions, currentModeId) ? [savedChoice(currentModeId)] : []),
+            ].map(({ value, name, description }) => ({
               id: value,
               name,
               ...(description ? { description } : {}),
@@ -158,9 +222,11 @@ export function configState(
   };
 }
 
+/** Patch for choosing `value`, resolved against the policy in effect when it is applied. */
 export function configPatch(
   binding: AcpConfigBinding,
   value: unknown,
+  policy: Policy,
   type?: string,
 ): PolicyPatch | undefined {
   if (binding.type === "boolean")
@@ -168,7 +234,7 @@ export function configPatch(
       ? binding.patches[value ? "true" : "false"]
       : undefined;
   if (type !== undefined && type !== "select") return undefined;
-  return selectChoices(binding).find((option) => option.value === value)?.patch;
+  return selectChoices(binding, policy).find((option) => option.value === value)?.patch;
 }
 
 /** Stop waiting on cancellation even when a host callback does not honor its signal. */

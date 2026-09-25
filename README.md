@@ -29,8 +29,8 @@ file read, a scripted HTTP failure, and restart/load. It prints a unique directo
 The intentional HTTP 400 must appear with its provider request ID and redacted credential.
 A failed check exits nonzero and keeps the evidence. Remove old debug run directories yourself.
 
-`dev:acp` and `start:acp` are protocol servers, not interactive chat terminals. They need
-`LABKIT_ACP_MODEL` and the selected provider's API key; connect them to an ACP client.
+`dev:acp` and `start:acp` are protocol servers, not interactive chat terminals. They need at least
+one provider API key or a running local model server; connect them to an ACP client.
 Live-launch logs default to `~/.labkit/logs/` (DEBUG, 10 MiB rotation, four backups per launch,
 20 stopped launches retained); the exact file is printed on stderr. Stdout stays protocol-only.
 For an editor launch, use the absolute built CLI and config paths described in

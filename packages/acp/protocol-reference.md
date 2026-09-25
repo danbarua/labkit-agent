@@ -9,24 +9,42 @@ This reference lists supported messages, binding fields, limits, and cleanup beh
 
 Use [examples/vscode-workspace.ts](examples/vscode-workspace.ts) for a runnable workspace
 agent. See [VS Code setup](../../docs/vscode-acp.md) for the ACP Client launch configuration.
-Set `LABKIT_ACP_MODEL` and the provider credential in the launch environment. The default
-provider is `anthropic`; `LABKIT_ACP_PROVIDER` also accepts `openai`, `openai-responses`, or
-`google`. These use ANTHROPIC_API_KEY, OPENAI_API_KEY and GOOGLE_API_KEY respectively.
-LABKIT_ACP_BASE_URL optionally overrides the endpoint. The example enables streaming and explicit
-permissions. Ordinary tool failures are returned to the model with their structured causes so it
-can recover; sibling calls finish. Tool failure handling can commit that behavior to an existing
-session without editing its journal. File access, Model and Thinking selectors commit the same core policy contract.
-LABKIT_ACP_MODELS adds comma-separated model IDs to the environment's explicit model registry.
-No model catalog is inferred, and no historical adapter registry is installed during restore.
+Models come from the core model catalog (`catalogProviders` and `localhostProvider` from
+`@labkit-agent/core/providers`, over the committed models.dev snapshot). Every provider whose API key
+is set under one of the snapshot's `env` names is bound (for example ANTHROPIC_API_KEY,
+OPENAI_API_KEY, GOOGLE_API_KEY or GEMINI_API_KEY, XAI_API_KEY), plus a local OpenAI-chat-compatible
+server at LABKIT_LOCAL_BASE_URL (default `http://localhost:8000/v1`) when its `GET /models` answers.
+Discovery happens once, on the first session. It logs `acp.catalog.loaded` (info: source, bound
+providers with model counts and credential variable names, skipped providers with the names
+checked, local server status) and `acp.catalog.localhost_unavailable` (info: baseUrl, reason,
+status). Header values and keys are never logged. With no provider bound, session creation fails
+with the variable names checked and the local URL tried.
 
-Anthropic defaults to native adaptive thinking support. For models requiring manual thinking,
-set LABKIT_ACP_THINKING_MODE=budget; its Thinking selector offers explicit 4096/8192/16384-token budgets.
-The output-limit selector controls total thinking and answer tokens and must exceed a manual budget.
-LABKIT_ACP_MAX_OUTPUT_TOKENS sets its initial value (16384 in this example).
-Google also offers budget; OpenAI offers supported effort levels. Unsupported combinations reject
-before dispatch. Users select provider/model/settings; implementation profile IDs remain diagnostics.
-Keep model bindings stable when reopening saved sessions. The software is unreleased and does not
-restore historical journal formats.
+The example enables streaming and explicit permissions. Ordinary tool failures are returned to the
+model with their structured causes so it can recover; sibling calls finish. Tool failure handling
+can commit that behavior to an existing session without editing its journal. File access, Model,
+Thinking and output-limit selectors commit the same core policy contract.
+
+The Model selector groups options by provider (group ID = provider ID, name = provider label); each
+value is `<provider>/<model>`, split at the first slash because local model IDs contain slashes.
+Its patch sets provider and model and keeps the policy valid for the new model: thinking is kept
+when offered, otherwise off (or the first choice of an always-on model) with the budget cleared;
+the output limit is clamped to the model's limit; streaming is turned off when the model cannot
+stream. Thinking choices are the selected model's catalog list: Off, Adaptive, effort levels, or
+explicit budgets of 1024/4096/8192/16384 tokens (at least the model minimum and below the output
+limit). Output-limit choices are 4096 to 128000-token presets up to the model limit, plus the limit
+itself; the limit covers thinking and answer tokens and must exceed a budget. Adapter profiles
+(for example Anthropic adaptive versus manual budget) are chosen per model inside the binding;
+users never select them.
+
+New sessions start on LABKIT_ACP_MODEL (`<provider>/<model>` or a bare model ID served by the first
+bound provider that lists it), otherwise on the first bound provider's default model (anthropic,
+openai, google, xai, localhost order), with thinking off unless always-on and an output limit of
+min(32768, model limit). An unknown LABKIT_ACP_MODEL does not stop the launch: it logs
+`acp.catalog.default_model_unresolved` (warning: requested value, fallback provider and model,
+consequence) and uses the default.
+Relaunching with a different model, tool set or agent does not prevent reopening saved sessions;
+the change is adopted on the next prompt ([registry changes](#registry-changes-on-reopen)). Historical journal formats are not migrated.
 
 The example enables experimental session forking and persists under `<cwd>/.labkit/sessions/store.sqlite` and advertises
 `loadSession: true`. Bun SQLite transactions store ordered journal batches and their stable
@@ -203,7 +221,7 @@ cleanup request. Successful operations also release; cleanup errors fail the too
 A terminal ID received after cancellation is still released while the connection remains open.
 After disconnection, the client is responsible for cleaning up its processes. Neither cancellation
 nor release undoes side effects. Changing terminal capability/opt-in changes the tool manifest;
-restore requires the original compatible manifest.
+restored sessions adopt the new manifest ([registry changes](#registry-changes-on-reopen)).
 
 Terminal IDs are operation resources, not journal data. Final command output is an ordinary tool
 result and is journaled. The terminal is embedded in its live tool card as soon as creation returns,
@@ -378,8 +396,9 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
   abort through core and returns `cancelled` on the original prompt. Idle cancellation is a no-op.
 - `session/close`: closes the runtime and cancels owned work; it does not delete persisted data.
 - `session/load`: opt-in via `loadSession: true`. The factory receives sessionId and must resolve the
-  compatible saved configuration/store and validate that cwd belongs to that session. No durable
-  session-to-workspace directory is invented by this adapter. Duplicate live loads are rejected.
+  saved store and validate that cwd belongs to that session. No durable session-to-workspace
+  directory is invented by this adapter. Duplicate live loads are rejected. Tool or agent registry
+  changes do not prevent loading ([registry changes](#registry-changes-on-reopen)).
 - `session/resume`: available with `loadSession`; restores and recovers like load but emits no
   conversation replay. Duplicate live sessions remain rejected.
 - `session/fork`: experimental, opt-in via `forkSession: true` (requires `loadSession`). Forks a
@@ -458,7 +477,7 @@ through MCP `roots/list`; roots are advisory and do not sandbox an external serv
 
 The adapter initializes each server, paginates `tools/list`, and freezes the resulting catalog for
 the session. Names use `mcp_<server>_<tool>_<hash>` to fit provider limits and avoid collisions. The
-catalog is sorted for stable restore manifests. Reopening reconnects and validates compatible tool
+catalog is sorted for stable restore manifests. Reopening reconnects and adopts the current tool
 schemas; it never reissues recorded calls. Tool-list-change notifications do not mutate a running
 session's registry. Sampling, task-only tools, and resource/prompt browsing are not
 advertised. Elicitation is forwarded only for explicitly supported client modes.
@@ -553,11 +572,18 @@ restore a runtime or access blobs. Private fork-parent restoration emits no meta
 `sessionOptions` may return `AcpSessionOptions`, which extends core options with a `config` array.
 Each `AcpConfigBinding` declares `id`, `name`, optional `category`/`description`, and a pure
 `current(policy)` selector. Select bindings have `options` (`value`, `name`, optional `description`,
-and a `PolicyPatch`), or groups (`group`, `name`, `options`). Values must be unique across
+and a `PolicyPatch`), or groups (`group`, `name`, `options`). `options` may instead be a function
+of the policy in effect that returns either form; it is resolved and validated whenever the adapter
+reports configuration or applies a choice, so choices can follow the current model. Values must be unique across
 all groups; groups and individual values cannot be mixed. Group, value, and control `_meta` data
-is preserved. `selectChoices(binding)` exposes flattened choices for application logic. Boolean bindings declare `type: "boolean"`, return a boolean from `current`,
+is preserved. `selectChoices(binding, policy)` exposes flattened choices for application logic. Boolean bindings declare `type: "boolean"`, return a boolean from `current`,
 and provide `patches: { true: PolicyPatch, false: PolicyPatch }`.
-The selector must derive its value from journaled policy; select values must match a declared option.
+The selector must derive its value from the policy in effect (`SessionRuntime.policy`, which
+includes any pending registry reconciliation). If that value is not a declared option, the adapter
+appends it as an extra choice, `{ value, name: "<value> (saved)", description }`, in a
+`labkit-saved` group for grouped selectors and in `availableModes` for the mode selector. It logs
+`acp.session.config.unlisted_value` (info) with `configId` and `value`. Selecting that value again
+is a no-op; any other choice commits its patch.
 Do not keep a separate mutable selection. Each patch must produce its corresponding selected value.
 Bindings are copied at session opening, while callbacks remain executable host resources. They are
 never written to the journal. Core validates tool/provider capability restrictions on each patch.
@@ -573,10 +599,25 @@ offers a Stream responses toggle to capable clients; its initial value remains e
 
 The adapter sends `config_option_update` after committed state changes and `current_mode_update`
 when the selected mode changes. A response means the journal accepted the policy update, not merely
-that a display event was emitted. Compatible bindings must still represent restored policy values;
-removing a saved model from the offered choices makes that configuration incompatible with restore.
-The initial agent manifest model remains unchanged by a policy selection, so keep the original
-`LABKIT_ACP_MODEL` when restarting a session that selected an alternate model.
+that a display event was emitted. The initial agent manifest model remains unchanged by a policy
+selection, so a session that selected an alternate model reverts to the live default only if the
+relaunched binding no longer serves that model.
+
+## Registry changes on reopen
+
+Core compares the saved tool/agent registry with the one the factory supplies now. Any difference
+is accepted: added, removed or changed tools, changed parameters, added or removed agents, changed
+agent fields, and changed order. Load and resume succeed and replay the saved history unchanged.
+Opening writes nothing new; the adapter logs `acp.session.registry_pending` (info) with the
+`differences`. The first later prompt, policy change or fork first commits a `configuration` journal
+record with the live registry. Replay still checks earlier turns against the registry they used.
+If the saved policy names removed tools or a model the live binding no longer serves, or the current
+agent was removed, the same record carries the adjusted policy or the live default agent; core logs
+each adjustment. Selectors and the load response already show the adjusted policy.
+
+Saved history is a record of what happened and is never filtered or rewritten. The next completion
+request contains all prior messages, including calls to tools that are no longer registered and
+their results. Only the live tools are advertised to the model.
 
 ## Explicit limits
 
@@ -643,9 +684,12 @@ Protocol references: [stdio](https://agentclientprotocol.com/protocol/v1/transpo
 
 ACP runtime diagnostics use the `labkit.acp` category. Session opening records carry a
 connection ID, initiating `rpcRequestId`, session ID, cwd, provider version, restored revision,
-and elapsed time. `acp.prompt.*` joins incoming requests to admitted turns and terminal outcomes;
-`acp.config.*` distinguishes waiting for the active prompt from a committed policy revision.
-A failed load records its original error and cause chain, rather than only the translated RPC error.
+registry state (`current` or `pending_adoption`), and elapsed time. `acp.prompt.*`
+joins incoming requests to admitted turns and terminal outcomes; `acp.config.*` distinguishes
+waiting for the active prompt from a committed policy revision. A failed load records its original
+error and cause chain, rather than only the translated RPC error. `acp.session.registry_pending`
+(info) records registry differences on open; core logs `session.registry.adopted` when the live
+registry commits.
 
 `acp.permission.waiting` includes the absolute target paths, tool-call ID, offered option IDs,
 and originating prompt RPC ID. `acp.permission.resolved` records the actual selected option and

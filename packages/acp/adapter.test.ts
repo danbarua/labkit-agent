@@ -1,18 +1,36 @@
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { ndJsonStream, type SessionNotification } from "@agentclientprotocol/sdk";
-import { defineTool, type SessionOptions } from "@labkit-agent/core";
+import {
+  createSession,
+  defineTool,
+  type CompletionPortRequest,
+  type SessionOptions,
+} from "@labkit-agent/core";
+import { openaiChat } from "@labkit-agent/core/providers";
 import { createMemoryPersistence } from "@labkit-agent/core/testing";
 import { getLogger } from "@logtape/logtape";
 import { expect, spyOn, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
 
 import { deferred, until } from "../core/agent/test-support.ts";
+import { withFixtureDiagnostics } from "../core/logging/fixture-capture.ts";
 import {
   streamingProfiles,
   streamResponse,
   streamVector,
 } from "../core/providers/testing/stream-vectors.ts";
 import { connectAcp, type AcpOptions } from "./adapter.ts";
+import { workspaceAgent } from "./examples/vscode-workspace.ts";
 import type { PlanEntries } from "./plan.ts";
+import { selectChoices } from "./session-config.ts";
+
+// Keep workspace launcher tests off any real local model server.
+const offline = (async () => {
+  throw new Error("offline");
+}) as unknown as typeof fetch;
 
 type Message = {
   jsonrpc: string;
@@ -1385,10 +1403,8 @@ test("invalid policy patches return errors without publishing a configuration ch
             ? binding
             : {
                 ...binding,
-                options: [
-                  ...binding.options.flatMap((option) =>
-                    "group" in option ? [...option.options] : [option],
-                  ),
+                options: (policy) => [
+                  ...selectChoices(binding, policy),
                   {
                     value: "unbound",
                     name: "Unbound",
@@ -3146,14 +3162,13 @@ test("workspace roots survive listing restart, replace on load/resume, and fork 
   const { mkdtempSync, mkdirSync, realpathSync, rmSync, existsSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const { workspaceAgent } = await import("./examples/vscode-workspace.ts");
   const root = realpathSync(mkdtempSync(join(tmpdir(), "labkit-acp-roots-")));
   const cwd = join(root, "primary");
   const a = join(root, "a");
   const b = join(root, "b");
   for (const path of [cwd, a, b]) mkdirSync(path);
   const make = () =>
-    workspaceAgent({ ANTHROPIC_API_KEY: "fixture", LABKIT_ACP_MODEL: "fixture-model" });
+    workspaceAgent({ ANTHROPIC_API_KEY: "fixture" }, undefined, { fetch: offline });
   let h = harness(make());
   try {
     expect(
@@ -3229,6 +3244,67 @@ test("workspace roots survive listing restart, replace on load/resume, and fork 
   } finally {
     await h.close();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a workspace session saved on anthropic/claude-sonnet-5 with adaptive thinking reopens with catalog selectors", async () => {
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "labkit-acp-saved-model-")));
+  const make = () =>
+    workspaceAgent({ ANTHROPIC_API_KEY: "fixture" }, undefined, { fetch: offline });
+  try {
+    // Journal the policy the earlier single-provider launcher wrote for this model.
+    const options = await make().sessionOptions({ cwd, signal: new AbortController().signal });
+    const saved = await createSession({
+      ...options,
+      configuration: {
+        ...options.configuration,
+        policy: {
+          ...options.configuration.policy,
+          provider: "anthropic",
+          model: "claude-sonnet-5",
+          thinking: "adaptive",
+          maxOutputTokens: 16384,
+        },
+      },
+      bindings: {
+        ...options.bindings,
+        requestPermission: async () => ({ outcome: { outcome: "cancelled" as const } }),
+      },
+    });
+    const sessionId = saved.snapshot.durable.conversation.sessionId;
+    await saved.close();
+    const h = harness(make());
+    try {
+      await h.initialize();
+      const loaded = await h.request("session/load", { sessionId, cwd, mcpServers: [] });
+      expect(loaded.error).toBeUndefined();
+      const option = (id: string) =>
+        (
+          loaded.result.configOptions as { id: string; currentValue: string; options: unknown[] }[]
+        ).find((entry) => entry.id === id)!;
+      expect(option("model").currentValue).toBe("anthropic/claude-sonnet-5");
+      expect(option("model").options).toContainEqual({
+        group: "anthropic",
+        name: "Anthropic",
+        options: expect.arrayContaining([
+          { value: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
+          { value: "anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5 (latest)" },
+        ]),
+      });
+      expect(option("thinking")).toMatchObject({
+        currentValue: "adaptive",
+        options: [
+          { value: "off", name: "Off" },
+          { value: "adaptive", name: "Adaptive" },
+        ],
+      });
+      expect(option("max_output_tokens").currentValue).toBe("16384");
+      expect(JSON.stringify(loaded.result)).not.toContain("(saved)");
+    } finally {
+      await h.close();
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
   }
 });
 
@@ -4579,15 +4655,13 @@ test("ACP exposes structured storage failure from public settlement without reco
 test("workspace ACP reports missing-file errors to the model, completes sibling reads, and supplies recovery instructions to the next completion", async () => {
   const { mkdir, realpath } = await import("node:fs/promises");
   const { resolve, join } = await import("node:path");
-  const { workspaceAgent } = await import("./examples/vscode-workspace.ts");
   const { withFixtureDiagnostics } = await import("../core/logging/fixture-capture.ts");
   const directory = resolve(`.session-artifacts/acp-tool-recovery/${crypto.randomUUID()}`);
   await mkdir(directory, { recursive: true });
   const cwd = await realpath(directory);
   await withFixtureDiagnostics(directory, {}, async () => {
-    const workspace = workspaceAgent({
-      LABKIT_ACP_MODEL: "review-model",
-      ANTHROPIC_API_KEY: "scripted-credential",
+    const workspace = workspaceAgent({ ANTHROPIC_API_KEY: "scripted-credential" }, undefined, {
+      fetch: offline,
     });
     let completions = 0;
     const modelRequests: unknown[] = [];
@@ -5636,4 +5710,259 @@ test("invalid tool display preserves successful execution and explains the displ
   expect(warnings[0].sessionId).toBeTruthy();
   expect(warnings[0].toolCallId).toBeTruthy();
   expect(warnings[0].toolName).toBe("echo");
+});
+
+test("a reopened session adopts a changed tool manifest and prompts with its prior history", async () => {
+  const directory = `.session-artifacts/acp-registry-adoption/${crypto.randomUUID()}`;
+  const requests: CompletionPortRequest[] = [];
+  const base = setup({
+    complete: (request) => {
+      requests.push(request);
+      return requests.length === 1
+        ? { kind: "tools", text: "Checking", calls: [{ id: "one", name: "extra", args: {} }] }
+        : answer;
+    },
+  });
+  const factory =
+    (tools: NonNullable<SessionOptions["bindings"]["tools"]>): AcpOptions["sessionOptions"] =>
+    async (context) => {
+      const options = await base.options.sessionOptions(context);
+      return {
+        ...options,
+        configuration: {
+          ...options.configuration,
+          agents: new Map([["a", { model: "m", tools: [...tools.keys()], successors: [] }]]),
+          policy: { permissions: "off" },
+        },
+        bindings: { ...options.bindings, tools },
+      };
+    };
+  const original = factory(
+    new Map([
+      ["echo", defineTool({ input: z.object({ text: z.string() }), run: () => "echoed" })],
+      ["extra", defineTool({ input: z.object({}), run: () => "extra result" })],
+    ]),
+  );
+  const widened = z.object({ text: z.string(), limit: z.number().int().optional() });
+  const changed = factory(new Map([["echo", defineTool({ input: widened, run: () => "echoed" })]]));
+  let sessionId = "";
+  await withFixtureDiagnostics(directory, {}, async () => {
+    let h = harness({ ...base.options, sessionOptions: original });
+    try {
+      await h.initialize();
+      sessionId = await h.newSession();
+      expect((await h.request("session/prompt", prompt(sessionId))).result.stopReason).toBe(
+        "end_turn",
+      );
+      await h.close();
+      h = harness({ ...base.options, sessionOptions: changed });
+      await h.initialize();
+      expect(
+        (await h.request("session/load", { sessionId, cwd: "/tmp", mcpServers: [] })).error,
+      ).toBeUndefined();
+      expect(h.updates().map(({ update }) => update.sessionUpdate)).toEqual([
+        "user_message_chunk",
+        "agent_message_chunk",
+        "tool_call",
+        "tool_call_update",
+        "agent_message_chunk",
+      ]);
+      expect(
+        h.updates().find(({ update }) => update.sessionUpdate === "tool_call_update")?.update,
+      ).toMatchObject({ status: "completed", rawOutput: "extra result" });
+      expect(requests).toHaveLength(2);
+      expect((await h.request("session/prompt", prompt(sessionId))).result.stopReason).toBe(
+        "end_turn",
+      );
+      expect(requests).toHaveLength(3);
+      const next = requests[2]!;
+      expect(next.messages.map(({ role, content }) => [role, content])).toEqual([
+        ["user", "Go"],
+        ["assistant", "Checking"],
+        ["tool", "extra result"],
+        ["assistant", "Done"],
+        ["user", "Go"],
+      ]);
+      // History for the removed tool is projected exactly as before the manifest change.
+      expect(next.messages.slice(0, 3)).toEqual([...requests[1]!.messages]);
+      expect(next.messages[1]).toMatchObject({
+        tool_calls: [{ id: "one", function: { name: "extra" } }],
+      });
+      expect(next.messages[2]).toMatchObject({ role: "tool", tool_call_id: "one" });
+      expect(next.tools?.map((tool) => tool.function.name)).toEqual(["echo"]);
+      expect(next.tools?.[0]?.function.parameters).toMatchObject({
+        properties: { limit: { type: "integer" } },
+      });
+      await h.close();
+      h = harness({ ...base.options, sessionOptions: changed });
+      await h.initialize();
+      expect(
+        (await h.request("session/load", { sessionId, cwd: "/tmp", mcpServers: [] })).error,
+      ).toBeUndefined();
+    } finally {
+      await h.close();
+    }
+  });
+  const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const pending = records.filter((record) => record.event === "acp.session.registry_pending");
+  expect(pending).toHaveLength(1);
+  expect(pending[0]).toMatchObject({ level: "info", sessionId, method: "session/load" });
+  expect(pending[0].connectionId).toBeString();
+  expect(pending[0].rpcRequestId).toBeString();
+  expect(pending[0].differences).toContain("missing tools.extra");
+  expect(pending[0].differences).toContain("changed tools.echo.parameters: added properties limit");
+  expect(
+    records
+      .filter(
+        (record) =>
+          record.event === "acp.session.open.completed" && record.method === "session/load",
+      )
+      .map((record) => record.registry),
+  ).toEqual(["pending_adoption", "current"]);
+  expect(records.filter((record) => record.event === "session.registry.adopted")).toHaveLength(1);
+  expect(records.filter((record) => ["warning", "error"].includes(record.level))).toEqual([]);
+});
+
+test("reopening under a different launcher model uses the live model and lists unlisted saved values", async () => {
+  const directory = `.session-artifacts/acp-model-reconcile/${crypto.randomUUID()}`;
+  const persistence = createMemoryPersistence();
+  const bodies: { model: string; messages: { role: string; content: string }[] }[] = [];
+  const launcher = (model: string, available: string[], offered: string[]): AcpOptions => ({
+    loadSession: true,
+    sessionOptions: () => ({
+      persistence,
+      configuration: {
+        agent: "a",
+        agents: new Map([["a", { model, tools: ["echo"], successors: [] }]]),
+        steps: 3,
+        policy: { maxOutputTokens: 16384, provider: openaiChat.id, model },
+      },
+      bindings: {
+        tools: new Map([
+          ["echo", defineTool({ input: z.object({ text: z.string() }), run: ({ text }) => text })],
+        ]),
+        providers: new Map([
+          [
+            openaiChat.id,
+            {
+              profile: openaiChat,
+              models: new Map(
+                available.map((name) => [name, { wireModel: name, profile: openaiChat }]),
+              ),
+              transport: {
+                baseUrl: "https://test.invalid",
+                fetch: (async (_url, init) => {
+                  const body = JSON.parse(String(init?.body));
+                  bodies.push(body);
+                  return Response.json({
+                    choices: [{ message: { content: `Answer ${bodies.length}` } }],
+                  });
+                }) as typeof fetch,
+              },
+            },
+          ],
+        ]),
+      },
+      config: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          current: (policy) => policy.model ?? model,
+          options: offered.map((value) => ({ value, name: value, patch: { model: value } })),
+        },
+      ],
+    }),
+  });
+  const load = async (h: ReturnType<typeof harness>, sessionId: string) => {
+    const response = await h.request("session/load", { sessionId, cwd: "/tmp", mcpServers: [] });
+    expect(response.error).toBeUndefined();
+    return response.result.configOptions[0] as {
+      currentValue: string;
+      options: { value: string; name: string; description?: string }[];
+    };
+  };
+  let sessionId = "";
+  await withFixtureDiagnostics(directory, {}, async () => {
+    let h = harness(launcher("model-a", ["model-a"], ["model-a"]));
+    try {
+      await h.initialize();
+      sessionId = await h.newSession();
+      expect((await h.request("session/prompt", prompt(sessionId))).result.stopReason).toBe(
+        "end_turn",
+      );
+      await h.close();
+      // The relaunched binding no longer serves model-a.
+      h = harness(launcher("model-b", ["model-b"], ["model-b"]));
+      await h.initialize();
+      const reconciled = await load(h, sessionId);
+      expect(reconciled.currentValue).toBe("model-b");
+      expect(reconciled.options.map((option) => option.value)).toEqual(["model-b"]);
+      expect(h.updates().map(({ update }) => update.sessionUpdate)).toEqual([
+        "user_message_chunk",
+        "agent_message_chunk",
+      ]);
+      expect(bodies).toHaveLength(1);
+      expect((await h.request("session/prompt", prompt(sessionId))).result.stopReason).toBe(
+        "end_turn",
+      );
+      expect(bodies[1]!.model).toBe("model-b");
+      expect(bodies[1]!.messages.map(({ role, content }) => [role, content])).toEqual([
+        ["user", "Go"],
+        ["assistant", "Answer 1"],
+        ["user", "Go"],
+      ]);
+      await h.close();
+      // model-b is still served but no longer offered by the selector.
+      h = harness(launcher("model-a", ["model-a", "model-b"], ["model-a"]));
+      await h.initialize();
+      const unlisted = await load(h, sessionId);
+      expect(unlisted.currentValue).toBe("model-b");
+      expect(unlisted.options).toEqual([
+        { value: "model-a", name: "model-a" },
+        {
+          value: "model-b",
+          name: "model-b (saved)",
+          description: "Saved session value; not offered by the current configuration",
+        },
+      ]);
+      const keep = { sessionId, configId: "model", value: "model-b" };
+      expect(
+        (await h.request("session/set_config_option", keep)).result.configOptions[0].currentValue,
+      ).toBe("model-b");
+      const changed = await h.request("session/set_config_option", { ...keep, value: "model-a" });
+      expect(changed.result.configOptions[0]).toMatchObject({
+        currentValue: "model-a",
+        options: [{ value: "model-a", name: "model-a" }],
+      });
+      expect((await h.request("session/prompt", prompt(sessionId))).result.stopReason).toBe(
+        "end_turn",
+      );
+      expect(bodies.at(-1)!.model).toBe("model-a");
+    } finally {
+      await h.close();
+    }
+  });
+  const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const unlisted = records.filter((record) => record.event === "acp.session.config.unlisted_value");
+  expect(unlisted).toHaveLength(1);
+  expect(unlisted[0]).toMatchObject({
+    level: "info",
+    sessionId,
+    method: "session/load",
+    configId: "model",
+    value: "model-b",
+  });
+  expect(unlisted[0].rpcRequestId).toBeString();
+  expect(
+    records.filter(
+      (record) => record.event.startsWith("acp.") && ["warning", "error"].includes(record.level),
+    ),
+  ).toEqual([]);
 });

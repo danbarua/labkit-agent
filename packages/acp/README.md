@@ -26,8 +26,8 @@ file read, a scripted HTTP failure, and restart/load. It prints a unique directo
 The intentional HTTP 400 must appear with its provider request ID and redacted credential.
 A failed check exits nonzero and keeps the evidence. Remove old debug run directories yourself.
 
-`dev:acp` and `start:acp` are protocol servers, not interactive chat terminals. They need
-`LABKIT_ACP_MODEL` and the selected provider's API key; connect them to an ACP client.
+`dev:acp` and `start:acp` are protocol servers, not interactive chat terminals. They need at least
+one provider API key or a running local model server; connect them to an ACP client.
 Live-launch logs default to `~/.labkit/logs/` (DEBUG, 10 MiB rotation, four backups per launch,
 20 stopped launches retained); the exact file is printed on stderr. Stdout stays protocol-only.
 For an editor launch, use the absolute built CLI and config paths described in
@@ -56,27 +56,59 @@ Launch the CLI with `--config /absolute/path/to/acp-config.ts`. Keep stdout excl
 frames, including during module imports and tool execution. The CLI configures durable diagnostics
 before importing the factory; use those logs or stderr for diagnostic output.
 
-The workspace example reads `LABKIT_ACP_MODEL` and provider credentials from the environment.
-`LABKIT_ACP_PROVIDER` selects `anthropic` (default), `openai`, `openai-responses`, or `google`.
-`LABKIT_ACP_MODELS` declares additional selectable models; no catalog is inferred. Anthropic defaults
-to native adaptive thinking; use `LABKIT_ACP_THINKING_MODE=budget` for manual thinking. Its selector names explicit 4096/8192/16384-token budgets.
-The separate output-limit control includes thinking and answer tokens; it must exceed a manual
-budget. `LABKIT_ACP_MAX_OUTPUT_TOKENS` sets the initial output limit (the example visibly starts at
-16384). These are application presets, not fixed adapter limits or guarantees of sufficient output.
-Choose a binding whose declared capabilities match the models you offer.
+The workspace example offers models from the core model catalog (`catalogProviders` over the
+committed models.dev snapshot), the same catalog the web console uses. It binds every provider whose
+API key is set, under the key names the snapshot lists for it (for example `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `GOOGLE_API_KEY`/`GEMINI_API_KEY`, `XAI_API_KEY`). It also binds a local
+OpenAI-chat-compatible server when `GET <base>/models` answers; the base is `LABKIT_LOCAL_BASE_URL`
+(default `http://localhost:8000/v1`). Discovery runs once, on the first session, and is logged as
+`acp.catalog.loaded` (credential variable names only, never values) and, if the local server does
+not answer, `acp.catalog.localhost_unavailable`. With nothing bound, session creation fails and
+names the variables checked and the local URL tried.
+
+The Model selector groups models by provider; option values are `<provider>/<model>`. Thinking and
+output-limit choices come from the selected model's catalog entry: adaptive, explicit budgets
+(1024/4096/8192/16384 tokens, at least the model minimum and below the output limit) or effort
+levels. Always-on models (Fable, Mythos) have no "off". The output limit covers thinking and answer
+tokens and is capped at the model's limit. Changing model keeps the thinking setting when the new
+model offers it, otherwise turns thinking off (or on, for always-on models), clamps the output limit
+and turns streaming off when the model cannot stream. Provider adapter profiles are chosen per model
+inside the binding and are never user choices.
+
+New sessions start on `LABKIT_ACP_MODEL` when set (`<provider>/<model>` or a bare model ID), otherwise
+on the first bound provider's default model (anthropic, openai, google, xai, localhost order), with
+thinking off and a 32768-token output limit (lower if the model's limit is lower). An unknown
+`LABKIT_ACP_MODEL` logs `acp.catalog.default_model_unresolved` and uses that default.
+`LABKIT_ACP_TERMINAL=1` enables the client terminal tool.
 
 ## Derive UI configuration from committed policy
 
-A selector's `current(policy)` must read the saved policy; each option supplies a policy patch.
-Do not maintain a parallel selected-model or permission-mode variable. Otherwise a failed append
-or reload can leave the UI advertising a setting the runtime never accepted.
+A selector's `current(policy)` must read the policy in effect; each option supplies a policy
+patch. Do not maintain a parallel selected-model or permission-mode variable. Otherwise a failed
+append or reload can leave the UI advertising a setting the runtime never accepted.
 
 A configuration request waits for an active prompt to settle, commits its patch, and then returns
 updated options. New prompts wait behind that commit. Core rejects unsupported model/settings
-combinations. If you remove a model or change the tool manifest, reopening an older session can
-fail validation. Preserve compatible bindings for sessions you intend to reopen; this unreleased
-software does not migrate historical journal formats. See
-[configuration binding details](protocol-reference.md#configuration-bindings).
+combinations. Choices may depend on policy: `options` can be a function of the policy in effect,
+resolved and validated each time the adapter reports or applies configuration. If the value in effect is not one of a selector's choices, the adapter adds it as an
+extra choice named `<value> (saved)` and logs `acp.session.config.unlisted_value` (info). Choosing
+it again changes nothing; choosing another value commits the usual patch.
+See [configuration binding details](protocol-reference.md#configuration-bindings).
+
+## Reopen a session after the tool, agent or model registry changes
+
+Your factory may change the tool, agent or model registry between runs. A saved session still opens
+and accepts prompts after tools are added, removed or given new parameters, agents change, or the
+saved model is no longer served. Reload replays the saved history unchanged. The next prompt,
+configuration change or fork first records the live registry in the journal, then runs normally.
+Opening alone writes nothing new. On load, `acp.session.registry_pending` (info) lists the
+differences.
+
+Saved history is a record of what happened. The next request sends all of it, including calls
+to tools that are no longer registered and their results. Only live tools are offered to the model.
+If the saved policy names a removed tool or an unavailable model, or the current agent was removed,
+core adjusts the policy or agent in the same journal record and logs each adjustment. Selectors show
+the adjusted policy from the moment the session opens.
 
 ## Publish context usage and cumulative cost
 

@@ -15,7 +15,7 @@ built agent below. No Labkit chat extension is required.
 
 ACP Client 0.2.0 uses an **object keyed by agent name** for `acp.agents`
 ([setting schema](https://github.com/formulahendry/vscode-acp/blob/main/package.json)).
-Add this to your VS Code user settings, replacing the absolute checkout paths and model:
+Add this to your VS Code user settings, replacing the absolute checkout paths:
 
 ```json
 {
@@ -28,7 +28,7 @@ Add this to your VS Code user settings, replacing the absolute checkout paths an
         "/ABS/labkit-agent/packages/acp/dist/examples/vscode-workspace.js"
       ],
       "env": {
-        "LABKIT_ACP_MODEL": "YOUR_ANTHROPIC_MODEL_ID"
+        "LABKIT_ACP_MODEL": "anthropic/claude-sonnet-4-6"
       }
     }
   },
@@ -36,20 +36,27 @@ Add this to your VS Code user settings, replacing the absolute checkout paths an
 }
 ```
 
+`LABKIT_ACP_MODEL` is optional: it names the model new sessions start on, as `<provider>/<model>` or
+a bare model ID. Without it, new sessions start on the first bound provider's default model. The
+Model selector lists every model of every bound provider, grouped by provider.
+
 Use an absolute Bun executable path if the GUI's PATH does not include Bun. Start VS Code from
-an environment with `ANTHROPIC_API_KEY` available to its child processes. Do not commit credentials
+an environment with at least one provider key available to its child processes: the key names come
+from the models.dev catalog (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY` or
+`GEMINI_API_KEY`, `XAI_API_KEY`). A local OpenAI-chat-compatible server at `LABKIT_LOCAL_BASE_URL`
+(default `http://localhost:8000/v1`) is offered when it answers `GET /models`. Do not commit credentials
 in workspace settings. Bun also loads environment files from the launched process's working
 directory; the adapter never changes that directory. File operations use the absolute cwd from
 `session/new`, independently of the process cwd. ACP Client 0.2.0 reads the first entry in
 `vscode.workspace.workspaceFolders`; when none exists, it falls back to the extension host
 process directory. Opening a file is not the same as opening a workspace folder. The installed
 0.2.0 implementation does not read its advertised `acp.defaultWorkingDirectory` setting.
-Open the intended folder/workspace in the same VS Code window before connecting. Other provider
-profiles and credentials are listed in the
-[ACP README](../packages/acp/README.md#configure-a-host).
+Open the intended folder/workspace in the same VS Code window before connecting. Catalog-driven
+model selection is described in the [ACP README](../packages/acp/README.md#configure-a-host).
 
-If session creation rejects `LABKIT_ACP_PROVIDER`, use `anthropic`, not an adapter identifier
-such as `anthropic-messages@4`. Run `bun run logs:acp --errors` from the checkout to read the latest
+If session creation fails because no provider is available, its message lists the key names
+checked and the local server URL tried. The `acp.catalog.loaded` log record shows which providers
+were bound. Run `bun run logs:acp --errors` from the checkout to read the latest
 launch failure. The log path is printed before the records. A logged `cwd: "/"` means the client
 sent the filesystem root; select the intended workspace in the client before invoking file tools.
 
@@ -77,8 +84,8 @@ until the live session closes or tool scope changes or permissions are explicitl
 grants; the other option explicitly allows all enabled tools without asking. Reopening a session
 requires fresh grants, without replaying old tools. **ACP: Set Agent Mode** switches between read-only
 and edit access; both still require approval. Hosts with configuration-selector support also expose
-model and thinking choices. Set `LABKIT_ACP_MODELS` to a comma-separated list of additional model
-IDs for the same provider before launch. Configuration changes during a turn wait for settlement,
+model, thinking and output-limit choices; thinking and output-limit choices follow the selected
+model's catalog entry. Configuration changes during a turn wait for settlement,
 and replies are sent only after the policy journal commit. The installed client's older model UI
 may not expose the newer `session/set_config_option` method; mode selection has the legacy alias.
 Clients that advertise boolean configuration support also receive a Stream responses toggle.
@@ -87,8 +94,9 @@ Its value is journaled and restored even when reopening with a client that canno
 The example now persists journals and blobs in `.labkit/sessions/store.sqlite` inside the opened
 workspace and advertises session loading. Restart the agent to pick up this configuration change;
 old memory-only conversations cannot be recovered. Use ACP Client's saved session entry to reopen
-a newly persisted conversation. Loading requires the same compatible agent/model/tool configuration
-and workspace cwd. **ACP: Refresh Sessions** can now discover saved sessions through `session/list`.
+a newly persisted conversation. Loading requires the original workspace cwd. Tool, agent and model
+changes are adopted on the next prompt: a saved model the relaunched agent no longer serves is
+replaced by the new-session default model, and saved history is kept unchanged. **ACP: Refresh Sessions** can now discover saved sessions through `session/list`.
 Unfiltered discovery covers the launch cwd and workspaces opened in the current agent process;
 a cwd filter can address another workspace directly. The adapter also supports `session/resume`
 for hosts that already retain history and do not want replay. Runtime files are ignored by this repo and blocked from the file tools. Other workspaces should

@@ -27,6 +27,7 @@ import {
 } from "@labkit-agent/core";
 import type { HostToolNotification, Tool } from "@labkit-agent/core/host";
 import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
+import type { Policy } from "@labkit-agent/core/policy";
 import type { AgentMessage } from "@labkit-agent/core/types";
 
 import { bindAuth, type AcpAuth } from "./auth.ts";
@@ -46,6 +47,7 @@ import {
   bindConfig,
   configPatch,
   configState,
+  unlistedValues,
   waitForBoundary,
   type AcpConfigBinding,
 } from "./session-config.ts";
@@ -350,18 +352,39 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         content: { type: "text", text: value },
       });
   };
+  const logUnlisted = (
+    config: readonly AcpConfigBinding[],
+    policy: Policy | undefined,
+    fields: Record<string, unknown>,
+  ) => {
+    for (const { configId, value } of unlistedValues(config, policy))
+      diagnostic("acp", "info", "acp.session.config.unlisted_value", {
+        ...fields,
+        configId,
+        value,
+        consequence:
+          "selector shows the value as an extra saved choice; choosing another value patches policy",
+      });
+  };
   const observe = (
-    entry: Omit<Session, "runtime">,
+    entry: Omit<Session, "runtime"> & { runtime?: SessionRuntime },
     client: AgentContext,
     snapshot: SessionState,
   ) => {
     if (!entry.acceptingUpdates) return;
     entry.usage?.refresh();
     const id = snapshot.durable.conversation.sessionId;
-    const configuration = configState(entry.config, snapshot.durable.policy);
+    // Pending registry adoption can reconcile the policy the next turn uses before it is journaled.
+    const policy = entry.runtime ? entry.runtime.policy : snapshot.durable.policy;
+    const configuration = configState(entry.config, policy);
     const signature = JSON.stringify(configuration);
     if (signature !== entry.configSignature) {
       entry.configSignature = signature;
+      logUnlisted(entry.config, policy, {
+        connectionId,
+        sessionId: id,
+        revision: snapshot.durable.revision,
+      });
       if (configuration.configOptions)
         send(client, id, {
           sessionUpdate: "config_option_update",
@@ -853,7 +876,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       opening.add(sessionId);
       let configuration: ReturnType<typeof configState>;
       try {
-        configuration = configState(entry.config, runtime.snapshot.durable.policy);
+        configuration = configState(entry.config, runtime.policy);
         if (visible && original.onReady)
           await waitForBoundary(Promise.resolve(original.onReady(sessionId, signal)), signal);
         signal.throwIfAborted();
@@ -865,6 +888,11 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       entry.commands = pendingCommands ?? entry.commands;
       entry.configSignature = JSON.stringify(configuration);
       entry.modeId = configuration.modes?.currentModeId;
+      logUnlisted(entry.config, runtime.policy, {
+        ...trace,
+        sessionId,
+        revision: runtime.snapshot.durable.revision,
+      });
       commandEntry = Object.assign(entry, { runtime });
       sessions.set(sessionId, commandEntry);
       entry.revision = runtime.snapshot.durable.revision;
@@ -884,6 +912,15 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           );
         });
       }
+      const registry = runtime.registry;
+      if (registry.kind === "pending_adoption")
+        diagnostic("acp", "info", "acp.session.registry_pending", {
+          ...trace,
+          sessionId,
+          revision: entry.revision,
+          differences: registry.differences,
+          consequence: "core journals the live registry before the next new work",
+        });
       boundSessionId = sessionId;
       entry.acceptingUpdates = visible;
       published = true;
@@ -914,7 +951,8 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         ...trace,
         sessionId,
         revision: entry.revision,
-        provider: runtime.snapshot.durable.policy?.provider,
+        registry: registry.kind,
+        provider: runtime.policy?.provider,
         durationMs: performance.now() - started,
       });
       return { sessionId, ...configuration };
@@ -963,8 +1001,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       reason: entry.busy ? "active_prompt" : "configuration_boundary",
     });
     const binding = entry.config.find((binding) => binding.id === configId);
-    const patch = binding && configPatch(binding, value, type);
-    if (!binding || !patch)
+    const effective = entry.runtime.policy;
+    const offered = binding && effective && configPatch(binding, value, effective, type);
+    // An unlisted saved value is offered as a choice; re-selecting it changes nothing.
+    const keepsSaved =
+      binding?.type !== "boolean" && effective && binding?.current(effective) === value;
+    if (!binding || (!offered && !keepsSaved))
       throw RequestError.invalidParams(undefined, "Unknown config option or value");
     const cancellation = AbortSignal.any([signal, connection.signal]);
     const operation = entry.configurationTail.then(async () => {
@@ -973,9 +1015,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       if (closing || sessions.get(id) !== entry || !entry.acceptingUpdates)
         throw new RequestError(-32000, "Session closed");
       requireAccess();
-      const policy = entry.runtime.snapshot.durable.policy;
+      const policy = entry.runtime.policy;
       if (!policy) throw new RequestError(-32000, "Session has no journaled policy");
       if (binding.current(policy) !== value) {
+        // Choices can depend on policy (for example the model); resolve against the policy in effect now.
+        const patch = configPatch(binding, value, policy, type);
+        if (!patch) throw RequestError.invalidParams(undefined, "Unknown config option or value");
         const receipt = await entry.runtime.updatePolicy(structuredClone(patch));
         if (receipt.kind !== "accepted")
           throw new RequestError(-32000, "Configuration change was not committed", receipt);
@@ -986,7 +1031,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         revision: entry.runtime.snapshot.durable.revision,
         durationMs: performance.now() - started,
       });
-      const state = configState(entry.config, entry.runtime.snapshot.durable.policy);
+      const state = configState(entry.config, entry.runtime.policy);
       observe(entry, client, entry.runtime.snapshot);
       refreshInfo(entry, client);
       await writes;

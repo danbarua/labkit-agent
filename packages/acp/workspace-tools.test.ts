@@ -30,6 +30,11 @@ async function fixture() {
 
 const signal = () => new AbortController().signal;
 
+// Keep launcher tests off any real local model server.
+const offline = (async () => {
+  throw new Error("offline");
+}) as unknown as typeof fetch;
+
 test("file tools resolve absolute locations, read/write/list JSON values, and bind cwd without chdir", async () => {
   const f = await fixture();
   const previous = process.cwd();
@@ -157,63 +162,6 @@ test("permission rejection for write_file preserves bytes; approved execution re
   }
 });
 
-test("workspace example validates environment, enables load and disables self-handoff, and journals no credentials", async () => {
-  const f = await fixture();
-  try {
-    expect(() => workspaceAgent({})).toThrow("LABKIT_ACP_MODEL");
-    expect(() => workspaceAgent({ LABKIT_ACP_MODEL: "m" })).toThrow("ANTHROPIC_API_KEY");
-    for (const [provider, key] of [
-      ["anthropic", "ANTHROPIC_API_KEY"],
-      ["openai", "OPENAI_API_KEY"],
-      ["openai-responses", "OPENAI_API_KEY"],
-      ["google", "GOOGLE_API_KEY"],
-    ]) {
-      const agent = workspaceAgent({
-        LABKIT_ACP_PROVIDER: provider,
-        LABKIT_ACP_MODEL: "m",
-        LABKIT_ACP_MODELS: "m2, m",
-        [key!]: "TEST_SECRET",
-      });
-      expect(agent.loadSession).toBe(true);
-      const options = await agent.sessionOptions({ cwd: f.cwd, signal: signal() });
-      expect(options.configuration.agents.get("workspace")?.successors).toEqual([]);
-      expect(options.toolContent?.has("write_file")).toBe(true);
-      expect(options.configuration.policy).toMatchObject({
-        permissions: "ask",
-        stream: true,
-        provider,
-      });
-      expect(
-        options.config
-          ?.find(
-            (binding): binding is AcpSelectBinding =>
-              binding.type !== "boolean" && binding.id === "model",
-          )
-          ?.options.flatMap((option) => ("group" in option ? [...option.options] : [option]))
-          .map((option) => option.value),
-      ).toEqual(["m", "m2"]);
-      expect(
-        options.config
-          ?.find(
-            (binding): binding is AcpSelectBinding =>
-              binding.type !== "boolean" && binding.id === "thinking",
-          )
-          ?.options.flatMap((option) => ("group" in option ? [...option.options] : [option]))
-          .map((option) => option.value),
-      ).toEqual(
-        provider!.startsWith("openai")
-          ? ["off", "low", "medium", "high"]
-          : provider === "google"
-            ? ["off", "budget:4096", "budget:8192", "budget:16384"]
-            : ["off", "adaptive"],
-      );
-      expect(JSON.stringify(options.configuration)).not.toContain("TEST_SECRET");
-    }
-  } finally {
-    await f.cleanup();
-  }
-});
-
 test("workspace terminal tool requires explicit opt-in and client capability and is excluded by read-only mode", async () => {
   const f = await fixture();
   const terminal = {
@@ -221,11 +169,11 @@ test("workspace terminal tool requires explicit opt-in and client capability and
   };
   try {
     for (const enabled of [false, true]) {
-      const agent = workspaceAgent({
-        LABKIT_ACP_MODEL: "m",
-        ANTHROPIC_API_KEY: "TEST",
-        ...(enabled ? { LABKIT_ACP_TERMINAL: "1" } : {}),
-      });
+      const agent = workspaceAgent(
+        { ANTHROPIC_API_KEY: "TEST", ...(enabled ? { LABKIT_ACP_TERMINAL: "1" } : {}) },
+        undefined,
+        { fetch: offline },
+      );
       for (const supported of [false, true]) {
         const options = await agent.sessionOptions({
           cwd: f.cwd,
@@ -233,12 +181,14 @@ test("workspace terminal tool requires explicit opt-in and client capability and
           ...(supported ? { terminal } : {}),
         });
         expect(options.bindings.tools?.has("run_command")).toBe(enabled && supported);
-        const readOnly = options.config
-          ?.find(
-            (binding): binding is AcpSelectBinding =>
-              binding.type !== "boolean" && binding.id === "mode",
-          )
-          ?.options.flatMap((option) => ("group" in option ? [...option.options] : [option]))
+        const mode = options.config?.find(
+          (binding): binding is AcpSelectBinding =>
+            binding.type !== "boolean" && binding.id === "mode",
+        );
+        // File access choices are static; they do not depend on policy.
+        if (!mode || typeof mode.options === "function") throw new Error("Missing mode choices");
+        const readOnly = mode.options
+          .flatMap((option) => ("group" in option ? [...option.options] : [option]))
           .find((option) => option.value === "read-only");
         expect(readOnly?.patch.tools?.workspace).not.toContain("run_command");
         expect(options.configuration.policy?.permissions).toBe("ask");
@@ -294,23 +244,22 @@ test("additional roots preserve primary relative paths and enforce every root's 
 test("workspace restores committed model selection without invoking transport", async () => {
   const f = await fixture();
   try {
-    const env = {
-      LABKIT_ACP_MODEL: "first",
-      LABKIT_ACP_MODELS: "second",
-      ANTHROPIC_API_KEY: "TEST_SECRET",
-    };
-    const original = await workspaceAgent(env).sessionOptions({ cwd: f.cwd, signal: signal() });
+    const env = { ANTHROPIC_API_KEY: "TEST_SECRET" };
+    const original = await workspaceAgent(env, undefined, { fetch: offline }).sessionOptions({
+      cwd: f.cwd,
+      signal: signal(),
+    });
     const requestPermission = async () => ({ outcome: { outcome: "cancelled" as const } });
     const options = { ...original, bindings: { ...original.bindings, requestPermission } };
     const session = await createSession(options);
-    expect((await session.updatePolicy({ model: "second", thinking: "adaptive" })).kind).toBe(
-      "accepted",
-    );
+    expect(
+      (await session.updatePolicy({ model: "claude-sonnet-5", thinking: "adaptive" })).kind,
+    ).toBe("accepted");
     await session.close();
     const restored = await restoreSession(options, session.snapshot.durable.conversation.sessionId);
     expect(restored.snapshot.durable.policy).toMatchObject({
       provider: "anthropic",
-      model: "second",
+      model: "claude-sonnet-5",
       thinking: "adaptive",
     });
     await restored.close();
