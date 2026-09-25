@@ -203,10 +203,12 @@ export function decideSession(
         details: { inputKind: s.input.kind, appendId: s.appendId },
       });
       const message = cause.message;
+      // Adoption gates queued work: a rejected adoption must not release that work under the old registry.
       if (
         s.input.kind === "tool" ||
         s.input.kind === "dequeued" ||
         s.input.kind === "recovery" ||
+        s.input.kind === "configuration" ||
         (s.input.kind === "event" && s.input.event.type === "child")
       ) {
         const failed = fail(state, cause);

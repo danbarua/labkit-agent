@@ -241,37 +241,58 @@ test("cancellation identifies the active completion and preserves its terminal o
   }
 });
 
-test("restore registry drift identifies changed fields and missing tools without logging prompt bodies", async () => {
+test("restore registry drift identifies changed fields and removed tools without logging prompt bodies", async () => {
   const capture = observeLogs();
   const options = testOptions();
   const session = await createSession(options);
   await session.close();
+  const sessionId = session.snapshot.durable.conversation.sessionId;
   try {
-    const incompatible = testOptions({
+    const drifted = testOptions({
       persistence: options.persistence,
       agents: new Map([
         ["a", { model: "replacement", systemPrompt: "PRIVATE_REPLACEMENT_PROMPT", tools: [] }],
       ]),
       tools: new Map(),
     });
-    await expect(
-      restoreSession(incompatible, session.snapshot.durable.conversation.sessionId),
-    ).rejects.toThrow(
-      "changed agents.a.model; changed agents.a.systemPrompt; changed agents.a.tools; missing agents.b; missing tools.echo",
-    );
-    const event = capture.records.find((record) => record.event === "session.restore_failed")!;
-    expect(event.fields.stage).toBe("validate_registry");
-    expect(event.fields.error).toMatchObject({
-      differences: [
-        "changed agents.a.model",
-        "changed agents.a.systemPrompt",
-        "changed agents.a.tools",
-        "missing agents.b",
-        "missing tools.echo",
-      ],
+    const restored = await restoreSession(drifted, sessionId);
+    const differences = [
+      "changed agents.a.model",
+      "changed agents.a.systemPrompt",
+      "changed agents.a.tools",
+      "missing agents.b",
+      "missing tools.echo",
+    ];
+    expect(restored.registry).toEqual({ kind: "pending_adoption", differences });
+    const mismatch = capture.records.find((record) => record.event === "session.registry.mismatch");
+    expect(mismatch).toMatchObject({
+      level: "info",
+      fields: { sessionId, revision: 1, differences, adoption: "pending" },
     });
+    const reconciled = capture.records.filter(
+      (record) => record.event === "session.registry.reconciled",
+    );
+    expect(reconciled.map((record) => [record.level, record.fields.reconciliation])).toEqual([
+      ["info", "tool_registry"],
+      ["info", "policy_tools_removed"],
+      ["info", "policy_agent_removed"],
+    ]);
+    expect(reconciled[0]!.fields).toMatchObject({ removedTools: ["echo"], changedTools: [] });
+    expect(reconciled[1]!.fields).toMatchObject({
+      agentId: "a",
+      removedTools: ["echo"],
+      policyVersion: 1,
+    });
+    expect(reconciled[2]!.fields).toMatchObject({ agentId: "b", removedTools: ["echo"] });
+    expect(
+      capture.records.find((record) => record.event === "session.restored")?.fields.registry,
+    ).toBe("pending_adoption");
+    expect(capture.records.filter((record) => ["warning", "error"].includes(record.level))).toEqual(
+      [],
+    );
     expect(JSON.stringify(capture.records)).not.toContain("PRIVATE_REPLACEMENT_PROMPT");
     expect(JSON.stringify(capture.records)).not.toContain("Agent A");
+    await restored.close();
   } finally {
     capture.close();
   }

@@ -149,21 +149,69 @@ flowchart TD
   load[Load and validate journal and bindings] --> valid{Valid?}
   valid -->|no| reject[Reject restore]
   valid -->|yes| work{Unfinished work?}
-  work -->|none| ready[Return idle runtime]
+  work -->|none| registry
   work -->|active turn or saved queued inputs| stage[Stage recovery batch]
   stage --> active{Active turn?}
   active -->|yes| terminal[Include interrupted terminal failure and committed partial results]
   active -->|no| queued[Include cancellation of any saved queued inputs]
   terminal --> queued
   queued --> append[Commit one atomic recovery batch]
-  append -->|receipt or reconciled commit| ready
+  append -->|receipt or reconciled commit| registry{Live registry differs?}
   append -->|cannot establish commit| reject
+  registry -->|no| ready
+  registry -->|yes| pending[Return runtime with pending registry adoption]
 ```
 
 An idle session with only queued inputs gets cancellations, not an invented failed turn. None of
 these paths invokes completion, tool, or permission bindings. Blob bytes are read only when needed
 for later work, so restoration is not a test of attachment availability. Repeating an uncertain
 action requires a new explicit invocation after restoration.
+
+## Restore adopts the live registry and bindings
+
+Stored history is a record of what happened, not a constraint on what may happen next. Replay
+validates committed records structurally (schema, version sequence, patch-derived policies, prompt
+captures against their projection) but never asks whether a provider, model, profile setting or
+permission port named in them is bound today. New policy patches are still validated against live
+bindings before they are admitted.
+
+If the live agents or tool schemas differ from the journal's registry, or the current policy does
+not validate against the live bindings, restore still succeeds and reports
+`registry: { kind: "pending_adoption", differences }`; `session.policy` is the policy the next turn
+will use. Tool differences name the schema delta, e.g. `changed tools.read_file.parameters: added
+properties line, limit`. Opening writes nothing beyond a recovery batch. The first input, system or
+policy change, fork or compaction first appends a `configuration` record with stable ID
+`configuration/<sessionId>/<revision>`, then the work queues behind it:
+
+```mermaid
+sequenceDiagram
+  participant A as Application
+  participant S as Session
+  participant J as Journal
+  A->>S: input
+  S->>J: configuration (live registry, reconciled policy/agent)
+  J-->>S: committed
+  S->>J: user input
+  J-->>S: committed
+  S-->>A: turn runs with live tools; registry is current
+```
+
+Replay validates prompt captures before that record against the old registry and later ones against
+the new registry. The record replaces the registry and, only when needed, reconciles:
+
+- `policy`: a new policy version. Per-agent tool permissions drop unregistered tools and removed
+  agents; new agents are derived as creation does. Provider, model, thinking, thinking budget,
+  stream, output limit and permission mode that the live bindings reject are replaced by the policy
+  a new session would get, changing the fewest fields (the saved provider/model is kept when some
+  combination allows it). No other policy field may change; the result is validated.
+- `agent`: the live default agent, only when the idle conversation's agent is no longer registered.
+
+A changed model or agent is logged as a `session.registry.reconciled` warning with the previous and
+next values and the consequence (for example `next turn uses anthropic/claude-opus-4-5`).
+
+History is never filtered or rewritten. The next prompt projects every earlier message, including
+calls to and results from tools that are no longer registered, and advertises only live tools. If
+the adoption append fails, the session fails and queued work settles with that storage cause.
 
 ## Branch publication has two persistence boundaries
 

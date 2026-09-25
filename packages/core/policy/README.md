@@ -49,8 +49,11 @@ neither becomes a tolerant tool result because no tool operation was admitted.
 
 Select a provider binding name and declared model. Capabilities come from that model's bound profile,
 not from guesses based on its name. Unsupported thinking, streaming, or media combinations reject
-before HTTP, including on restore and configuration changes. Patch incompatible settings together
-when switching models. See [model binding examples](../providers/README.md).
+before HTTP, including on configuration changes. Patch incompatible settings together when switching
+models. A restored session whose saved selection is no longer bound is not rejected: replay ignores
+live availability, and the next work first journals a reconciled policy (see
+[registry adoption](../../../docs/session-runtime.md#restore-adopts-the-live-registry-and-bindings)).
+See [model binding examples](../providers/README.md).
 
 Thinking `adaptive` means native adaptive support. Manual `budget` requires an explicit
 `thinkingBudgetTokens` and a larger `maxOutputTokens`; the runtime never substitutes 1024.

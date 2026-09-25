@@ -66,6 +66,11 @@ export type PolicyPack = Readonly<
 >;
 
 export type PolicyResolvers = Readonly<{
+  /**
+   * Replaying committed records: skip checks of what the live environment binds (permission port,
+   * providers, models, profile settings). Which models existed when a record was written is history.
+   */
+  historical?: boolean;
   permissionRequests?: boolean;
   validateSelection?: (
     provider: string,
@@ -132,6 +137,7 @@ export const builtinResolvers: PolicyResolvers = {
 
 export function copyResolvers(resolvers: PolicyResolvers = builtinResolvers): PolicyResolvers {
   return {
+    historical: resolvers.historical,
     permissionRequests: resolvers.permissionRequests,
     validateSelection: resolvers.validateSelection,
     providerStreams: resolvers.providerStreams ? new Map(resolvers.providerStreams) : undefined,
@@ -166,34 +172,25 @@ export function defaultPolicy(capabilities: Capabilities, steps: number): Policy
   });
 }
 
-export function validatePolicy(
-  raw: unknown,
-  capabilities: Capabilities,
-  resolvers: PolicyResolvers = builtinResolvers,
-): Policy {
-  const policy = PolicySchema.parse(raw);
+/** Policy fields whose validity depends on live bindings rather than on the policy's structure. */
+export const bindingPolicyFields = [
+  "provider",
+  "model",
+  "thinking",
+  "thinkingBudgetTokens",
+  "stream",
+  "maxOutputTokens",
+  "permissions",
+] as const satisfies readonly (keyof Policy)[];
+
+/** Live-environment checks: the permission port, provider, model and profile settings are bound. */
+function validateBindings(policy: Policy, resolvers: PolicyResolvers) {
   if (policy.permissions === "ask" && !resolvers.permissionRequests)
     throw new Error("Missing permission request binding");
   if (policy.provider && !resolvers.providerIds?.has(policy.provider))
     throw new Error(
       `Missing versioned provider binding: requested ${policy.provider}; available: ${[...(resolvers.providerIds ?? [])].sort().join(", ") || "none"}`,
     );
-  if (
-    !policy.provider &&
-    [
-      policy.model,
-      policy.thinking,
-      policy.stream,
-      policy.maxOutputTokens,
-      policy.thinkingBudgetTokens,
-    ].some((value) => value !== undefined)
-  )
-    throw new Error("Provider settings require a provider id");
-  if (
-    policy.provider &&
-    capabilities.agents.some(([, agent]) => agent.tools.includes("handoff_to"))
-  )
-    throw new Error("Reserved handoff tool name");
   if (policy.provider && resolvers.validateSelection)
     resolvers.validateSelection(
       policy.provider,
@@ -219,6 +216,31 @@ export function validatePolicy(
     (!policy.provider || !resolvers.providerStreams?.get(policy.provider))
   )
     throw new Error("Unsupported streaming setting");
+}
+
+export function validatePolicy(
+  raw: unknown,
+  capabilities: Capabilities,
+  resolvers: PolicyResolvers = builtinResolvers,
+): Policy {
+  const policy = PolicySchema.parse(raw);
+  if (
+    !policy.provider &&
+    [
+      policy.model,
+      policy.thinking,
+      policy.stream,
+      policy.maxOutputTokens,
+      policy.thinkingBudgetTokens,
+    ].some((value) => value !== undefined)
+  )
+    throw new Error("Provider settings require a provider id");
+  if (
+    policy.provider &&
+    capabilities.agents.some(([, agent]) => agent.tools.includes("handoff_to"))
+  )
+    throw new Error("Reserved handoff tool name");
+  if (!resolvers.historical) validateBindings(policy, resolvers);
   const agents = new Map(capabilities.agents);
   if (
     Object.keys(policy.tools).length !== agents.size ||

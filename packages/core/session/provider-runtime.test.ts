@@ -105,7 +105,7 @@ for (const profile of [openaiChat, openaiResponses, anthropicMessages, googleGen
     await Promise.all([session.close(), restored.close(), branch.close(), compacted.close()]);
   });
 }
-test("provider and model patches commit at idle; missing bindings fail admission and restore", async () => {
+test("provider and model patches commit at idle; missing bindings fail admission, restore adopts live defaults", async () => {
   const calls: unknown[] = [];
   const opts = options(openaiChat, calls);
   const session = await createSession(opts);
@@ -117,13 +117,21 @@ test("provider and model patches commit at idle; missing bindings fail admission
   expect((await session.updatePolicy({ provider: "missing@1" })).kind).toBe("failed");
   const providers = new Map(opts.bindings.providers);
   providers.delete(anthropicMessages.id);
-  await expect(
-    restoreSession(
-      { ...opts, bindings: { ...opts.bindings, providers } },
-      session.snapshot.durable.conversation.sessionId,
-    ),
-  ).rejects.toThrow("provider binding");
-  await session.close();
+  const restored = await restoreSession(
+    { ...opts, bindings: { ...opts.bindings, providers } },
+    session.snapshot.durable.conversation.sessionId,
+  );
+  expect(restored.registry).toEqual({
+    kind: "pending_adoption",
+    differences: ["changed policy.provider", "changed policy.model"],
+  });
+  expect(restored.policy).toMatchObject({ provider: openaiChat.id, version: 2 });
+  expect(restored.policy?.model).toBeUndefined();
+  expect(restored.snapshot.durable.policy).toMatchObject({
+    provider: anthropicMessages.id,
+    model: "override",
+  });
+  await Promise.all([session.close(), restored.close()]);
 });
 test("active completion sees frozen selection and a mid-turn policy change is busy", async () => {
   const opts = options();

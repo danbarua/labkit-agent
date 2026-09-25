@@ -19,6 +19,7 @@ import {
 } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import {
+  bindingPolicyFields,
   builtinResolvers,
   effectiveToolResult,
   patchPolicy,
@@ -104,7 +105,11 @@ export function seedConversation(
   if (seed.continuations) {
     const owners = new Set<string>();
     for (const entry of seed.continuations) {
-      if (resolvers.providerIds && !resolvers.providerIds.has(entry.provider))
+      if (
+        !resolvers.historical &&
+        resolvers.providerIds &&
+        !resolvers.providerIds.has(entry.provider)
+      )
         throw new Error("Missing continuation provider binding");
       const key = JSON.stringify(entry.owner);
       if (
@@ -518,6 +523,45 @@ function reduce(
       commands: [],
     };
   }
+  if (input.kind === "configuration") {
+    const c = state.conversation;
+    if (c.turn.status !== "idle" || state.pendingInputs?.length)
+      throw new Error("Configuration changes require an idle boundary");
+    const registered = new Set(input.configuration.agents.map(([id]) => id));
+    // An agent switch is recorded only when the idle conversation's agent was unregistered.
+    if (input.agent !== undefined && registered.has(c.turn.agent))
+      throw new Error("Configuration agent switch requires an unregistered current agent");
+    const agent = input.agent ?? c.turn.agent;
+    if (!registered.has(agent)) throw new Error(`Configuration omits the current agent: ${agent}`);
+    let policy = state.policy;
+    if (input.policy) {
+      // Reconciliation may rewrite only tool permissions and binding-dependent selection fields.
+      const previous = state.policy;
+      const keys = new Set([...Object.keys(previous ?? {}), ...Object.keys(input.policy)]);
+      for (const key of ["tools", "version", ...bindingPolicyFields]) keys.delete(key);
+      if (
+        !previous ||
+        input.policy.version !== previous.version + 1 ||
+        [...keys].some(
+          (key) =>
+            JSON.stringify(previous[key as keyof Policy]) !==
+            JSON.stringify(input.policy![key as keyof Policy]),
+        )
+      )
+        throw new Error("Configuration policy may only reconcile tools and binding selections");
+      policy = validatePolicy(input.policy, input.configuration, resolvers);
+    } else if (state.policy) validatePolicy(state.policy, input.configuration, resolvers);
+    return {
+      state: {
+        ...state,
+        configuration: input.configuration,
+        policy,
+        pendingInputs: state.pendingInputs ?? [],
+        conversation: agent === c.turn.agent ? c : { ...c, turn: { ...c.turn, agent } },
+      },
+      commands: [],
+    };
+  }
   if (input.kind === "queued") {
     const c = state.conversation;
     if (
@@ -831,10 +875,16 @@ export function stageCreation(
   return packageRecords(state, state, [{ kind: "created", seed }], appendId);
 }
 
+/**
+ * Committed records are validated structurally, not against today's bindings: a record written
+ * with a provider or model that is no longer bound still replays. The live runtime reconciles
+ * the current policy before new work instead.
+ */
 export function replay(
   batches: readonly CommittedBatch[],
-  resolvers: PolicyResolvers = builtinResolvers,
+  live: PolicyResolvers = builtinResolvers,
 ): JournalState {
+  const resolvers: PolicyResolvers = { ...live, historical: true };
   let state: JournalState | undefined;
   let expectedTerminal: { turnId: string; record: TurnRecord } | undefined;
   const entries = new Set<string>();
@@ -1048,7 +1098,21 @@ export function journalMarkdown(
     ];
   });
   if (permissions.length) lines.push("## Recorded permission decisions", "", ...permissions);
-  for (const { body } of state.records)
+  for (const { body, revision } of state.records) {
     if (body.kind === "recovery") lines.push("## Recovery", "", quote(body.reason), "");
+    if (body.kind === "configuration")
+      lines.push(
+        `## Registry adopted at revision ${revision}`,
+        "",
+        `Agents: ${body.configuration.agents.map(([id]) => id).join(", ")}.`,
+        "",
+        `Tools: ${body.configuration.tools.map(([name]) => name).join(", ") || "none"}.`,
+        "",
+        ...(body.agent ? [`Conversation continues with ${label(body.agent)}.`, ""] : []),
+        ...(body.policy
+          ? [`Tool permissions reconciled as policy version ${body.policy.version}.`, ""]
+          : []),
+      );
+  }
   return `${lines.join("\n").trimEnd()}\n`;
 }

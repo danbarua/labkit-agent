@@ -193,6 +193,12 @@ export const BodySchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("created"), seed: SeedSchema }),
   z.strictObject({ kind: z.literal("policy"), patch: PolicyPatchSchema, policy: PolicySchema }),
   z.strictObject({
+    kind: z.literal("configuration"),
+    configuration: ConfigurationSchema,
+    policy: PolicySchema.optional(),
+    agent: AgentIdSchema.optional(),
+  }),
+  z.strictObject({
     kind: z.literal("queued"),
     attachments: z.array(BlobRefSchema).min(1).readonly().optional(),
     inputId: ActorIdSchema,

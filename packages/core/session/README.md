@@ -131,9 +131,25 @@ observed record available with its original operation ID. `completion.usage.rece
 
 ## Reopen without repeating effects
 
-Save the session ID and call `restoreSession(options, sessionId)`. Supply the original compatible
-agent/tool-schema manifest and the required current bindings. Code is not journaled: replacing a
-tool implementation under the same schema is your responsibility.
+Save the session ID and call `restoreSession(options, sessionId)` with the current agents, tools and
+bindings. Code is not journaled: replacing a tool implementation under the same schema is your
+responsibility.
+
+Neither a changed agent/tool registry nor a provider/model that is no longer bound prevents
+reopening. Replay checks committed records for consistency, not against today's bindings: which
+models existed when a record was written is history. `session.registry` is
+`{ kind: "pending_adoption", differences }` until the first input, system or policy change, fork or
+compaction; that work first commits a `configuration` record holding the live registry, then runs.
+When needed the record also carries a new policy version and switches an unregistered current agent
+to `configuration.agent`. The new policy drops unregistered tools and removed agents from tool
+permissions. Provider settings the live bindings reject (provider, model, thinking, budget, stream,
+output limit, permission mode) are replaced by the defaults a new session would get, changing as few
+as possible; every other setting is kept. `session.policy` is the policy the next turn uses. History
+is never filtered: the next prompt includes earlier calls to removed tools and advertises only live
+tools. Opening writes nothing else; `session.registry.mismatch`, `.reconciled` (a warning for a
+model or agent change), `.adopted` and `.adoption_failed` explain each step. A failed adoption
+append fails the session and the waiting work with its storage cause. New policy patches are still
+validated against live bindings. See [registry adoption](../../../docs/session-runtime.md#restore-adopts-the-live-registry-and-bindings).
 
 Restore invokes no completion, tool, or permission callback. An interrupted turn is closed with an
 explicit recovery failure; committed partial tool results survive. Accepted queued inputs are

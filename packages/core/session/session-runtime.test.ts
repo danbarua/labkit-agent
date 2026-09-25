@@ -333,7 +333,7 @@ test("abort overtaking a tool outcome does not accept a result into a settled ba
   expect(session.snapshot.status).toBe("ready");
 });
 
-test("captured registries survive caller mutation; incompatible restored configuration rejects", async () => {
+test("captured registries survive caller mutation", async () => {
   const options = testOptions();
   const session = await createSession(options);
   (options.configuration.agents as Map<string, unknown>).clear();
@@ -341,13 +341,7 @@ test("captured registries survive caller mutation; incompatible restored configu
   expect(await session.input("Go").settled).toMatchObject({
     record: { outcome: { kind: "completed" } },
   });
-  const incompatible = testOptions({
-    persistence: options.persistence,
-    agents: new Map([["a", { model: "changed", tools: [] }]]),
-  });
-  await expect(
-    restoreSession(incompatible, session.snapshot.durable.conversation.sessionId),
-  ).rejects.toThrow("configuration");
+  await session.close();
 });
 
 test("closing a parent settles a fork whose child initialization receipt is delayed", async () => {
