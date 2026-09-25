@@ -253,6 +253,7 @@ function configure(raw: SessionOptions, restoring = false) {
     }
     return built.runtime;
   }
+
   function build(initial: JournalState) {
     const sessionId = initial.conversation.sessionId;
     if (initial.policy) validatePolicy(initial.policy, initial.configuration, resolvers);
@@ -265,10 +266,10 @@ function configure(raw: SessionOptions, restoring = false) {
         { differences },
       );
     }
-    const branchReplies = new Map<
-      ActorId,
-      { resolve: (runtime: SessionRuntime) => void; reject: (error: unknown) => void }
-    >();
+
+    const branchReplies = 
+    new Map<ActorId, { resolve: (runtime: SessionRuntime) => void; reject: (error: unknown) => void } >();
+
     const receipts = new Map<string, (receipt: CommandReceipt) => void>();
     const afterCommit = new Map<string, () => void>();
     const admissions = new Map<string, (result: TerminalResult) => void>();

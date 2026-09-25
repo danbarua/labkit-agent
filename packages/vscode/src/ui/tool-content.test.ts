@@ -309,3 +309,192 @@ test("embedded terminals show live output and retain final released output after
     await v.window.happyDOM.close();
   }
 });
+
+test("tool cards retain partial metadata, raw JSON values and navigable locations through restoration", async () => {
+  const v = view();
+  try {
+    v.send({
+      type: "sessionUpdate",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "metadata",
+        title: "Inspect file",
+        name: "read_file",
+        kind: "read",
+        status: "in_progress",
+        rawInput: { path: '/workspace/<report>".txt' },
+        rawOutput: false,
+        locations: [{ path: '/workspace/<report>".txt', line: 3 }],
+        _meta: { source: "scripted" },
+        content: [{ type: "content", content: { type: "text", text: "first output" } }],
+      },
+    });
+    v.send({
+      type: "sessionUpdate",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "metadata",
+        name: null,
+        rawInput: null,
+        rawOutput: null,
+        status: "failed",
+      },
+    });
+    const card = v.window.document.getElementById("tc-metadata")!;
+    expect(card.querySelector(".acp-tool-name")?.textContent).toBe("read_file");
+    expect(card.querySelector(".acp-tool-kind")?.textContent).toBe("read");
+    expect(card.querySelector(".acp-text")?.textContent).toBe("first output");
+    const raw = [...card.querySelectorAll(".acp-tool-raw pre")].map(
+      (element) => element.textContent,
+    );
+    expect(raw).toEqual([
+      JSON.stringify({ path: '/workspace/<report>".txt' }, null, 2),
+      "false",
+      JSON.stringify({ source: "scripted" }, null, 2),
+    ]);
+    const location = card.querySelector(".acp-tool-location")!;
+    expect(location.textContent).toBe('/workspace/<report>".txt:3');
+    location.dispatchEvent(new v.window.MouseEvent("click", { bubbles: true }));
+    expect(v.posted).toContainEqual({ type: "openToolLocation", toolCallId: "metadata", index: 0 });
+    const restored = view(v.state());
+    try {
+      expect(restored.window.document.querySelector(".acp-tool-name")?.textContent).toBe(
+        "read_file",
+      );
+      expect(restored.window.document.querySelector(".acp-tool-location")?.textContent).toBe(
+        '/workspace/<report>".txt:3',
+      );
+    } finally {
+      await restored.window.happyDOM.close();
+    }
+    v.send({
+      type: "sessionUpdate",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "metadata",
+        content: [],
+        locations: [],
+        rawOutput: 0,
+      },
+    });
+    expect(card.querySelector(".acp-text")).toBeNull();
+    expect(card.querySelector(".acp-tool-location")).toBeNull();
+    expect(
+      [...card.querySelectorAll(".acp-tool-raw pre")].map((element) => element.textContent),
+    ).toContain("0");
+  } finally {
+    await v.window.happyDOM.close();
+  }
+});
+
+test("updates without an initial tool notification still render and opaque IDs cannot overwrite the tool map prototype", async () => {
+  const v = view();
+  try {
+    v.send({
+      type: "sessionUpdate",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "__proto__",
+        title: "Late initial state",
+        status: "failed",
+        rawOutput: ["ENOENT", "/missing"],
+      },
+    });
+    expect(v.window.document.getElementById("tc-__proto__")?.textContent).toContain("ENOENT");
+    v.send({
+      type: "sessionUpdate",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "__proto__",
+        title: "Corrected title",
+        status: "failed",
+      },
+    });
+    expect(v.window.document.querySelectorAll('[id="tc-__proto__"]')).toHaveLength(1);
+    expect(v.window.document.getElementById("tc-__proto__")?.textContent).toContain(
+      "Corrected title",
+    );
+    expect(v.window.document.getElementById("tc-__proto__")?.textContent).toContain("ENOENT");
+  } finally {
+    await v.window.happyDOM.close();
+  }
+});
+
+test("location navigation uses the active session's reported path and rejects substituted IDs and indexes", async () => {
+  const { SessionUpdateHandler } = await import("../handlers/SessionUpdateHandler.ts");
+  const updates = new SessionUpdateHandler();
+  updates.handleUpdate({
+    sessionId: "s",
+    update: {
+      sessionUpdate: "tool_call",
+      toolCallId: "call",
+      title: "Read report",
+      locations: [{ path: "/workspace/report.txt", line: 3 }],
+    },
+  });
+  const opened: any[] = [];
+  let active = "s";
+  const editor = {
+    Uri: { file: (path: string) => ({ fsPath: path }) },
+    Range: class {
+      constructor(
+        readonly startLine: number,
+        readonly startCharacter: number,
+        readonly endLine: number,
+        readonly endCharacter: number,
+      ) {}
+    },
+    workspace: { openTextDocument: async (uri: unknown) => ({ uri, lineCount: 8 }) },
+    window: {
+      showTextDocument: async (document: unknown, options: unknown) => {
+        opened.push({ document, options });
+      },
+    },
+  };
+  const provider = new ChatWebviewProvider(
+    {} as any,
+    { getActiveSessionId: () => active } as any,
+    updates,
+    editor as any,
+  );
+  const directory = await mkdtemp(join(tmpdir(), "labkit-tool-location-"));
+  const logger = await import("../utils/Logger.ts");
+  logger.configureDiagnostics(directory, []);
+  try {
+    await (provider as any).openToolLocation("call", 0);
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({
+      document: { uri: { fsPath: "/workspace/report.txt" } },
+      options: { selection: { startLine: 2, endLine: 2 } },
+    });
+    const success = await readFile(join(directory, "client.jsonl"), "utf8");
+    expect(success).toContain("vscode.tool.location_opened");
+    expect(success).not.toContain('"level":"warning"');
+    await (provider as any).openToolLocation("call", -1);
+    await (provider as any).openToolLocation("/substituted/path", 0);
+    active = "different-session";
+    await (provider as any).openToolLocation("call", 0);
+    expect(opened).toHaveLength(1);
+    const text = await readFile(join(directory, "client.jsonl"), "utf8");
+    const rejected = text
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((record) => record.level === "warning");
+    expect(rejected).toHaveLength(3);
+    expect(rejected[2]).toMatchObject({
+      event: "vscode.tool.location_rejected",
+      sessionId: "different-session",
+      toolCallId: "call",
+      index: 0,
+    });
+    const artifact = `.session-artifacts/vscode-tool-location/${crypto.randomUUID()}`;
+    await mkdir(artifact, { recursive: true });
+    await Bun.write(join(artifact, "diagnostics.jsonl"), text);
+  } finally {
+    provider.dispose();
+    updates.dispose();
+    logger.disposeChannels();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

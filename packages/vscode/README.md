@@ -47,6 +47,20 @@ the session, path, operation, byte count or failed phase and original cause. Fil
 from these lifecycle records. The filesystem tests use an injected editor API: native save,
 format-on-save, undo and dirty-buffer behavior still require editor-host verification.
 
+Tool cards retain the reported tool name, kind, locations, raw JSON input/output, metadata and
+content. Updates replace only supplied non-null fields; `false`, `0`, and empty strings are real
+values, and empty content/location arrays clear those lists. This prevents status-only updates
+from erasing the evidence needed to understand a failure. The same projection runs in the host and
+webview, and the full card survives webview restoration. A location button opens the absolute path
+from the active session's reported locations; a webview message cannot substitute another path.
+Location numbers are displayed as reported and opened as 1-based editor lines (zero selects the
+first line). Native navigation still needs editor verification.
+
+`vscode.tool.updated` records field changes and content/location counts without copying successful
+payloads into lifecycle logs. `vscode.tool.failed` includes the retained title, name, IDs and latest
+reported raw output, or explicitly states that none was provided. This output is evidence supplied
+by the agent, not a client-inferred explanation of the failure.
+
 Permission prompts are serialized so one request cannot hide another. Cancelling a turn dismisses
 its visible and queued prompts and answers later requests from that turn with `cancelled`. A new
 explicit prompt resets that cancellation state; concurrent prompts for one session are rejected.

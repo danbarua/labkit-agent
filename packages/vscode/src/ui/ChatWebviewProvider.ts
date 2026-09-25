@@ -1,3 +1,5 @@
+import { isAbsolute } from "node:path";
+
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 import { marked } from "marked";
 import * as vscode from "vscode";
@@ -5,9 +7,11 @@ import * as vscode from "vscode";
 import { SessionManager } from "../core/SessionManager";
 import { SessionUpdateHandler, type SessionUpdateListener } from "../handlers/SessionUpdateHandler";
 import type { TerminalDisplay } from "../handlers/TerminalHandler";
+import { mergeToolCall } from "../tool-call";
 import { sendEvent } from "../utils/Diagnostics";
-import { logError } from "../utils/Logger";
+import { logDiagnostic, logError } from "../utils/Logger";
 import { renderToolContent } from "./tool-content";
+import { renderToolDetails } from "./tool-details";
 
 /**
  * WebviewViewProvider for the ACP chat sidebar.
@@ -25,6 +29,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
     private readonly extensionUri: vscode.Uri,
     private readonly sessionManager: SessionManager,
     private readonly sessionUpdateHandler: SessionUpdateHandler,
+    private readonly editor: typeof vscode = vscode,
   ) {
     // Configure marked for safe rendering
     marked.setOptions({
@@ -95,6 +100,9 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
           break;
         case "setConfigOption":
           await this.handleSetConfigOption(message.configId, message.value);
+          break;
+        case "openToolLocation":
+          await this.openToolLocation(message.toolCallId, message.index);
           break;
         case "executeCommand":
           if (message.command) {
@@ -291,6 +299,45 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
   /**
    * Send current session state to the webview on load.
    */
+  private async openToolLocation(toolCallId: string, index: number): Promise<void> {
+    const sessionId = this.sessionManager.getActiveSessionId();
+    const tool = sessionId
+      ? this.sessionUpdateHandler.getToolCall(sessionId, toolCallId)
+      : undefined;
+    const location = Number.isInteger(index) && index >= 0 ? tool?.locations?.[index] : undefined;
+    if (!location || !isAbsolute(location.path)) {
+      logDiagnostic("warning", "vscode.tool.location_rejected", {
+        sessionId,
+        toolCallId,
+        index,
+        message:
+          "The requested location is not an absolute path in this session's reported tool locations",
+      });
+      return;
+    }
+    try {
+      const document = await this.editor.workspace.openTextDocument(
+        this.editor.Uri.file(location.path),
+      );
+      const line = Math.min(Math.max(0, (location.line ?? 1) - 1), document.lineCount - 1);
+      await this.editor.window.showTextDocument(document, {
+        preview: true,
+        selection: new this.editor.Range(line, 0, line, 0),
+      });
+      logDiagnostic("info", "vscode.tool.location_opened", {
+        sessionId,
+        toolCallId,
+        path: location.path,
+        line: location.line,
+      });
+    } catch (error) {
+      logError(
+        `Cannot open tool location ${location.path} for ${toolCallId} in session ${sessionId}`,
+        error,
+      );
+    }
+  }
+
   private sendCurrentState(): void {
     const activeId = this.sessionManager.getActiveSessionId();
     const session = activeId ? this.sessionManager.getSession(activeId) : null;
@@ -398,6 +445,9 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
   <title>ACP Chat</title>
   <style>
+    .acp-tool-details { flex-basis: 100%; overflow: auto; }
+    .acp-tool-details pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .acp-tool-location { display: block; text-align: left; color: var(--vscode-textLink-foreground); cursor: pointer; }
     .acp-tool-content { white-space: normal; flex-basis: 100%; overflow: auto; }
     .acp-tool-content pre { white-space: pre-wrap; overflow-wrap: anywhere; }
     .tool-call-inline { flex-wrap: wrap; }
@@ -669,7 +719,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
       text-align: center;
     }
     .tool-call-inline .tc-icon.pending { color: var(--vscode-badge-foreground); }
-    .tool-call-inline .tc-icon.running { color: var(--vscode-progressBar-background); }
+    .tool-call-inline .tc-icon.in_progress { color: var(--vscode-progressBar-background); }
     .tool-call-inline .tc-icon.completed { color: var(--vscode-testing-iconPassed); }
     .tool-call-inline .tc-icon.failed { color: var(--vscode-testing-iconFailed); }
     .tool-call-inline .tc-title {
@@ -1228,6 +1278,8 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const renderToolContent = ${renderToolContent.toString()};
+    const mergeToolCall = ${mergeToolCall.toString()};
+    const renderToolDetails = ${renderToolDetails.toString()};
     const messagesEl = document.getElementById('messages');
     const emptyState = document.getElementById('emptyState');
     const promptInput = document.getElementById('promptInput');
@@ -1322,8 +1374,9 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
             addThoughtDOM(item.text, item.durationSec || 0);
             break;
           case 'toolCall':
-            addToolCallDOM(item.toolCallId, item.title, item.status);
-            showToolContent(item.toolCallId, item.content);
+            addToolCallDOM(item.tool.toolCallId, item.tool.title, item.tool.status);
+            showToolContent(item.tool.toolCallId, item.tool.content);
+            showToolDetails(item.tool);
             break;
           case 'plan':
             addPlanDOM(item.plan);
@@ -1345,7 +1398,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
     let currentToolsListEl = null;  // .turn-tools-list inside current turn
     let currentToolsCountEl = null; // .turn-tools-summary counter
     let currentToolCount = 0;
-    let toolCalls = {};
+    let toolCalls = Object.create(null);
 
     // --- Resize handle ---
     let inputAreaHeight = 140;
@@ -1510,7 +1563,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
       saveState();
       currentAssistantEl = null;
       currentAssistantText = '';
-      toolCalls = {};
+      toolCalls = Object.create(null);
       currentTurnEl = null;
       currentToolsListEl = null;
       currentToolsCountEl = null;
@@ -2043,12 +2096,6 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    function addToolCall(toolCallId, title, status) {
-      chatHistory.push({ kind: 'toolCall', toolCallId, title, status });
-      saveState();
-      addToolCallInline(toolCallId, title, status);
-    }
-
     function addToolCallInline(toolCallId, title, status) {
       hideEmpty();
       ensureTurnTools();
@@ -2063,7 +2110,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
       el.id = 'tc-' + toolCallId;
       el.innerHTML =
         '<span class="tc-icon ' + status + '">' + getStatusIcon(status) + '</span>' +
-        '<span class="tc-title">' + escapeHtml(title || 'Tool Call') + '</span>';
+        '<span class="tc-title">' + escapeHtml(title ?? 'Tool Call') + '</span>';
       currentToolsListEl.appendChild(el);
       toolCalls[toolCallId] = el;
       scrollToBottom();
@@ -2075,7 +2122,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
       const el = document.createElement('div');
       el.className = 'tool-call';
       el.id = 'tc-' + toolCallId;
-      el.innerHTML = '<span class="title">' + escapeHtml(title || 'Tool Call') + '</span>'
+      el.innerHTML = '<span class="title">' + escapeHtml(title ?? 'Tool Call') + '</span>'
         + '<span class="status-badge ' + status + '">' + status + '</span>';
       messagesEl.appendChild(el);
       toolCalls[toolCallId] = el;
@@ -2083,15 +2130,6 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
     }
 
     function updateToolCall(toolCallId, status, title) {
-      for (let i = chatHistory.length - 1; i >= 0; i--) {
-        if (chatHistory[i].kind === 'toolCall' && chatHistory[i].toolCallId === toolCallId) {
-          chatHistory[i].status = status;
-          if (title) chatHistory[i].title = title;
-          break;
-        }
-      }
-      saveState();
-
       const el = toolCalls[toolCallId] || document.getElementById('tc-' + toolCallId);
       if (!el) return;
 
@@ -2100,7 +2138,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
       if (iconEl) {
         iconEl.className = 'tc-icon ' + status;
         iconEl.textContent = getStatusIcon(status);
-        if (title) {
+        if (title != null) {
           const titleEl = el.querySelector('.tc-title');
           if (titleEl) titleEl.textContent = title;
         }
@@ -2112,7 +2150,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
         badge.className = 'status-badge ' + status;
         badge.textContent = status;
       }
-      if (title) {
+      if (title != null) {
         const titleEl = el.querySelector('.title');
         if (titleEl) titleEl.textContent = title;
       }
@@ -2352,7 +2390,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
           saveState();
           currentAssistantEl = null;
           currentAssistantText = '';
-          toolCalls = {};
+          toolCalls = Object.create(null);
           currentTurnEl = null;
           currentToolsListEl = null;
           currentToolsCountEl = null;
@@ -2439,7 +2477,7 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
     function updateTerminal(update) {
       terminalSnapshots[update.terminalId] = update;
       for (const item of chatHistory) {
-        if (item.kind === 'toolCall' && item.content?.some(content => content.type === 'terminal' && content.terminalId === update.terminalId)) showToolContent(item.toolCallId, item.content);
+        if (item.kind === 'toolCall' && item.tool.content?.some(content => content.type === 'terminal' && content.terminalId === update.terminalId)) showToolContent(item.tool.toolCallId, item.tool.content);
       }
       saveState();
     }
@@ -2455,8 +2493,27 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
         card.appendChild(output);
       }
       output.innerHTML = renderToolContent(content, terminalSnapshots);
-      const saved = chatHistory.findLast(item => item.kind === 'toolCall' && item.toolCallId === toolCallId);
-      if (saved) saved.content = content;
+
+    }
+
+    function showToolDetails(tool) {
+      const card = toolCalls[tool.toolCallId];
+      if (!card) return;
+      let details = card.querySelector('.acp-tool-details');
+      if (!details) { details = document.createElement('div'); details.className = 'acp-tool-details'; card.appendChild(details); }
+      details.innerHTML = renderToolDetails(tool);
+      details.querySelectorAll('[data-location-index]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'openToolLocation', toolCallId: tool.toolCallId, index: Number(button.dataset.locationIndex) })));
+    }
+
+    function applyToolUpdate(update) {
+      let item = chatHistory.findLast(item => item.kind === 'toolCall' && item.tool.toolCallId === update.toolCallId);
+      const tool = mergeToolCall(item?.tool, update);
+      if (item) item.tool = tool;
+      else { item = { kind: 'toolCall', tool }; chatHistory.push(item); }
+      if (toolCalls[tool.toolCallId]) updateToolCall(tool.toolCallId, tool.status, tool.title);
+      else addToolCallInline(tool.toolCallId, tool.title, tool.status);
+      showToolContent(tool.toolCallId, tool.content);
+      showToolDetails(tool);
       saveState();
     }
 
@@ -2547,26 +2604,10 @@ export class ChatWebviewProvider implements vscode.WebviewViewProvider {
           break;
         }
 
-        case 'tool_call': {
-          const tc = update;
-          addToolCall(
-            tc.toolCallId || 'unknown',
-            tc.title || 'Tool Call',
-            tc.status || 'pending',
-          );
-          showToolContent(tc.toolCallId, tc.content);
+        case 'tool_call':
+        case 'tool_call_update':
+          applyToolUpdate(update);
           break;
-        }
-
-        case 'tool_call_update': {
-          updateToolCall(
-            update.toolCallId || 'unknown',
-            update.status ?? chatHistory.findLast(item => item.kind === 'toolCall' && item.toolCallId === update.toolCallId)?.status ?? 'pending',
-            update.title,
-          );
-          showToolContent(update.toolCallId, update.content);
-          break;
-        }
 
         case 'plan': {
           addPlan(update);
