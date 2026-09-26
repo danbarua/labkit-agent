@@ -16,8 +16,9 @@ already-stored bytes is rejected. Zero-byte blobs are valid. Metadata is immutab
 an independent byte buffer. A cancelled call rejects; an absent get returns `{ kind: "not_found" }`.
 
 Supported ref media types are text/plain, text/markdown, image/png, image/jpeg and application/pdf.
-The ref schema admitting a media type does not imply a profile can encode it. The shipped Anthropic @2–@4 profiles declare PDF document support. Each step, after projecting its prompt and before its HTTP request, checks media and verifies stored size,
-media and hash against the ref. Ref names are display labels, not paths.
+The ref schema admitting a media type does not imply a profile can encode it. The shipped Anthropic @2–@4 profiles declare PDF document support. Each step, after projecting its prompt and before its HTTP request, verifies stored size,
+media and hash against the ref for each blob the projected prompt still sends; a part the target
+cannot, or might not, read is already a pointer and is not loaded. Ref names are display labels, not paths.
 
 The environment puts bytes before admitting a user ref. The current journal format stores refs and content parts,
 never the raw bytes. Loading decodes refs as part of each record and does not read the object store.

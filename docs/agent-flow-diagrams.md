@@ -16,8 +16,8 @@ stateDiagram-v2
   awaiting_model --> done: answer
   awaiting_model --> awaiting_permission: tools, permissions ask
   awaiting_model --> executing_tools: tools, permissions off
-  awaiting_permission --> executing_tools: every call approved
-  awaiting_permission --> done: refusal, failure, or cancellation
+  awaiting_permission --> executing_tools: every call approved or refused
+  awaiting_permission --> done: failure or cancellation
   awaiting_model --> awaiting_model: handoff, steps remain / successor's step
   awaiting_model --> done: handoff, no steps / exhausted
   executing_tools --> awaiting_model: batch success, steps remain / consume step
@@ -34,8 +34,10 @@ calls the model. A handoff sets the turn's view to a marker naming the predecess
 index where the handoff happened; the successor's step renders the handoff packet from it. Neither
 the prompt nor the packet is journaled.
 Replacement input is omitted from this diagram for readability; the sequence below covers it.
-Permission refusal fails the whole turn before any tool starts. Permission-dialog cancellation
-aborts it. The distinction must survive into a client-facing result.
+A refused call does not stop the turn: the batch still runs, answering that call with a
+permission-refused tool result the model reads on its next step. Permission-dialog cancellation
+aborts the turn; an invalid response or port failure fails it. The distinction must survive into a
+client-facing result.
 
 ## Replace model work without accepting its late answer
 

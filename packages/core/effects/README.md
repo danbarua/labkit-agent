@@ -44,8 +44,8 @@ const usage: EffectEmitter = (event) => {
 
 `diagnosticsSubscriber()` is the default: it reproduces exactly the `diagnostic(category, level,
 event, fields)` record the event names above have always produced, via `resolveDiagnostic`. It is
-not a second emission path; every `diagnostic()` call this runtime makes today is one of these
-events reaching that subscriber. `completion.system_prompt` is emitted at `debug` (previously
+not a second emission path for these events. Session lifecycle, journal append/load and ACP adapter
+logs are not effect events yet: they still call `diagnostic()` directly. `completion.system_prompt` is emitted at `debug` (previously
 `info`); every other event's category, level and fields are unchanged.
 
 ## Side-car HTTP trace

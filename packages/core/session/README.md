@@ -307,9 +307,8 @@ a partial chunk is not yet a message to project.
 context, turn log, the unfinished turn, permission decisions, recoveries — through the same
 `projectMessage`, so its Markdown never surfaces a raw journal record; blob attachments render as
 their `blob://` URI. `journalJSONL(state.durable)` is different: it dumps every stored record
-verbatim, one per line, so it currently includes whatever a `prepared`/`model_settled` record
-stores — today, before the journal-format correction lands, that is the full captured prompt (see
-"Code today" in [the session model](../../../docs/session-model.md)). Both back `/export`: the web
+verbatim, one per line; since the journal holds only facts, that includes no prompt. Both back
+`/export`: the web
 server exposes `GET /api/session/:id/export.md` and `.jsonl`, and the ACP adapter's built-in
 `/export` slash command writes the Markdown form under `<cwd>/.labkit/exports/<sessionId>.md`
 without calling the model.

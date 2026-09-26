@@ -238,7 +238,7 @@ the projection's contract. Attachments are stored and journaled regardless of th
 current model's media capabilities; whether the current step's target can read a given kind is a
 prompt-projection decision, not a provider-layer refusal. A part the target does not support, or
 might not, is projected as pointer text (`agent/content.ts` `renderBlobPointer`,
-`[<media>, <size>: blob://<sha256>.<ext>]`) instead of being sent; a tool that resolves `blob://`
+`[<media>, <size>[, <name>]: blob://<sha256>.<ext>]`) instead of being sent; a tool that resolves `blob://`
 URIs lets the model follow it. Accepted text attachments the target supports are sent in full. The
 runtime does not replace their contents with a hash placeholder. The selected model's context limit
 still applies; a provider rejection remains an explicit failure.
@@ -249,7 +249,7 @@ including WAV, MP3/MPEG, AIFF, AAC, OGG, FLAC, M4A, L16, Opus, A-law, μ-law and
 and bytes are preserved; no transcription or text stub is substituted. See Google's
 [audio input documentation](https://ai.google.dev/gemini-api/docs/generate-content/audio).
 A target bound to a profile that does not declare a media kind gets a pointer for it instead of a
-refusal; this includes tool-result blobs once binary tool results exist.
+refusal; this includes blobs in tool results, such as binary MCP content.
 Attachment bytes are verified by hash/length through an operation-local resolver. UTF-8 text
 is decoded in full within the 8 MiB blob limit. No implicit
 summarization, path reading, PDF conversion or Files API is performed. Attachment refs and continuation

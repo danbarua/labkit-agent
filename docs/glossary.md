@@ -94,8 +94,7 @@ not re-run, and no projection is recomputed.
 Code today: `replay()` in `session-log.ts`; a failure is a `JournalIntegrityError` naming the rule
 and the offending record. No prompt is stored. A terminal record's agent and outcome are the
 turn-ended fact and are taken as written; effect records have no fold precondition. A policy record
-still stores the policy its patch produced, and load applies it as written (a divergence listed in
-the session model).
+holds the settings a configuration applied, and load applies it as written.
 
 **Recovery.** Closing a turn that was interrupted by process exit when the session is reloaded. External
 effects are not repeated. Do not confuse it with **reconciliation**, which resolves a storage append
@@ -112,14 +111,15 @@ ending. The journal holds facts and nothing else.
 **Projection.** A view computed from facts, never stored as history: the next LLM prompt, a transcript,
 ACP replay, `/export`. The prompt projection also takes the target model's capabilities, and renders
 any part the target cannot read, or might not read, as a pointer.
-Code today: every step's prompt is journaled and checked against a fresh projection.
 
 **Effect.** An interaction with the outside world: an HTTP request and response, token usage and
 cost, raw tool output, a permission request. Effects are emitted as events where they happen and
 consumed by logging, capture, accounting and hooks. The journal may record chosen effects (such as
 per-step usage) as records typed separately from facts; the conversation fold ignores them.
-Code today: effects are logged with `diagnostic()` at scattered sites, and token usage is stored
-inside the model output fact.
+Code today: host, tool, permission and provider effects are typed `EffectEvent`s emitted through a
+bound emitter (`packages/core/effects`); session lifecycle, journal appends and loads, and the ACP
+adapter still log with direct `diagnostic()` calls. Token usage is an `effect` record staged after
+the step's model output in the same append.
 
 **Decision point.** A named seam where a policy chooses what happens next, for example tool
 permission, provider selection or a budget veto. A policy may read facts, configuration and data

@@ -567,7 +567,7 @@ content item. A provider whose bound profile has that media in its capabilities 
 natively from the tool result's stored parts (for example Anthropic `tool_result` image/document
 content blocks, Google `functionResponse` sibling `inlineData` parts). For a target that cannot, or
 might not, read that media (for example after switching to a text-only model), the next step's
-projection renders the part as pointer text (`[<media>, <size>: blob://<sha256>.<ext>]`, logged as
+projection renders the part as pointer text (`[<media>, <size>[, <name>]: blob://<sha256>.<ext>]`, logged as
 `prompt.media.pointer`) and the turn continues. Results and input schemas are limited to 256 KiB; each server may expose at
 most 256 tools, with at most 32 servers per session. Initialization/list requests time out after
 15 seconds; tool calls time out after 60 seconds. Cancellation sends the MCP cancellation notification;
@@ -674,7 +674,8 @@ is accepted: added, removed or changed tools, changed parameters, added or remov
 agent fields, and changed order. Load and resume succeed and replay the saved history unchanged.
 Opening writes nothing new; the adapter logs `acp.session.registry_pending` (info) with the
 `differences`. The first later prompt, policy change or fork first commits a `configuration` journal
-record with the live registry. Replay still checks earlier turns against the registry they used.
+record with the live registry. Replay checks journal integrity only; it does not re-check earlier
+turns against any registry.
 If the saved policy names removed tools or a model the live binding no longer serves, or the current
 agent was removed, the same record carries the adjusted policy or the live default agent; core logs
 each adjustment. Selectors and the load response already show the adjusted policy.

@@ -115,8 +115,8 @@ dialogs.
 are Info; expected negative test scenarios use the same production severity, not a test-specific
 threshold. The failed-turn record names the operation and agent, explains the failure in `message`
 and `reason`, retains `error`, and identifies the triggering event and child when available.
-A refusal warning records the intervention; the subsequent failed-turn warning records its
-committed consequence. Join them by session/turn/child IDs. Do not suppress the category to hide
+A refusal warning records the intervention; the turn continues, so no failed-turn warning follows
+it. Do not suppress the category to hide
 an unexplained warning; make the cause and scope legible on the warning itself.
 
 ### Common fields and correlation

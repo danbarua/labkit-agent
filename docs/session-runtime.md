@@ -71,9 +71,8 @@ flowchart TD
   mode -->|off| run[Start tool batch]
   mode -->|ask| ask[Ask once for each call in order]
   ask --> answer{Decision}
-  answer -->|all allowed| approval[Commit permission outcome]
-  approval --> run
-  answer -->|one refused| refusal[Commit failed turn: permission_refused]
+  answer -->|each call allowed or refused| approval[Commit permission outcome]
+  approval -->|refused calls get a permission-refused result| run
   answer -->|cancelled| abort[Commit aborted turn]
   answer -->|invalid response or port failure| fail[Commit failed turn with cause]
 ```

@@ -201,8 +201,10 @@ Images, audio, embedded resources, resource links, annotations and `_meta` remai
 
 Bind a renderer only when you own that tool's output contract. Arbitrary JSON is not automatically
 interpreted as MCP content or a diff. Discovered MCP tools receive a renderer automatically, so their
-admitted text/resource blocks display directly rather than as serialized envelopes. MCP binary-result
-admission remains a separate missing model-content boundary; this display binding does not enable it.
+admitted text/resource blocks display directly rather than as serialized envelopes. MCP binary
+content is stored as a blob and passed to the model as a tool-result part (see the
+[reference](protocol-reference.md#client-supplied-mcp-tools)); this display binding does not
+change what the model receives.
 
 The workspace launcher binds `workspaceToolContent` for `write_file`. Its tool result records
 `before` as observed text, confirmed absence, or unavailable with a reason, plus the written text.
