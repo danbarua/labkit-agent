@@ -71,3 +71,14 @@ test("orphan, unmatched and duplicate results raise projection errors", () => {
     ).toThrow("duplicate or unmatched");
   }
 });
+
+test("a handoff packet cannot conceal invalid source history", () => {
+  expect(() =>
+    projectConversationPrompt({
+      log: [],
+      turn: { ...turnData(), messages: exchange() },
+      handoff: [{ role: "user", text: "summary" }],
+      agent,
+    }),
+  ).toThrow("current turn: missing results for b");
+});

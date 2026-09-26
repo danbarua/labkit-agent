@@ -20,13 +20,7 @@ import {
 import type { TurnEvent } from "./agent-fsm.ts";
 import { createChatCompletion, type ChatCompletionRequest } from "./agent.ts";
 import type { OperationState } from "./operation-actor.ts";
-import {
-  agentMessagesToChat,
-  completedExchanges,
-  parseSessionContext,
-  projectConversationPrompt,
-  type PromptInput,
-} from "./prompt.ts";
+import { parseSessionContext, projectConversationPrompt, type PromptInput } from "./prompt.ts";
 import type { BatchState } from "./tool-batch.ts";
 import {
   ActorIdSchema,
@@ -144,9 +138,9 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
     ((request: ChatCompletionRequest) => createChatCompletion(request, fetcher));
   const project = options.projectPrompt ?? projectConversationPrompt;
   /**
-   * Prompt projection for the host's merged prepare+complete step: ordinary turns go through
-   * `project`; a handoff turn's packet is built from `projectHandoff` over the messages up to
-   * `turn.view.at`, with the messages added since appended and rendered the same way.
+   * Prompt projection for the host's step. On a handoff step the packet is built by
+   * `projectHandoff` over the messages up to `turn.view.at`; the packet plus the messages added
+   * since are passed to `project` as `input.handoff`, so the projection option applies to every step.
    */
   const projectPrompt = async (input: PromptInput, signal: AbortSignal) => {
     const view = input.turn.view;
@@ -166,11 +160,10 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
         signal,
       ),
     );
-    const since = input.turn.messages.slice(view.at);
-    return [
-      ...(input.agent.systemPrompt ? [{ role: "system", content: input.agent.systemPrompt }] : []),
-      ...agentMessagesToChat(completedExchanges([...packet, ...since], "handoff packet")),
-    ];
+    return project(
+      { ...input, handoff: [...packet, ...input.turn.messages.slice(view.at)] },
+      signal,
+    );
   };
   function build(initial: ConversationState): AgentRuntime {
     const replies = new Map<ActorId, (reply: SessionReply) => void>();

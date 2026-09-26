@@ -137,16 +137,16 @@ observed record available with its original operation ID. `completion.usage.rece
 The journal holds facts, not projections. Every record is format `version: 2`; a version 1 journal
 (written before prompts stopped being journaled) does not load and has no migration.
 
-| Record                                                                                   | What it states                                                                                                                               |
-| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `created`                                                                                | The session's seed: registry, instructions, initial policy, inherited context and log. The step allowance is the policy's `steps`.           |
-| `event`                                                                                  | User input, abort, a branch request, or a child operation settling (`model_settled`, `permission_settled`, `batch_settled`, `failed`).       |
-| `model_settled`                                                                          | A step's model output (or failure), the provider and model it was made with, and any continuation. No prompt, no usage, no permission flag.  |
-| `tool`                                                                                   | One tool call's raw result, committed before its batch settles.                                                                              |
-| `batch_settled`                                                                          | How the batch settled (`succeeded`, `failed` with error, `cancelled`). Its results are the batch's `tool` records.                           |
-| `effect` (`usage`)                                                                       | The accounting a completion reported, committed in the same append as its `model_settled`, just before it. The conversation fold ignores it. |
-| `terminal`                                                                               | The turn's final agent and outcome, in the append that ended the turn. The turn's messages come from the fold.                               |
-| `policy`, `system`, `configuration`, `queued`, `dequeued`, `input_cancelled`, `recovery` | Configuration boundaries, queued input, and closing an interrupted turn.                                                                     |
+| Record                                                                                   | What it states                                                                                                                              |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `created`                                                                                | The session's seed: registry, instructions, initial policy, inherited context and log. The step allowance is the policy's `steps`.          |
+| `event`                                                                                  | User input, abort, a branch request, or a child operation settling (`model_settled`, `permission_settled`, `batch_settled`, `failed`).      |
+| `model_settled`                                                                          | A step's model output (or failure), the provider and model it was made with, and any continuation. No prompt, no usage, no permission flag. |
+| `tool`                                                                                   | One tool call's raw result, committed before its batch settles.                                                                             |
+| `batch_settled`                                                                          | How the batch settled (`succeeded`, `failed` with error, `cancelled`). Its results are the batch's `tool` records.                          |
+| `effect` (`usage`)                                                                       | The accounting a completion reported, committed in the same append after its `model_settled`. Nothing in the fold depends on it.            |
+| `terminal`                                                                               | The turn-ended fact: the turn's final agent and outcome, in the append that ended the turn. The turn's messages come from the fold.         |
+| `policy`, `system`, `configuration`, `queued`, `dequeued`, `input_cancelled`, `recovery` | Configuration boundaries, queued input, and closing an interrupted turn.                                                                    |
 
 A step's prompt is a projection of these facts, recomputed when the step runs and never stored. So
 is a handoff's packet: the successor's first step renders it from the policy's handoff resolver and
@@ -163,12 +163,14 @@ Loading a journal checks its integrity only: each record decodes, batches contin
 revision, revisions run 1, 2, 3…, append IDs are unique and entry IDs are `<appendId>/<index>`, every
 record belongs to the session, the first record (and only the first) creates it, and a turn's
 terminal record follows the record that ended the turn in the same batch. A record must also name a
-turn, operation, tool batch, call or queued input that exists in the folded state; a usage effect
-must name the turn's active completion. Commit-time rules (policy patches, permissions, admission,
-bindings) run only when new work is staged, never again on load. The fold is authoritative: no
-stored copy overrides what it derives. A terminal record whose agent or outcome disagrees with the
-fold fails `record_applicable`. A policy record's stored policy is the configuration fact itself and
-is applied as written.
+turn, operation, tool batch, call or queued input that exists in the folded state. An effect record
+has no such precondition: its turn and operation IDs correlate it, and it loads whatever state the
+conversation is in. Commit-time rules (policy patches, permissions, admission, bindings) run only
+when new work is staged, never again on load. No prompt is stored. A terminal record's agent and
+outcome are the fact of how the turn ended and are taken as written, so a later change to how a
+build words or serializes an outcome never makes an old session unloadable. A policy record still
+stores the policy its patch produced next to the patch, and load applies that stored policy as
+written; this is a known divergence from the [session model](../../../docs/session-model.md#code-today).
 
 A load failure is a `JournalIntegrityError` with `rule`, `revision`, `appendId` and `entryId` of the
 offending record (for an undecodable record, where it should be). `session.restore_failed` reports
@@ -226,7 +228,7 @@ completion or tool. A store that can commit an old append after reporting it abs
 contract and can cause execution to proceed from false evidence. Add crash tests for your real
 storage engine; the memory adapter only tests the protocol.
 
-All new records use one current format (`version: 1`), independently of configuration revisions or
+All new records use one current format (`version: 2`), independently of configuration revisions or
 features. Historical formats are not supported. See [journal and blob storage](../../../docs/session-persistence.md)
 for bytes, hashing, limits, and persistence lifetime.
 

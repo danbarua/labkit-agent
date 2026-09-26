@@ -10,7 +10,7 @@ import {
   ref,
   StepsSchema,
 } from "../agent/types.ts";
-import { createHost, type HostToolOutcome } from "./host.ts";
+import { createHost, type ExecutionContext, type HostToolOutcome } from "./host.ts";
 import { completionTransport, defineTool } from "./ports.ts";
 import { completionContract } from "./testing/completion-contract.ts";
 import { toolContract } from "./testing/tool-contract.ts";
@@ -119,3 +119,76 @@ test("a step command rejects missing prompt context before spawning operations",
   expect(host.snapshot).toHaveLength(0);
   host.close();
 });
+
+for (const cancelled of [false, true])
+  test(`a streaming step ${cancelled ? "cancelled during prompt projection publishes no stream status" : "publishes paired stream statuses"}`, async () => {
+    const statuses: unknown[] = [];
+    const events: { type: string; result?: { kind: string } }[] = [];
+    let completions = 0;
+    const host = createHost(
+      {
+        agents: new Map([["a", { model: "m", tools: [], successors: [] }]]),
+        complete: () => {
+          completions++;
+          return { kind: "answer", text: "done" };
+        },
+      },
+      {
+        turn: (_, event) => {
+          events.push(event);
+        },
+        tool: () => {
+          throw new Error("Must not execute tools");
+        },
+        streamUpdate: (update) => {
+          if ("status" in update && update.status) statuses.push(update.status);
+        },
+      },
+    );
+    let release: (messages: readonly unknown[]) => void = () => {};
+    const projected = new Promise<readonly unknown[]>((resolve) => {
+      release = resolve;
+    });
+    const turn = {
+      id: ActorIdSchema.parse("turn"),
+      agent: AgentIdSchema.parse("a"),
+      generation: 1,
+      steps: StepsSchema.parse(1),
+      messages: [{ role: "user" as const, text: "hi" }],
+      view: { kind: "history" as const },
+    };
+    const child = ref("completion", "turn/1");
+    // Called right after projection resolves, so it shows the step's run resumed past it.
+    let loads = 0;
+    let projecting = false;
+    const context: ExecutionContext = {
+      prompt: { log: [], turn, agent: { model: "m", tools: [] } },
+      provider: { provider: "p", stream: true },
+      projectPrompt: () => {
+        projecting = true;
+        return projected;
+      },
+      loadBlobs: async () => {
+        loads++;
+        return () => {
+          throw new Error("No blobs in this step");
+        };
+      },
+    };
+    host.dispatch(
+      { type: "turn", turnId: turn.id, command: { type: "complete", child, turn } },
+      context,
+    );
+    await until(() => projecting);
+    if (cancelled)
+      host.dispatch({ type: "turn", turnId: turn.id, command: { type: "cancel", child } }, context);
+    release([{ role: "user", content: "hi" }]);
+    await until(() => events.length === 1 && loads > 0);
+    expect(events[0]).toMatchObject({
+      type: "model_settled",
+      result: { kind: cancelled ? "cancelled" : "succeeded" },
+    });
+    expect(completions).toBe(cancelled ? 0 : 1);
+    expect(statuses).toEqual(cancelled ? [] : ["pending", "in_progress", "completed"]);
+    host.close();
+  });

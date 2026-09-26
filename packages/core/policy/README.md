@@ -38,10 +38,10 @@ fact that the model does not see.
 
 Handoff projection is separate. `handoff-slim@1` gives the successor the latest user instruction and
 handoff message; `handoff-history@1` carries history. Slim handoff reduces input but requires the
-handoff to contain what the successor needs. Neither setting generates a summary. A handoff step's
-prompt is the handoff resolver's packet plus the messages added since, whatever `project` names:
-`context-only@1` session context reaches the successor only through a resolver that carries it,
-such as `handoff-history@1`.
+handoff to contain what the successor needs. Neither setting generates a summary. On a handoff
+step the projection receives the packet plus the messages added since as `input.handoff`, and
+`project` decides what to send: `history@1` sends that packet; `context-only@1` ignores it and
+sends the replacement context and the current turn's messages, as on any other step.
 
 Custom projectors must be pure and preserve correlated tool exchanges and desired attachment refs.
 They may select/rearrange valid context, but cannot fetch files or call another model. Invalid

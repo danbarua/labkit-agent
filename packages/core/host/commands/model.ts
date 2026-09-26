@@ -93,7 +93,9 @@ export function completeModel(
           ...(continuations.length ? { continuations } : {}),
         });
         // Whether the step streams is known only once its request is projected, after the
-        // operation already started running, so both opening statuses are published here.
+        // operation already started running, so both opening statuses are published here, and
+        // only for a step still live: a cancelled or timed-out step must not open a stream.
+        signal.throwIfAborted();
         stream = !!request.stream;
         notifyStream({ sessionUpdate: "completion", status: "pending" });
         notifyStream({ sessionUpdate: "completion_update", status: "in_progress" });

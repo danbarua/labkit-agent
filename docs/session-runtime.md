@@ -176,8 +176,8 @@ as the record that ended the turn. A record must also name a turn, operation, to
 queued input that exists in the folded state, because the fold cannot apply it otherwise. Load never
 re-runs commit-time rules (policy patches, permissions, admission) and never asks whether a
 provider, model, profile setting or permission port named in a record is bound today. No prompt is
-stored, so none is compared. The fold is authoritative: a terminal record is checked against the
-outcome the fold derived, never used in its place. New work is still staged under every commit-time
+stored, so none is compared. A terminal record's agent and outcome are the turn-ended fact and are
+taken as written; an effect record loads whatever state the turn is in. New work is still staged under every commit-time
 rule, and new policy patches are validated against live bindings before they are admitted.
 
 If the live agents or tool schemas differ from the journal's registry, or the current policy does

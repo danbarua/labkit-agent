@@ -92,9 +92,10 @@ session identity, the creation record first, and terminal records where a turn e
 also name a turn, operation or queued input that exists in the folded state. Commit-time rules are
 not re-run, and no projection is recomputed.
 Code today: `replay()` in `session-log.ts`; a failure is a `JournalIntegrityError` naming the rule
-and the offending record. No prompt is stored; a terminal record is checked against the outcome the
-fold derived (`record_applicable` when they disagree). A policy record's stored policy is applied as
-written: it is the configuration fact, not a copy of a derivation.
+and the offending record. No prompt is stored. A terminal record's agent and outcome are the
+turn-ended fact and are taken as written; effect records have no fold precondition. A policy record
+still stores the policy its patch produced, and load applies it as written (a divergence listed in
+the session model).
 
 **Recovery.** Closing a turn that was interrupted by process exit when the session is reloaded. External
 effects are not repeated. Do not confuse it with **reconciliation**, which resolves a storage append

@@ -5374,6 +5374,10 @@
           },
           {
             "role": "user",
+            "content": "Summary"
+          },
+          {
+            "role": "user",
             "content": "Continue"
           },
           {
@@ -17138,33 +17142,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "outputTokens": 4,
-                "native": {
-                  "completion_tokens": 4
-                },
-                "source": {
-                  "provider": "openai-chat@2",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "openai-chat@2",
-                  "httpRequestId": "fixture-http-1"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 4,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -17197,6 +17174,33 @@
               },
               "systemVersion": 0,
               "policyVersion": 0
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 4,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "outputTokens": 4,
+                "native": {
+                  "completion_tokens": 4
+                },
+                "source": {
+                  "provider": "openai-chat@2",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "openai-chat@2",
+                  "httpRequestId": "fixture-http-1"
+                }
+              }
             }
           },
           {
@@ -17249,33 +17253,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "outputTokens": 4,
-                "native": {
-                  "completion_tokens": 4
-                },
-                "source": {
-                  "provider": "openai-chat@2",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "openai-chat@2",
-                  "httpRequestId": "fixture-http-2"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 8,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -17304,8 +17281,8 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 9,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "revision": 8,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
               "kind": "terminal",
@@ -17313,6 +17290,33 @@
               "agent": "a",
               "outcome": {
                 "kind": "completed"
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 9,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "outputTokens": 4,
+                "native": {
+                  "completion_tokens": 4
+                },
+                "source": {
+                  "provider": "openai-chat@2",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "openai-chat@2",
+                  "httpRequestId": "fixture-http-2"
+                }
               }
             }
           }
@@ -17548,33 +17552,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "outputTokens": 4,
-                "native": {
-                  "completion_tokens": 4
-                },
-                "source": {
-                  "provider": "openai-chat@2",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "openai-chat@2",
-                  "httpRequestId": "fixture-http-1"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 4,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -17607,6 +17584,33 @@
               },
               "systemVersion": 0,
               "policyVersion": 0
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 4,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "outputTokens": 4,
+                "native": {
+                  "completion_tokens": 4
+                },
+                "source": {
+                  "provider": "openai-chat@2",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "openai-chat@2",
+                  "httpRequestId": "fixture-http-1"
+                }
+              }
             }
           },
           {
@@ -17659,33 +17663,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "outputTokens": 4,
-                "native": {
-                  "completion_tokens": 4
-                },
-                "source": {
-                  "provider": "openai-chat@2",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "openai-chat@2",
-                  "httpRequestId": "fixture-http-2"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 8,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -17714,8 +17691,8 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 9,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "revision": 8,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
               "kind": "terminal",
@@ -17723,6 +17700,33 @@
               "agent": "a",
               "outcome": {
                 "kind": "completed"
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 9,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "outputTokens": 4,
+                "native": {
+                  "completion_tokens": 4
+                },
+                "source": {
+                  "provider": "openai-chat@2",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "openai-chat@2",
+                  "httpRequestId": "fixture-http-2"
+                }
               }
             }
           }
@@ -18182,36 +18186,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "inputTokens": 1,
-                "outputTokens": 4,
-                "totalTokens": 5,
-                "native": {
-                  "input_tokens": 1,
-                  "output_tokens": 4
-                },
-                "source": {
-                  "provider": "anthropic-messages@3",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "anthropic-messages@3",
-                  "httpRequestId": "fixture-http-1"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 4,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -18265,6 +18239,36 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 4,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "inputTokens": 1,
+                "outputTokens": 4,
+                "totalTokens": 5,
+                "native": {
+                  "input_tokens": 1,
+                  "output_tokens": 4
+                },
+                "source": {
+                  "provider": "anthropic-messages@3",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "anthropic-messages@3",
+                  "httpRequestId": "fixture-http-1"
+                }
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
@@ -18312,36 +18316,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "inputTokens": 1,
-                "outputTokens": 4,
-                "totalTokens": 5,
-                "native": {
-                  "input_tokens": 1,
-                  "output_tokens": 4
-                },
-                "source": {
-                  "provider": "anthropic-messages@3",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "anthropic-messages@3",
-                  "httpRequestId": "fixture-http-2"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 8,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -18386,8 +18360,8 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 9,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "revision": 8,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
               "kind": "terminal",
@@ -18397,29 +18371,38 @@
                 "kind": "completed"
               }
             }
-          }
-        ],
-        "lastCompletionUsage": {
-          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-          "usage": {
-            "status": "reported",
-            "inputTokens": 1,
-            "outputTokens": 4,
-            "totalTokens": 5,
-            "native": {
-              "input_tokens": 1,
-              "output_tokens": 4
-            },
-            "source": {
-              "provider": "anthropic-messages@3",
-              "model": "test-model",
-              "wireModel": "test-model",
-              "profile": "anthropic-messages@3",
-              "httpRequestId": "fixture-http-2"
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 9,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "inputTokens": 1,
+                "outputTokens": 4,
+                "totalTokens": 5,
+                "native": {
+                  "input_tokens": 1,
+                  "output_tokens": 4
+                },
+                "source": {
+                  "provider": "anthropic-messages@3",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "anthropic-messages@3",
+                  "httpRequestId": "fixture-http-2"
+                }
+              }
             }
           }
-        },
+        ],
         "continuations": [
           {
             "provider": "anthropic-messages@3",
@@ -18453,7 +18436,28 @@
               ]
             }
           }
-        ]
+        ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+          "usage": {
+            "status": "reported",
+            "inputTokens": 1,
+            "outputTokens": 4,
+            "totalTokens": 5,
+            "native": {
+              "input_tokens": 1,
+              "output_tokens": 4
+            },
+            "source": {
+              "provider": "anthropic-messages@3",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "anthropic-messages@3",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        }
       },
       "restored": {
         "conversation": {
@@ -18677,36 +18681,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "inputTokens": 1,
-                "outputTokens": 4,
-                "totalTokens": 5,
-                "native": {
-                  "input_tokens": 1,
-                  "output_tokens": 4
-                },
-                "source": {
-                  "provider": "anthropic-messages@3",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "anthropic-messages@3",
-                  "httpRequestId": "fixture-http-1"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 4,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -18760,6 +18734,36 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 4,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "inputTokens": 1,
+                "outputTokens": 4,
+                "totalTokens": 5,
+                "native": {
+                  "input_tokens": 1,
+                  "output_tokens": 4
+                },
+                "source": {
+                  "provider": "anthropic-messages@3",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "anthropic-messages@3",
+                  "httpRequestId": "fixture-http-1"
+                }
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
@@ -18807,36 +18811,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "inputTokens": 1,
-                "outputTokens": 4,
-                "totalTokens": 5,
-                "native": {
-                  "input_tokens": 1,
-                  "output_tokens": 4
-                },
-                "source": {
-                  "provider": "anthropic-messages@3",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "anthropic-messages@3",
-                  "httpRequestId": "fixture-http-2"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 8,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -18881,8 +18855,8 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 9,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "revision": 8,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
               "kind": "terminal",
@@ -18892,29 +18866,38 @@
                 "kind": "completed"
               }
             }
-          }
-        ],
-        "lastCompletionUsage": {
-          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-          "usage": {
-            "status": "reported",
-            "inputTokens": 1,
-            "outputTokens": 4,
-            "totalTokens": 5,
-            "native": {
-              "input_tokens": 1,
-              "output_tokens": 4
-            },
-            "source": {
-              "provider": "anthropic-messages@3",
-              "model": "test-model",
-              "wireModel": "test-model",
-              "profile": "anthropic-messages@3",
-              "httpRequestId": "fixture-http-2"
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 9,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "inputTokens": 1,
+                "outputTokens": 4,
+                "totalTokens": 5,
+                "native": {
+                  "input_tokens": 1,
+                  "output_tokens": 4
+                },
+                "source": {
+                  "provider": "anthropic-messages@3",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "anthropic-messages@3",
+                  "httpRequestId": "fixture-http-2"
+                }
+              }
             }
           }
-        },
+        ],
         "continuations": [
           {
             "provider": "anthropic-messages@3",
@@ -18948,7 +18931,28 @@
               ]
             }
           }
-        ]
+        ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+          "usage": {
+            "status": "reported",
+            "inputTokens": 1,
+            "outputTokens": 4,
+            "totalTokens": 5,
+            "native": {
+              "input_tokens": 1,
+              "output_tokens": 4
+            },
+            "source": {
+              "provider": "anthropic-messages@3",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "anthropic-messages@3",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        }
       }
     }
   },
@@ -19399,33 +19403,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "outputTokens": 4,
-                "native": {
-                  "candidatesTokenCount": 4
-                },
-                "source": {
-                  "provider": "google-generate@3",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "google-generate@3",
-                  "httpRequestId": "fixture-http-1"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 4,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -19494,6 +19471,33 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 4,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "outputTokens": 4,
+                "native": {
+                  "candidatesTokenCount": 4
+                },
+                "source": {
+                  "provider": "google-generate@3",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "google-generate@3",
+                  "httpRequestId": "fixture-http-1"
+                }
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
@@ -19539,33 +19543,6 @@
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 7,
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
-            "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "outputTokens": 4,
-                "native": {
-                  "candidatesTokenCount": 4
-                },
-                "source": {
-                  "provider": "google-generate@3",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "google-generate@3",
-                  "httpRequestId": "fixture-http-2"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 8,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
               "kind": "event",
@@ -19618,8 +19595,8 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 9,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "revision": 8,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
               "kind": "terminal",
@@ -19629,26 +19606,35 @@
                 "kind": "completed"
               }
             }
-          }
-        ],
-        "lastCompletionUsage": {
-          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-          "usage": {
-            "status": "reported",
-            "outputTokens": 4,
-            "native": {
-              "candidatesTokenCount": 4
-            },
-            "source": {
-              "provider": "google-generate@3",
-              "model": "test-model",
-              "wireModel": "test-model",
-              "profile": "google-generate@3",
-              "httpRequestId": "fixture-http-2"
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 9,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "outputTokens": 4,
+                "native": {
+                  "candidatesTokenCount": 4
+                },
+                "source": {
+                  "provider": "google-generate@3",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "google-generate@3",
+                  "httpRequestId": "fixture-http-2"
+                }
+              }
             }
           }
-        },
+        ],
         "continuations": [
           {
             "provider": "google-generate@3",
@@ -19703,7 +19689,25 @@
               ]
             }
           }
-        ]
+        ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+          "usage": {
+            "status": "reported",
+            "outputTokens": 4,
+            "native": {
+              "candidatesTokenCount": 4
+            },
+            "source": {
+              "provider": "google-generate@3",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "google-generate@3",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        }
       },
       "restored": {
         "conversation": {
@@ -19927,33 +19931,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "outputTokens": 4,
-                "native": {
-                  "candidatesTokenCount": 4
-                },
-                "source": {
-                  "provider": "google-generate@3",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "google-generate@3",
-                  "httpRequestId": "fixture-http-1"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 4,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -20022,6 +19999,33 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 4,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "outputTokens": 4,
+                "native": {
+                  "candidatesTokenCount": 4
+                },
+                "source": {
+                  "provider": "google-generate@3",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "google-generate@3",
+                  "httpRequestId": "fixture-http-1"
+                }
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
@@ -20067,33 +20071,6 @@
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 7,
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
-            "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "outputTokens": 4,
-                "native": {
-                  "candidatesTokenCount": 4
-                },
-                "source": {
-                  "provider": "google-generate@3",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "google-generate@3",
-                  "httpRequestId": "fixture-http-2"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 8,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
               "kind": "event",
@@ -20146,8 +20123,8 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 9,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "revision": 8,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
               "kind": "terminal",
@@ -20157,26 +20134,35 @@
                 "kind": "completed"
               }
             }
-          }
-        ],
-        "lastCompletionUsage": {
-          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-          "usage": {
-            "status": "reported",
-            "outputTokens": 4,
-            "native": {
-              "candidatesTokenCount": 4
-            },
-            "source": {
-              "provider": "google-generate@3",
-              "model": "test-model",
-              "wireModel": "test-model",
-              "profile": "google-generate@3",
-              "httpRequestId": "fixture-http-2"
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 9,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "outputTokens": 4,
+                "native": {
+                  "candidatesTokenCount": 4
+                },
+                "source": {
+                  "provider": "google-generate@3",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "google-generate@3",
+                  "httpRequestId": "fixture-http-2"
+                }
+              }
             }
           }
-        },
+        ],
         "continuations": [
           {
             "provider": "google-generate@3",
@@ -20231,7 +20217,25 @@
               ]
             }
           }
-        ]
+        ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+          "usage": {
+            "status": "reported",
+            "outputTokens": 4,
+            "native": {
+              "candidatesTokenCount": 4
+            },
+            "source": {
+              "provider": "google-generate@3",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "google-generate@3",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        }
       }
     }
   },
@@ -20652,33 +20656,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "outputTokens": 4,
-                "native": {
-                  "output_tokens": 4
-                },
-                "source": {
-                  "provider": "openai-responses@3",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "openai-responses@3",
-                  "httpRequestId": "fixture-http-1"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 4,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -20733,6 +20710,33 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 4,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "outputTokens": 4,
+                "native": {
+                  "output_tokens": 4
+                },
+                "source": {
+                  "provider": "openai-responses@3",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "openai-responses@3",
+                  "httpRequestId": "fixture-http-1"
+                }
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
@@ -20780,33 +20784,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "outputTokens": 4,
-                "native": {
-                  "output_tokens": 4
-                },
-                "source": {
-                  "provider": "openai-responses@3",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "openai-responses@3",
-                  "httpRequestId": "fixture-http-2"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 8,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -20852,8 +20829,8 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 9,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "revision": 8,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
               "kind": "terminal",
@@ -20863,26 +20840,35 @@
                 "kind": "completed"
               }
             }
-          }
-        ],
-        "lastCompletionUsage": {
-          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-          "usage": {
-            "status": "reported",
-            "outputTokens": 4,
-            "native": {
-              "output_tokens": 4
-            },
-            "source": {
-              "provider": "openai-responses@3",
-              "model": "test-model",
-              "wireModel": "test-model",
-              "profile": "openai-responses@3",
-              "httpRequestId": "fixture-http-2"
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 9,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "outputTokens": 4,
+                "native": {
+                  "output_tokens": 4
+                },
+                "source": {
+                  "provider": "openai-responses@3",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "openai-responses@3",
+                  "httpRequestId": "fixture-http-2"
+                }
+              }
             }
           }
-        },
+        ],
         "continuations": [
           {
             "provider": "openai-responses@3",
@@ -20918,7 +20904,25 @@
               ]
             }
           }
-        ]
+        ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+          "usage": {
+            "status": "reported",
+            "outputTokens": 4,
+            "native": {
+              "output_tokens": 4
+            },
+            "source": {
+              "provider": "openai-responses@3",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "openai-responses@3",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        }
       },
       "restored": {
         "conversation": {
@@ -21140,33 +21144,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "outputTokens": 4,
-                "native": {
-                  "output_tokens": 4
-                },
-                "source": {
-                  "provider": "openai-responses@3",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "openai-responses@3",
-                  "httpRequestId": "fixture-http-1"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 4,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -21221,6 +21198,33 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 4,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000003",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/1",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "outputTokens": 4,
+                "native": {
+                  "output_tokens": 4
+                },
+                "source": {
+                  "provider": "openai-responses@3",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "openai-responses@3",
+                  "httpRequestId": "fixture-http-1"
+                }
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
@@ -21268,33 +21272,6 @@
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
-              "kind": "effect",
-              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-              "effect": "usage",
-              "usage": {
-                "status": "reported",
-                "outputTokens": 4,
-                "native": {
-                  "output_tokens": 4
-                },
-                "source": {
-                  "provider": "openai-responses@3",
-                  "model": "test-model",
-                  "wireModel": "test-model",
-                  "profile": "openai-responses@3",
-                  "httpRequestId": "fixture-http-2"
-                }
-              }
-            }
-          },
-          {
-            "version": 2,
-            "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 8,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
-            "body": {
               "kind": "event",
               "event": {
                 "type": "child",
@@ -21340,8 +21317,8 @@
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 9,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "revision": 8,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
               "kind": "terminal",
@@ -21351,26 +21328,35 @@
                 "kind": "completed"
               }
             }
-          }
-        ],
-        "lastCompletionUsage": {
-          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
-          "usage": {
-            "status": "reported",
-            "outputTokens": 4,
-            "native": {
-              "output_tokens": 4
-            },
-            "source": {
-              "provider": "openai-responses@3",
-              "model": "test-model",
-              "wireModel": "test-model",
-              "profile": "openai-responses@3",
-              "httpRequestId": "fixture-http-2"
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 9,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/2",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
+            "body": {
+              "kind": "effect",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "effect": "usage",
+              "usage": {
+                "status": "reported",
+                "outputTokens": 4,
+                "native": {
+                  "output_tokens": 4
+                },
+                "source": {
+                  "provider": "openai-responses@3",
+                  "model": "test-model",
+                  "wireModel": "test-model",
+                  "profile": "openai-responses@3",
+                  "httpRequestId": "fixture-http-2"
+                }
+              }
             }
           }
-        },
+        ],
         "continuations": [
           {
             "provider": "openai-responses@3",
@@ -21406,7 +21392,25 @@
               ]
             }
           }
-        ]
+        ],
+        "lastCompletionUsage": {
+          "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+          "operationId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+          "usage": {
+            "status": "reported",
+            "outputTokens": 4,
+            "native": {
+              "output_tokens": 4
+            },
+            "source": {
+              "provider": "openai-responses@3",
+              "model": "test-model",
+              "wireModel": "test-model",
+              "profile": "openai-responses@3",
+              "httpRequestId": "fixture-http-2"
+            }
+          }
+        }
       }
     }
   },

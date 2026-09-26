@@ -13,8 +13,14 @@ export type PromptInput = Readonly<{
   context?: readonly AgentMessage[];
   /** Finished turns of this session, oldest first. */
   log: readonly TurnRecord[];
-  /** The turn in progress. Its `view` decides whether history or the handoff packet is sent. */
+  /** The turn in progress. A `handoff` view marks the successor's steps after a handoff. */
   turn: TurnData;
+  /**
+   * On a handoff step, the handoff packet (built by the policy's handoff resolver from the turn's
+   * messages up to `turn.view.at`) followed by the messages added since. Computed when the step's
+   * prompt is projected and never stored; absent on an ordinary step.
+   */
+  handoff?: readonly AgentMessage[];
   /**
    * The agent that will run the step. {@link projectConversationPrompt} uses only `systemPrompt`;
    * the other fields are for custom projections.
@@ -130,22 +136,23 @@ export function agentMessagesToChat(messages: readonly AgentMessage[]): ChatMess
 }
 
 /**
- * The default prompt projection: builds the chat messages for the next step from session context,
- * every finished turn and the current turn's messages. Stored history is not changed. A handoff
- * turn's packet is substituted by {@link projectPolicy}, before a project pack ever sees it, using
- * the policy's handoff resolver; this projection only renders ordinary history.
+ * The default prompt projection: builds the chat messages for the next step. The agent's
+ * `systemPrompt`, when set, comes first as a `system` message. On an ordinary step: session
+ * context, every finished turn and the current turn's messages. On a handoff step: only
+ * `input.handoff`. Stored history is not changed.
  *
  * Tool exchanges must be complete. The one exception is the last exchange of a finished turn that
  * did not complete: calls without results are dropped from the request.
  *
- * @throws When any source has an orphan, duplicate or unmatched tool result, or a tool call
- * without a result outside that exception.
+ * @throws When any source (including one the step does not send) has an orphan, duplicate or
+ * unmatched tool result, or a tool call without a result outside that exception.
  */
 export function projectConversationPrompt({
   context = [],
   log,
   turn,
   agent,
+  handoff,
 }: PromptInput): ChatMessage[] {
   const base = completedExchanges(context, "session context");
   const history = log.flatMap((record, index) =>
@@ -158,6 +165,8 @@ export function projectConversationPrompt({
   const current = completedExchanges(turn.messages, "current turn");
   return [
     ...(agent.systemPrompt ? [{ role: "system" as const, content: agent.systemPrompt }] : []),
-    ...agentMessagesToChat([...base, ...history, ...current]),
+    ...agentMessagesToChat(
+      handoff ? completedExchanges(handoff, "handoff packet") : [...base, ...history, ...current],
+    ),
   ];
 }

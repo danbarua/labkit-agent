@@ -2,8 +2,6 @@ import { z } from "zod";
 
 import { ChatMessageSchema, type ChatMessage } from "../agent/agent.ts";
 import {
-  agentMessagesToChat,
-  completedExchanges,
   parseSessionContext,
   projectConversationPrompt,
   type PromptInput,
@@ -109,7 +107,13 @@ export const builtinResolvers: PolicyResolvers = {
     ["history@1", history],
     [
       "context-only@1",
-      (input) => history({ ...input, log: [], turn: { ...input.turn, view: { kind: "history" } } }),
+      (input) =>
+        history({
+          ...input,
+          log: [],
+          handoff: undefined,
+          turn: { ...input.turn, view: { kind: "history" } },
+        }),
     ],
   ]),
   handoffs: new Map([
@@ -294,18 +298,19 @@ export function patchPolicy(
 }
 
 /**
- * Renders a handoff turn's prompt: the policy's handoff resolver builds the packet from the
- * messages up to `turn.view.at` (the predecessor's history, as it stood at the handoff), and the
- * messages the successor added since are appended and rendered the same way as ordinary history.
- * The packet is computed here, from turn state and the resolver, and never journaled.
+ * The input the policy's projection pack renders. On a handoff step, the policy's handoff resolver
+ * builds the packet from the messages up to `turn.view.at` (the predecessor's history, as it stood
+ * at the handoff); the packet plus the messages the successor added since become
+ * `input.handoff`, and the pack decides what to send. The packet is computed here, from turn state
+ * and the resolver, and never journaled.
  */
-function handoffPrompt(
+function projectionInput(
   input: PromptInput,
   policy: Policy,
   resolvers: PolicyResolvers,
-): readonly ChatMessage[] {
+): PromptInput {
   const view = input.turn.view;
-  if (view.kind !== "handoff") throw new Error("Expected a handoff view");
+  if (view.kind !== "handoff") return input;
   const handoff = resolvers.handoffs.get(policy.handoff);
   if (!handoff) throw new Error("Missing versioned handoff projection");
   const packet = handoff({
@@ -318,18 +323,7 @@ function handoffPrompt(
     from: view.from,
     to: input.turn.agent,
   });
-  const since = input.turn.messages.slice(view.at);
-  return agentMessagesToChat(completedExchanges([...packet, ...since], "handoff packet"));
-}
-
-function projectWithPack(
-  input: PromptInput,
-  policy: Policy,
-  resolvers: PolicyResolvers,
-): readonly ChatMessage[] {
-  const project = resolvers.projections.get(policy.project);
-  if (!project) throw new Error("Missing versioned projection");
-  return project(input);
+  return { ...input, handoff: [...packet, ...input.turn.messages.slice(view.at)] };
 }
 
 export function projectPolicy(
@@ -338,10 +332,9 @@ export function projectPolicy(
   policy: Policy,
   resolvers: PolicyResolvers = builtinResolvers,
 ) {
-  const projected =
-    input.turn.view.kind === "handoff"
-      ? handoffPrompt(input, policy, resolvers)
-      : projectWithPack(input, policy, resolvers);
+  const project = resolvers.projections.get(policy.project);
+  if (!project) throw new Error("Missing versioned projection");
+  const projected = project(projectionInput(input, policy, resolvers));
   const messages = z
     .array(ChatMessageSchema)
     .parse([

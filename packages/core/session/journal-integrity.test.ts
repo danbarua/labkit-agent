@@ -139,6 +139,55 @@ test("a policy record loads its stored policy, not the policy its patch derives 
   expect(state.policy).not.toEqual(durable.policy);
 });
 
+test("a terminal record's agent and outcome load as written; the turn's messages come from the fold", async () => {
+  const { options, durable, batches } = await committed();
+  const at = position(batches, "terminal");
+  const outcome = { kind: "aborted", reason: { message: "as recorded by an older build" } };
+  const changed = rewrite(batches, at, [[["body", "outcome"], outcome]], terminalIndex(batches));
+  const state = replay(changed);
+  expect<unknown>(state.conversation.log.at(-1)).toEqual({
+    ...durable.conversation.log.at(-1)!,
+    outcome,
+  });
+  const restored = await restoreSession(serving(options, changed), durable.conversation.sessionId);
+  try {
+    expect<unknown>(restored.snapshot.durable.conversation.log.at(-1)?.outcome).toEqual(outcome);
+  } finally {
+    await restored.close();
+  }
+});
+
+test("an effect record loads whatever the turn state, and its usage becomes the latest", async () => {
+  const { durable, batches } = await committed();
+  const last = batches.at(-1)!;
+  const revision = RevisionSchema.parse(last.revision + 1);
+  const appendId = AppendIdSchema.parse("late-effect");
+  const usage = { status: "reported", inputTokens: 7, native: { input_tokens: 7 } };
+  const turnId = `${durable.conversation.sessionId}/turn/1`;
+  const operationId = `${turnId}/1`;
+  const state = replay([
+    ...batches,
+    {
+      sessionId: durable.conversation.sessionId,
+      expectedRevision: last.revision,
+      appendId,
+      revision,
+      records: [
+        JSON.stringify({
+          version: 2,
+          sessionId: durable.conversation.sessionId,
+          revision,
+          appendId,
+          entryId: `${appendId}/0`,
+          body: { kind: "effect", turnId, operationId, effect: "usage", usage },
+        }),
+      ],
+    },
+  ]);
+  expect(state.conversation).toEqual(durable.conversation);
+  expect<unknown>(state.lastCompletionUsage).toEqual({ turnId, operationId, usage });
+});
+
 const violations: readonly (readonly [
   name: string,
   corrupt: (batches: readonly CommittedBatch[]) => readonly CommittedBatch[],
@@ -230,18 +279,6 @@ const violations: readonly (readonly [
         terminalIndex(batches),
       ),
     "terminal_required",
-    (batches) => located(batches, position(batches, "terminal"), terminalIndex(batches)),
-  ],
-  [
-    "a terminal record whose outcome differs from the one the fold derives",
-    (batches) =>
-      rewrite(
-        batches,
-        position(batches, "terminal"),
-        [[["body", "outcome"], { kind: "aborted" }]],
-        terminalIndex(batches),
-      ),
-    "record_applicable",
     (batches) => located(batches, position(batches, "terminal"), terminalIndex(batches)),
   ],
   [

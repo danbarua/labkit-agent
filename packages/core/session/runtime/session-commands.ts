@@ -39,10 +39,12 @@ function releaseCommitted(ctx: SessionInstance, command: Command<"dispatch">) {
   const { sessionId } = ctx;
   const previousPolicy = ctx.dispatchBoundary.policy;
   ctx.dispatchBoundary = command.durable;
-  const terminal = command.durable.records.at(-1)?.body;
   const newBodies = command.durable.records
     .filter((record) => record.appendId === command.submission.appendId)
     .map((record) => record.body);
+  // An effect record may follow the fact it accounts for (and the terminal record that fact
+  // produced); it never changes which record ended the append's work.
+  const terminal = newBodies.findLast((body) => body.kind !== "effect");
   for (const body of newBodies)
     if (body.kind === "dequeued") {
       const waiting = ctx.queuedWaiters.get(body.inputId);

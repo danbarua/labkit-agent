@@ -108,8 +108,9 @@ export function stage(
   } else if (input.kind === "event") {
     const { usage, ...event } = input;
     const body = next.policy ? { ...event, policyVersion: next.policy.version } : event;
-    // The usage effect is staged in the same append as the step output it accounts for, ahead of
-    // it, while its completion is still the turn's active operation; the conversation fold never
+    apply(body);
+    // The step's output is the fact; the usage it reported is an effect staged after it in the same
+    // append (after the terminal record when the step ended the turn). The conversation fold never
     // reads it, so it never gates load or new work.
     if (
       usage &&
@@ -124,7 +125,6 @@ export function stage(
         effect: "usage",
         usage,
       });
-    apply(body);
   } else {
     apply(input);
   }

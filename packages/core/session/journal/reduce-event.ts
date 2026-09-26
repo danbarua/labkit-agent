@@ -79,9 +79,9 @@ function reduceEvent(
 }
 
 /**
- * Reduces a usage effect record: records it as the latest completion accounting. Effect records
- * are checked for integrity only (their target exists, per `missingTarget`); the conversation fold
- * never reads them and they never gate load or new work.
+ * Reduces a usage effect record: it becomes the latest completion accounting, whatever state the
+ * conversation is in. Its turn and operation IDs are correlation data, not preconditions; the
+ * conversation fold never reads the record, and it never gates load or new work.
  */
 function reduceEffect(
   state: JournalState,
