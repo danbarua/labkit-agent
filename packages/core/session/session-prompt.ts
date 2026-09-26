@@ -6,8 +6,9 @@ import { freeze } from "../fsm/fsm.ts";
 
 /**
  * Projects a step's prompt as chat messages: the agent's configured system prompt, then the
- * standing session instructions in order (not system notices), then the history or handoff view
- * of {@link projectConversationPrompt}. The result is frozen.
+ * standing session instructions in order (not system notices), then the history of
+ * {@link projectConversationPrompt}. A handoff step's packet comes from the policy's handoff
+ * resolver, so its prompt is `projectPolicy`'s, not this one. The result is frozen.
  *
  * @throws Error when the history does not form a valid prompt, such as a tool result without its
  *   call.

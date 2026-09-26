@@ -40,7 +40,10 @@ test("permission response correlation and both durable gates precede tool execut
         ...persistence,
         append: async (request, signal) => {
           if (
-            request.records.some((raw) => JSON.parse(raw).body.event?.event?.permissionRequired)
+            request.records.some((raw) => {
+              const event = JSON.parse(raw).body.event?.event;
+              return event?.type === "model_settled" && event.result?.value?.kind === "tools";
+            })
           ) {
             waitingIntent = true;
             await intent.promise;

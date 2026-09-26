@@ -28,7 +28,7 @@ test("v2 policy changes allowance and tools only after idle commit, restores and
       },
     },
   });
-  expect(session.snapshot.durable.records[0]?.version).toBe(1);
+  expect(session.snapshot.durable.records[0]?.version).toBe(2);
   const before = session.snapshot;
   expect((await session.updatePolicy({ steps: 1, tools: { a: [] } })).kind).toBe("accepted");
   const turn = session.input("Go");

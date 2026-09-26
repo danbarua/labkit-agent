@@ -26,6 +26,13 @@ export function missingTarget(state: JournalState, input: Applicable): string | 
       return `Event for ${event.child.kind} ${event.child.id}; the active operation is ${c.turn.child.kind} ${c.turn.child.id}`;
     return undefined;
   }
+  if (input.kind === "effect") {
+    if (input.turnId !== c.turnId)
+      return `Effect for turn ${input.turnId}; the current turn is ${c.turnId}`;
+    if (c.turn.status === "idle" || c.turn.child.id !== input.operationId)
+      return `Effect for operation ${input.operationId}; it is not the active completion of turn ${c.turnId}`;
+    return undefined;
+  }
   if (input.kind !== "tool") return undefined;
   if (input.turnId !== c.turnId)
     return `Tool result for turn ${input.turnId}; the current turn is ${c.turnId}`;

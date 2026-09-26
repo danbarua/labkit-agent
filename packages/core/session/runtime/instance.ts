@@ -13,7 +13,7 @@ import {
   type SessionEvent,
   type SessionState,
 } from "../session-fsm.ts";
-import { seedConversation, wireEvent, type JournalState } from "../session-log.ts";
+import { completionUsage, seedConversation, wireEvent, type JournalState } from "../session-log.ts";
 import type { SessionRuntime, TerminalResult } from "../session-runtime.ts";
 import type { Seed, SessionInput } from "../types.ts";
 import type { ConfiguredSession } from "./configure.ts";
@@ -234,10 +234,13 @@ function send(ctx: SessionInstance, event: SessionEvent) {
 }
 
 function post(ctx: SessionInstance, turnId: ActorId, event: TurnEvent) {
+  const conversation = { type: "child" as const, turnId, event };
+  const usage = completionUsage(conversation);
   void ctx.submit({
     kind: "event",
-    event: wireEvent({ type: "child", turnId, event }),
+    event: wireEvent(conversation),
     systemVersion: ctx.actor.snapshot.durable.systemVersion,
+    ...(usage ? { usage } : {}),
   });
 }
 

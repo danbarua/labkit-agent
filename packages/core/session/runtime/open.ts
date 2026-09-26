@@ -29,7 +29,6 @@ export async function createSession(options: SessionOptions): Promise<SessionRun
       context: [],
       log: [],
       agent: configured.agentId,
-      allowance: configured.steps,
       sequence: 1,
       systemInputs: configured.options.systemInputs ?? [],
       ...(configured.initialPolicy ? { policy: configured.initialPolicy } : {}),

@@ -120,17 +120,11 @@ test("thinking survives two tool rounds, restore, fork; projection/switch omit a
   ).toBe("accepted");
   await session.input("google").settled;
   expect(session.snapshot.durable.continuations).toEqual(retained);
-  const prepared = session.snapshot.durable.records.findLast(
-    (r) =>
-      r.body.kind === "event" &&
-      r.body.event.type === "child" &&
-      r.body.event.event.type === "prepared",
-  );
-  expect(JSON.stringify(prepared)).not.toContain('"continuations"');
+  expect(JSON.stringify(bodies.at(-1))).not.toContain("sig-");
   await Promise.all([session.close(), restored.close(), fork.close(), compact.close()]);
 });
 
-test("v4 staging rejects altered owners and prepared joins; load keeps stored envelopes", async () => {
+test("staging rejects altered owners; load keeps stored envelopes", async () => {
   const { opts } = setup();
   const session = await createSession(opts);
   await session.input("Go").settled;
@@ -153,7 +147,7 @@ test("v4 staging rejects altered owners and prepared joins; load keeps stored en
       r.body.kind === "created" ||
       (r.body.kind === "event" &&
         r.body.event.type === "child" &&
-        ["prepared", "model_settled"].includes(r.body.event.event.type)),
+        r.body.event.event.type === "model_settled"),
   ))
     expect(() => decodeRecord(JSON.stringify({ ...record, version: 3 }))).toThrow();
   const staging = (batches: readonly CommittedBatch[], at: number) => {
@@ -176,16 +170,6 @@ test("v4 staging rejects altered owners and prepared joins; load keeps stored en
       body.event.event.continuation !== undefined
     );
   });
-  const joined = loaded.batches.findIndex((batch) => {
-    const body = decodeRecord(batch.records[0]!).body;
-    return (
-      body.kind === "event" &&
-      body.event.type === "child" &&
-      body.event.event.type === "prepared" &&
-      body.event.event.result.kind === "succeeded" &&
-      body.event.event.result.value.continuations !== undefined
-    );
-  });
   const moved = altered((e) => {
     const c = e.body.event?.event?.continuation;
     if (c) c.owner.generation++;
@@ -205,22 +189,6 @@ test("v4 staging rejects altered owners and prepared joins; load keeps stored en
       }),
     ),
   ).toThrow("record_decode");
-  expect(
-    staging(
-      altered((e) => {
-        const v = e.body.event?.event?.result?.value;
-        if (v?.continuations) v.continuations = [];
-      }),
-      joined,
-    ),
-  ).toThrow("continuation mismatch");
-  expect(
-    replay(
-      altered((e) => {
-        e.body.event?.event?.result?.value?.continuations?.reverse();
-      }),
-    ).continuations,
-  ).toEqual(session.snapshot.durable.continuations);
   await session.close();
 });
 

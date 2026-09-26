@@ -1,7 +1,6 @@
 import { expect, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
 
-import { builtinResolvers } from "../policy/policy.ts";
 import {
   anthropicMessages,
   googleGenerate,
@@ -9,8 +8,8 @@ import {
   openaiResponses,
   type CompletionProfile,
 } from "../providers/index.ts";
-import { AppendIdSchema, type SessionPersistence } from "./persistence.ts";
-import { decodeRecord, journalJSONL, replay, stage } from "./session-log.ts";
+import type { SessionPersistence } from "./persistence.ts";
+import { journalJSONL, replay } from "./session-log.ts";
 import {
   createSession,
   defineTool,
@@ -87,7 +86,7 @@ for (const profile of [openaiChat, openaiResponses, anthropicMessages, googleGen
     const session = await createSession(opts);
     const result = await session.input("hello").settled;
     expect(result.kind === "terminal" && result.record.outcome.kind).toBe("completed");
-    expect(session.snapshot.durable.records.every((record) => record.version === 1)).toBe(true);
+    expect(session.snapshot.durable.records.every((record) => record.version === 2)).toBe(true);
     const before = calls.length;
     const restored = await restoreSession(opts, session.snapshot.durable.conversation.sessionId);
     expect(calls).toHaveLength(before);
@@ -179,7 +178,7 @@ test("rejected policy append never starts dependent work or changes durable sele
   expect(session.snapshot.durable.policy?.provider).toBe(openaiChat.id);
   await session.close();
 });
-test("provider configuration changes retain format; staging rejects a tampered prompt model", async () => {
+test("provider configuration changes retain format and record the model each step was made with", async () => {
   const legacy = testOptions();
   const old = await createSession(legacy);
   await old.input("old history").settled;
@@ -200,35 +199,24 @@ test("provider configuration changes retain format; staging rejects a tampered p
   );
   const terminal = await restored.input("new turn").settled;
   expect(terminal.kind === "terminal" && terminal.record.outcome.kind).toBe("completed");
-  expect(restored.snapshot.durable.records.map((record) => record.version)).toContain(1);
-  expect(restored.snapshot.durable.records.map((record) => record.version)).toContain(1);
-  expect(restored.snapshot.durable.records.at(-1)?.version).toBe(1);
+  expect(restored.snapshot.durable.records.every((record) => record.version === 2)).toBe(true);
   const loaded = await legacy.persistence.load(
     restored.snapshot.durable.conversation.sessionId,
     new AbortController().signal,
   );
   if (loaded.kind !== "loaded") throw new Error("missing journal");
   expect(replay(loaded.batches)).toEqual(restored.snapshot.durable);
-  const record = restored.snapshot.durable.records.find((r) => r.version === 1)!;
-  expect(() => decodeRecord(JSON.stringify({ ...record, version: 2 }))).toThrow();
-  const at = loaded.batches.findLastIndex((batch) =>
-    batch.records.some(
-      (serialized) => JSON.parse(serialized).body.event?.event?.type === "prepared",
-    ),
+  const steps = restored.snapshot.durable.records.flatMap((record) =>
+    record.body.kind === "event" &&
+    record.body.event.type === "child" &&
+    record.body.event.event.type === "model_settled"
+      ? [{ provider: record.body.event.event.provider, model: record.body.event.event.model }]
+      : [],
   );
-  const captured = JSON.parse(loaded.batches[at]!.records[0]!);
-  captured.body.event.event.result.value.model = "tampered";
-  const tampered = decodeRecord(JSON.stringify(captured)).body;
-  if (tampered.kind !== "event") throw new Error("Expected the captured prompt");
-  const resolvers = { ...builtinResolvers, providerIds: new Set(opts.bindings.providers?.keys()) };
-  expect(() =>
-    stage(
-      replay(loaded.batches.slice(0, at)),
-      tampered,
-      AppendIdSchema.parse(loaded.batches[at]!.appendId),
-      resolvers,
-    ),
-  ).toThrow("model mismatch");
+  expect(steps).toEqual([
+    { provider: undefined, model: expect.any(String) },
+    { provider: openaiResponses.id, model: "new" },
+  ]);
   await restored.close();
 });
 test("interrupted provider request recovers without invoking HTTP again", async () => {

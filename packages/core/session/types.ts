@@ -1,8 +1,8 @@
 import { z } from "zod";
 
+import { BlobRefSchema } from "../agent/content.ts";
 import { PermissionDecisionsSchema } from "../agent/permissions.ts";
 import { parseSessionContext } from "../agent/prompt.ts";
-import { BlobRefSchema } from "../agent/content.ts";
 import {
   ActorIdSchema,
   AgentIdSchema,
@@ -192,12 +192,11 @@ export const WireEventSchema = z.discriminatedUnion("type", [
     event: z.discriminatedUnion("type", [
       z.strictObject({
         type: z.literal("model_settled"),
-        /** Provider that produced this output, when the policy named one. */
+        /** Provider the step was made with, when the policy named one. */
         provider: z.string().min(1).optional(),
-        /** Application model name that produced this output. */
+        /** Application model name the step was made with, whether or not it produced output. */
         model: z.string().min(1),
         continuation: ContinuationSchema.optional(),
-        permissionRequired: z.literal(true).optional(),
         child: child("completion"),
         result: result(CompletionSchema.brand<"AdmittedCompletion">()),
       }),

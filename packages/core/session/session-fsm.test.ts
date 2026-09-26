@@ -1,5 +1,6 @@
 import { expect, test } from "@logtape/testing-bun/autoload";
 
+import { CompletionSchema } from "../agent/types.ts";
 import { AppendIdSchema, RevisionSchema } from "./persistence.ts";
 import { decideSession, type SessionEvent, type SessionState } from "./session-fsm.ts";
 import { createSession } from "./session-runtime.ts";
@@ -30,7 +31,7 @@ test("stage separates pending state from durable state and emits only append", a
   expect(staged.state.durable).toBe(before.durable);
   expect(staged.commands.map((command) => command.type)).toEqual(["append"]);
   if (staged.state.status !== "committing") throw new Error("Expected committing");
-  expect(staged.state.pending.next.conversation.turn.status).toBe("preparing_model");
+  expect(staged.state.pending.next.conversation.turn.status).toBe("awaiting_model");
   const stale = decideSession(staged.state, {
     type: "appended",
     appendId: AppendIdSchema.parse("stale"),
@@ -197,7 +198,7 @@ test("invalid internal event drained from a queue fails and settles remaining qu
   const staged = decideSession(before, submission(before));
   if (staged.state.status !== "committing") throw new Error("Expected pending append");
   const active = staged.state.pending.next;
-  if (active.conversation.turn.status !== "preparing_model") throw new Error("Expected preparing");
+  if (active.conversation.turn.status !== "awaiting_model") throw new Error("Expected a step");
   const corrupt: SessionEvent = {
     type: "submit",
     submission: {
@@ -210,9 +211,17 @@ test("invalid internal event drained from a queue fails and settles remaining qu
           type: "child",
           turnId: active.conversation.turnId,
           event: {
-            type: "prepared",
+            type: "model_settled",
+            model: "m",
             child: active.conversation.turn.child,
-            result: { kind: "succeeded", value: { model: "wrong", messages: [] } },
+            result: {
+              kind: "succeeded",
+              value: CompletionSchema.brand<"AdmittedCompletion">().parse({
+                kind: "tools",
+                text: "",
+                calls: [{ id: "call", name: "undeclared", args: {} }],
+              }),
+            },
           },
         },
       },

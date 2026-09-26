@@ -81,7 +81,7 @@ test("transport binding supplies credentials outside the serializable request", 
   expect(JSON.stringify(request)).not.toContain("secret");
 });
 
-test("preparation commands reject missing prompt context before spawning operations", () => {
+test("a step command rejects missing prompt context before spawning operations", () => {
   const host = createHost(
     {
       agents: new Map([["a", { model: "m" }]]),
@@ -111,26 +111,11 @@ test("preparation commands reject missing prompt context before spawning operati
       {
         type: "turn",
         turnId: turn.id,
-        command: { type: "prepare_model", child: ref("prepare", "prepare"), turn },
+        command: { type: "complete", child: ref("completion", "complete"), turn },
       },
       { projectPrompt: () => [] },
     ),
-  ).toThrow("prepare_model requires prompt context");
-  expect(() =>
-    host.dispatch(
-      {
-        type: "turn",
-        turnId: turn.id,
-        command: {
-          type: "prepare_handoff",
-          child: ref("handoff", "handoff"),
-          turn,
-          from: turn.agent,
-        },
-      },
-      { projectPrompt: () => [] },
-    ),
-  ).toThrow("prepare_handoff requires prompt context");
+  ).toThrow("complete requires prompt context");
   expect(host.snapshot).toHaveLength(0);
   host.close();
 });

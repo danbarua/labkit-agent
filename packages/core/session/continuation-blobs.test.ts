@@ -98,7 +98,6 @@ function setup(profile: CompletionProfile) {
       append: async (request, abort) => {
         for (const raw of request.records) {
           const event = JSON.parse(raw).body.event?.event;
-          if (event?.type === "prepared") lifecycle.push("prepared");
           if (event?.continuation) lifecycle.push("settled");
         }
         return base.append(request, abort);
@@ -210,16 +209,7 @@ for (const profile of [googleGenerateV2, openaiResponsesV2])
     expect(entry.payload).toBeUndefined();
     expect(entry.payloadBlob).toBeDefined();
     expect(journalJSONL(durable)).not.toContain(secret);
-    expect(lifecycle).toEqual([
-      "prepared",
-      "fetch",
-      "put",
-      "settled",
-      "tool",
-      "prepared",
-      "get",
-      "fetch",
-    ]);
+    expect(lifecycle).toEqual(["fetch", "put", "settled", "tool", "get", "fetch"]);
     const settled = durable.records.find(
       (record) =>
         record.body.kind === "event" &&
@@ -227,15 +217,8 @@ for (const profile of [googleGenerateV2, openaiResponsesV2])
         record.body.event.event.type === "model_settled" &&
         record.body.event.event.continuation,
     )!;
-    expect(settled.version).toBe(1);
+    expect(settled.version).toBe(2);
     expect(() => decodeRecord(JSON.stringify({ ...settled, version: 4 }))).toThrow();
-    const prepared = durable.records.findLast(
-      (record) =>
-        record.body.kind === "event" &&
-        record.body.event.type === "child" &&
-        record.body.event.event.type === "prepared",
-    )!;
-    expect(() => decodeRecord(JSON.stringify({ ...prepared, version: 4 }))).toThrow();
     const before = lifecycle.length;
     const restored = await restoreSession(opts, durable.conversation.sessionId);
     expect(lifecycle.length).toBe(before);

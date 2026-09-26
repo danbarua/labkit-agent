@@ -30,6 +30,8 @@ export function completeModel(
   const prompt = context.prompt;
   if (!prompt) throw new Error("Host complete requires prompt context");
   const agent = prompt.agent;
+  const model = context.provider?.model ?? agent.model;
+  const provider = context.provider?.provider;
   if (host.closed) return;
   const identity = {
     ...(host.sessionId ? { sessionId: host.sessionId } : {}),
@@ -59,7 +61,7 @@ export function completeModel(
       parseInput: z.null().parse,
       run: async (_, signal) => {
         const prepared = PreparedModelSchema.parse({
-          model: context.provider?.model ?? agent.model,
+          model,
           ...(context.provider?.provider
             ? {
                 provider: context.provider.provider,
@@ -90,8 +92,11 @@ export function completeModel(
           ...prepared,
           ...(continuations.length ? { continuations } : {}),
         });
+        // Whether the step streams is known only once its request is projected, after the
+        // operation already started running, so both opening statuses are published here.
         stream = !!request.stream;
         notifyStream({ sessionUpdate: "completion", status: "pending" });
+        notifyStream({ sessionUpdate: "completion_update", status: "in_progress" });
         const admitted = admittedCompletionSchema(
           new Set(
             request.successors ??
@@ -161,20 +166,12 @@ export function completeModel(
             usage: output.usage,
             message: "Completion response usage validated; awaiting runtime settlement",
           });
-        return {
-          completion,
-          continuation,
-          usage: output.usage,
-          provider: request.provider,
-          model: request.model,
-        };
+        return { completion, continuation, usage: output.usage };
       },
       parseOutput: z.strictObject({
         completion: CompletionSchema.brand<"AdmittedCompletion">(),
         continuation: ContinuationSchema.optional(),
         usage: CompletionUsageSchema.optional(),
-        provider: z.string().min(1).optional(),
-        model: z.string().min(1),
       }).parseAsync,
     },
     (result) =>
@@ -185,13 +182,9 @@ export function completeModel(
           result.kind === "succeeded"
             ? { kind: "succeeded", value: result.value.completion }
             : result,
-        ...(result.kind === "succeeded" ? { model: result.value.model } : {}),
-        ...(result.kind === "succeeded" && result.value.provider
-          ? { provider: result.value.provider }
-          : {}),
-        ...(result.kind === "succeeded" && result.value.usage
-          ? { usage: result.value.usage }
-          : {}),
+        model,
+        ...(provider ? { provider } : {}),
+        ...(result.kind === "succeeded" && result.value.usage ? { usage: result.value.usage } : {}),
         ...(result.kind === "succeeded" && result.value.continuation
           ? { continuation: result.value.continuation }
           : {}),

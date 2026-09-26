@@ -167,7 +167,10 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
       ),
     );
     const since = input.turn.messages.slice(view.at);
-    return agentMessagesToChat(completedExchanges([...packet, ...since], "handoff packet"));
+    return [
+      ...(input.agent.systemPrompt ? [{ role: "system", content: input.agent.systemPrompt }] : []),
+      ...agentMessagesToChat(completedExchanges([...packet, ...since], "handoff packet")),
+    ];
   };
   function build(initial: ConversationState): AgentRuntime {
     const replies = new Map<ActorId, (reply: SessionReply) => void>();

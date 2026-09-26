@@ -110,7 +110,7 @@ test("markdown refs commit without bytes, restore does not read blobs, fork and 
   const v5 = session.snapshot.durable.records.find(
     (r) => r.body.kind === "event" && r.body.event.type === "user",
   )!;
-  expect(v5.version).toBe(1);
+  expect(v5.version).toBe(2);
   expect(() => decodeRecord(JSON.stringify({ ...v5, version: 4 }))).toThrow();
   const before = reads();
   const restored = await restoreSession(opts, id);
@@ -147,7 +147,7 @@ test("markdown refs commit without bytes, restore does not read blobs, fork and 
 });
 
 for (const kind of ["missing", "unsupported", "pdf"] as const)
-  test(`${kind} attachment fails prepare without HTTP`, async () => {
+  test(`${kind} attachment fails the step without HTTP`, async () => {
     const { opts, bodies, reads } = setup();
     const session = await createSession(opts);
     const id = session.snapshot.durable.conversation.sessionId;
@@ -164,13 +164,13 @@ for (const kind of ["missing", "unsupported", "pdf"] as const)
     expect(result.kind === "terminal" && result.record.outcome.kind).toBe("failed");
     expect(bodies).toHaveLength(0);
     if (kind !== "missing") expect(reads()).toBe(0);
-    const prepared = session.snapshot.durable.records.find(
+    const settled = session.snapshot.durable.records.find(
       (r) =>
         r.body.kind === "event" &&
         r.body.event.type === "child" &&
-        r.body.event.event.type === "prepared",
+        r.body.event.event.type === "model_settled",
     );
-    expect(prepared).toMatchObject({ body: { event: { event: { result: { kind: "failed" } } } } });
+    expect(settled).toMatchObject({ body: { event: { event: { result: { kind: "failed" } } } } });
     await session.close();
   });
 
@@ -259,46 +259,6 @@ test("queued attachment input retains refs until its turn", async () => {
   await Promise.all([session.close(), restored.close()]);
 });
 
-test("prepared refs commit before completion reads bytes or fetches", async () => {
-  const { opts, bodies, reads } = setup();
-  const release = deferred<void>();
-  let blocked = false;
-  let preparedJSON = "";
-  const backing = opts.persistence;
-  const session = await createSession({
-    ...opts,
-    persistence: {
-      ...backing,
-      async append(request, signal) {
-        if (request.records.some((raw) => JSON.parse(raw).body.event?.event?.type === "prepared")) {
-          preparedJSON = request.records.join("\n");
-          blocked = true;
-          await release.promise;
-        }
-        return backing.append(request, signal);
-      },
-    },
-  });
-  const ref = await backing.putBlob(
-    session.snapshot.durable.conversation.sessionId,
-    bytes,
-    { media: "text/plain" },
-    signal(),
-  );
-  const handle = session.input({ attachments: [ref] });
-  await until(() => blocked);
-  expect(reads()).toBe(1);
-  expect(bodies).toHaveLength(0);
-  expect(preparedJSON).toContain(ref.id);
-  expect(preparedJSON).not.toContain("Attachment bytes stay");
-  release.resolve();
-  const result = await handle.settled;
-  expect(result.kind === "terminal" && result.record.outcome.kind).toBe("completed");
-  expect(reads()).toBe(2);
-  expect(bodies).toHaveLength(1);
-  await session.close();
-});
-
 test("abort during a blob read cancels preparation and prevents late HTTP", async () => {
   const { opts, bodies } = setup();
   const backing = opts.persistence;
@@ -332,7 +292,7 @@ test("abort during a blob read cancels preparation and prevents late HTTP", asyn
   expect(bodies).toHaveLength(0);
 });
 
-test("current format validation covers created, prepared, terminal and compact context refs", async () => {
+test("current format validation covers created and compact context refs", async () => {
   const { opts } = setup();
   const session = await createSession(opts);
   const ref = await opts.persistence.putBlob(
@@ -362,7 +322,7 @@ test("attachment admission retains the single format without rewriting prior rec
   );
   await session.input({ attachments: [ref] }).settled;
   expect(journalJSONL(session.snapshot.durable).startsWith(old)).toBe(true);
-  expect(session.snapshot.durable.records.slice(0, 3).map((r) => r.version)).toEqual([1, 1, 1]);
+  expect(session.snapshot.durable.records.slice(0, 3).map((r) => r.version)).toEqual([2, 2, 2]);
   const restored = await restoreSession(opts, session.snapshot.durable.conversation.sessionId);
   expect(restored.snapshot.durable).toEqual(session.snapshot.durable);
   await Promise.all([session.close(), restored.close()]);
@@ -437,7 +397,7 @@ test("attachment queued while aborting tools keeps both records in v5", async ()
   const queued = session.snapshot.durable.records.find((r) => r.body.kind === "queued")!;
   const batch = session.snapshot.durable.records.filter((r) => r.appendId === queued.appendId);
   expect(batch).toHaveLength(2);
-  expect(batch.map((r) => r.version)).toEqual([1, 1]);
+  expect(batch.map((r) => r.version)).toEqual([2, 2]);
   const restored = await restoreSession(
     configured,
     session.snapshot.durable.conversation.sessionId,
@@ -454,7 +414,7 @@ test("public user input requires content, accepts empty attachment lists with te
   expect(() => session.dispatch({ type: "user", attachments: [bytes] })).toThrow();
   const result = await session.input({ text: "Text only", attachments: [] }).settled;
   expect(result.kind === "terminal" && result.record.outcome.kind).toBe("completed");
-  expect(session.snapshot.durable.records.every((record) => record.version === 1)).toBe(true);
+  expect(session.snapshot.durable.records.every((record) => record.version === 2)).toBe(true);
   await session.close();
 });
 

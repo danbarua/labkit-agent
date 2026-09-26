@@ -124,39 +124,34 @@ function releaseCommitted(ctx: SessionInstance, command: Command<"dispatch">) {
     const input = command.submission.input;
     const trigger =
       input.kind === "event" && input.event.type === "child" ? input.event.event : undefined;
-    diagnostic(
-      "session",
-      record.outcome.kind === "failed" ? "warning" : "info",
-      "turn.settled",
-      {
-        sessionId,
-        turnId: terminal.turnId,
-        operation: "agent_turn",
-        agentId: record.agent,
-        message: `Agent turn ${record.outcome.kind}${record.outcome.kind === "failed" ? `: ${record.outcome.error.message}` : ""}`,
-        ...(trigger
-          ? {
-              trigger: trigger.type,
-              childId: trigger.child.id,
-              childOperation: trigger.child.kind,
-            }
-          : { trigger: input.kind === "event" ? input.event.type : input.kind }),
-        outcome: record.outcome.kind,
-        revision: command.durable.revision,
-        appendId: command.submission.appendId,
-        requestId: command.submission.id,
-        stepLimit: command.durable.conversation.allowance,
-        ...(record.outcome.kind === "failed"
-          ? {
-              reason: record.outcome.error.message,
-              error: diagnosticError(record.outcome.error),
-            }
-          : {}),
-        ...(record.outcome.kind === "exhausted"
-          ? { reason: "Turn step allowance exhausted; user continuation required" }
-          : {}),
-      },
-    );
+    diagnostic("session", record.outcome.kind === "failed" ? "warning" : "info", "turn.settled", {
+      sessionId,
+      turnId: terminal.turnId,
+      operation: "agent_turn",
+      agentId: record.agent,
+      message: `Agent turn ${record.outcome.kind}${record.outcome.kind === "failed" ? `: ${record.outcome.error.message}` : ""}`,
+      ...(trigger
+        ? {
+            trigger: trigger.type,
+            childId: trigger.child.id,
+            childOperation: trigger.child.kind,
+          }
+        : { trigger: input.kind === "event" ? input.event.type : input.kind }),
+      outcome: record.outcome.kind,
+      revision: command.durable.revision,
+      appendId: command.submission.appendId,
+      requestId: command.submission.id,
+      stepLimit: command.durable.conversation.allowance,
+      ...(record.outcome.kind === "failed"
+        ? {
+            reason: record.outcome.error.message,
+            error: diagnosticError(record.outcome.error),
+          }
+        : {}),
+      ...(record.outcome.kind === "exhausted"
+        ? { reason: "Turn step allowance exhausted; user continuation required" }
+        : {}),
+    });
     for (const settle of ctx.waiters.get(terminal.turnId) ?? [])
       settle({ kind: "terminal", turnId: terminal.turnId, record });
     ctx.waiters.delete(terminal.turnId);

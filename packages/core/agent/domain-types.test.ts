@@ -18,12 +18,6 @@ function invalidStates() {
     // @ts-expect-error idle cannot carry active work
     child: ref("completion", "request"),
   };
-  const preparing: TurnState = {
-    status: "preparing_model",
-    // @ts-expect-error preparation requires a validated positive allowance
-    turn,
-    child: ref("prepare", "request"),
-  };
   // @ts-expect-error done requires an outcome
   const done: TurnState = { status: "done", record: { agent: turn.agent, messages: [] } };
   const executing: TurnState = {
@@ -55,7 +49,6 @@ function invalidStates() {
   const queuedFork: ForkSnapshot["pending"] = [{ kind: "fork", id: turn.id, sessionId }];
   void [
     idle,
-    preparing,
     done,
     executing,
     batch,

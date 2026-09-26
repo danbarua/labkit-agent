@@ -371,9 +371,7 @@ export type TurnData = Readonly<{
    * turns and this turn's messages. `handoff`: the handoff resolver's packet computed from the
    * messages up to `at`, plus this turn's messages from `at` on.
    */
-  view:
-    | Readonly<{ kind: "history" }>
-    | Readonly<{ kind: "handoff"; from: AgentId; at: number }>;
+  view: Readonly<{ kind: "history" }> | Readonly<{ kind: "handoff"; from: AgentId; at: number }>;
   /**
    * Steps the turn has left. One is used when a step's preparation succeeds, before its LLM
    * call; at zero the next step is not prepared and the turn ends `exhausted`.

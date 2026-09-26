@@ -375,7 +375,7 @@ test("closing a parent settles a fork whose child initialization receipt is dela
   release.resolve();
 });
 
-for (const boundary of ["input", "prompt", "tool-intent"] as const) {
+for (const boundary of ["input", "tool-intent"] as const) {
   test(`recovery after ${boundary} commit but before acknowledgement dispatches no dependent work`, async () => {
     const backing = createMemoryBacking();
     const port = createMemoryPersistence(backing);
@@ -392,9 +392,7 @@ for (const boundary of ["input", "prompt", "tool-intent"] as const) {
             const body = JSON.parse(serialized).body;
             return boundary === "input"
               ? body.event?.type === "user"
-              : boundary === "prompt"
-                ? body.event?.event?.type === "prepared"
-                : body.event?.event?.type === "model_settled";
+              : body.event?.event?.type === "model_settled";
           });
           if (matched) {
             interrupted = true;

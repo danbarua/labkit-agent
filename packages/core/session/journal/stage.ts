@@ -108,9 +108,9 @@ export function stage(
   } else if (input.kind === "event") {
     const { usage, ...event } = input;
     const body = next.policy ? { ...event, policyVersion: next.policy.version } : event;
-    apply(body);
-    // The usage effect is staged in the same append as the fact it accounts for; the conversation
-    // fold never reads it, so it never gates load or new work.
+    // The usage effect is staged in the same append as the step output it accounts for, ahead of
+    // it, while its completion is still the turn's active operation; the conversation fold never
+    // reads it, so it never gates load or new work.
     if (
       usage &&
       body.event.type === "child" &&
@@ -124,6 +124,7 @@ export function stage(
         effect: "usage",
         usage,
       });
+    apply(body);
   } else {
     apply(input);
   }
