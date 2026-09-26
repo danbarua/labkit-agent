@@ -20,4 +20,6 @@ const app = (
 );
 
 // https://bun.com/docs/bundler/hot-reloading#import-meta-hot-data
+// Keep this one expression: production inlines `data` as `{}`, so a separate `data.root.render` would fail.
+// biome-ignore lint/suspicious/noAssignInExpressions: Bun's documented HMR root-reuse pattern.
 (import.meta.hot.data.root ??= createRoot(elem)).render(app);

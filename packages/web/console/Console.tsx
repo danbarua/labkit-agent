@@ -80,7 +80,8 @@ export function Console() {
   const [view, setView] = useState<SessionView | null>(null);
   const [sessionId, setSessionId] = useState(() => sessionStorage.getItem("labkit-session"));
   const [draft, setDraft] = useState<Draft>({ text: "", thinking: "" });
-  const [keptDrafts, setKeptDrafts] = useState<Draft[]>([]);
+  const [keptDrafts, setKeptDrafts] = useState<(Draft & { id: number })[]>([]);
+  const keptDraftId = useRef(0);
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const [text, setText] = useState("");
@@ -146,7 +147,8 @@ export function Console() {
           const current = draftRef.current;
           if (current.text || current.thinking) {
             draftRef.current = { text: "", thinking: "" };
-            setKeptDrafts((list) => [...list, current]);
+            const id = keptDraftId.current++;
+            setKeptDrafts((list) => [...list, { ...current, id }]);
             setDraft({ text: "", thinking: "" });
           }
           setPermission(null);
@@ -458,11 +460,8 @@ export function Console() {
               {messages.map((item) => (
                 <Message key={item.key} message={item.message} onOpen={openPreview} />
               ))}
-              {keptDrafts.map((kept, index) => (
-                <details
-                  key={`${index}:${kept.text.length}:${kept.thinking.length}`}
-                  className="rounded-md border border-border px-3 py-2"
-                >
+              {keptDrafts.map((kept) => (
+                <details key={kept.id} className="rounded-md border border-border px-3 py-2">
                   <summary className="cursor-pointer text-[10px] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
                     Stream draft
                   </summary>

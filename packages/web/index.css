@@ -19,6 +19,7 @@
   *,
   ::before,
   ::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component animations. */
     animation: none !important;
   }
 }
