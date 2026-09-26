@@ -243,3 +243,21 @@ Default runs cover all scenarios; `--v2` selects the policy group, not a differe
 Consumer tests retain actual scripted HTTP traffic under `.session-artifacts/consumer*/<run-id>` and
 `.session-artifacts/peer-review/<run-id>`. Read the [fixture guide](fixtures/README.md) before updating
 baselines. Tests use scripted responses and establish no live-provider or disk-durability guarantee.
+
+## Runtime modules
+
+`session-runtime.ts` holds the public types and re-exports the entry points from `runtime/`:
+
+- `open.ts`: `createSession`, `restoreSession` and `SessionNotFoundError`.
+- `configure.ts`: `configureSession` validates options and captures the bindings a session and its
+  fork/compact children share; `bind-options.ts` resolves the completion port and policy resolvers.
+- `registry-adoption.ts`: plans the `configuration` record that journals live registry drift on
+  restore.
+- `instance.ts`: `SessionInstance`, the per-session state every handler receives explicitly, and
+  `openInstance`/`initializeSession`.
+- `session-commands.ts`, `conversation-effects.ts`, `env-events.ts`: one handler per session actor
+  command, conversation command and public event.
+- `facade.ts`: the `SessionRuntime` object over a `SessionInstance`.
+
+`openInstance` builds the state maps first, then the host, then the session actor, then the facade.
+The host and actor callbacks read the instance lazily, so none of them runs during construction.
