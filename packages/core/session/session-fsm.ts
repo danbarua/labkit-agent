@@ -2,6 +2,7 @@ import type { ConversationCommand } from "../agent/agent-conversation.ts";
 import { ActorIdSchema, failure, type Failure } from "../agent/types.ts";
 import type { Decision } from "../fsm/fsm.ts";
 import { builtinResolvers, type PolicyResolvers } from "../policy/policy.ts";
+import type { ResolvedModel } from "../providers/transport.ts";
 import { AppendIdSchema } from "./persistence.ts";
 import type { AppendId, AppendRequest, AppendResult, LoadResult, Receipt } from "./persistence.ts";
 import { accepts, replay, stage, type JournalState } from "./session-log.ts";
@@ -198,6 +199,8 @@ export function decideSession(
   state: SessionState,
   event: SessionEvent,
   resolvers: PolicyResolvers = builtinResolvers,
+  /** Transitional (RC1); see `journal/state.ts`'s `Fold`. */
+  describeModel?: (provider: string, model: string) => ResolvedModel | undefined,
 ): D {
   if (event.type === "close") {
     const submissions = [...("pending" in state ? [state.pending.submission] : []), ...state.queue];
@@ -237,7 +240,14 @@ export function decideSession(
           : s.input.kind === "event"
             ? { ...s.input, systemVersion: state.durable.systemVersion }
             : s.input;
-      const next = stage(state.durable, input, s.appendId, resolvers, ActorIdSchema.parse(s.id));
+      const next = stage(
+        state.durable,
+        input,
+        s.appendId,
+        resolvers,
+        ActorIdSchema.parse(s.id),
+        describeModel,
+      );
       const request: AppendRequest = {
         sessionId: state.durable.conversation.sessionId,
         expectedRevision: state.durable.revision,
@@ -310,6 +320,7 @@ export function decideSession(
             },
           },
           resolvers,
+          describeModel,
         ),
         state.queue,
       );
@@ -321,6 +332,7 @@ export function decideSession(
         { ...state, queue: [] },
         { type: "submit", submission: submission! },
         resolvers,
+        describeModel,
       ),
       queue,
     );

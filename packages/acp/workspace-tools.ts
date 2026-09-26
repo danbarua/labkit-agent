@@ -14,7 +14,8 @@ import type { ClientFiles } from "./client-files.ts";
 import { recordWriteEvidence, type FileBefore } from "./file-write.ts";
 import { FileReadRangeSchema, MAX_FILE_BYTES, type WorkspaceFiles } from "./workspace-files.ts";
 
-const BLOB_URI = /^blob:\/\/[a-f0-9]{64}\.[a-z0-9]+$/;
+const BLOB_SCHEME = /^blob:\/\//i;
+const BLOB_URI = /^blob:\/\/([a-f0-9]{64})\.([a-z0-9]+)$/;
 
 export function workspaceTools(
   files: WorkspaceFiles,
@@ -26,7 +27,7 @@ export function workspaceTools(
   const readPath = z
     .string()
     .min(1)
-    .transform((raw) => (BLOB_URI.test(raw) ? raw : files.path(raw)));
+    .transform((raw) => (BLOB_SCHEME.test(raw) ? raw : files.path(raw)));
   return new Map([
     [
       "read_file",
@@ -36,24 +37,43 @@ export function workspaceTools(
           scope,
         input: FileReadRangeSchema.extend({ path: readPath }),
         kind: "read",
-        locations: ({ path, line }) => [{ path, ...(line === undefined ? {} : { line }) }],
+        locations: ({ path, line }) =>
+          BLOB_SCHEME.test(path) ? [] : [{ path, ...(line === undefined ? {} : { line }) }],
         run: async ({ path, line, limit }, signal, context) => {
-          if (BLOB_URI.test(path)) {
+          if (BLOB_SCHEME.test(path)) {
+            const match = BLOB_URI.exec(path);
+            if (!match)
+              throw new Error(
+                `Invalid blob reference ${JSON.stringify(path)}: expected blob://<64-character lowercase hex sha256>.<ext>`,
+              );
             if (!persistence) throw new Error(`Cannot resolve ${path}: no blob storage is bound`);
             const sessionId = context?.sessionId;
             if (!sessionId) throw new Error(`Cannot resolve ${path}: missing session context`);
-            const id = BlobIdSchema.parse(path.slice("blob://".length).split(".")[0]);
-            const loaded = await persistence.getBlob(SessionIdSchema.parse(sessionId), id, signal);
+            const loaded = await persistence.getBlob(
+              SessionIdSchema.parse(sessionId),
+              BlobIdSchema.parse(match[1]),
+              signal,
+            );
             if ("kind" in loaded) throw new Error(`Blob not found: ${path}`);
             const { meta, bytes } = loaded;
-            if (meta.media === "text/plain" || meta.media === "text/markdown")
-              return { path, text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
-            return {
-              path,
-              text:
-                `${renderBlobPointer(meta)} is binary; the current tool result format cannot return ` +
-                "its bytes as an image or attachment part.",
-            };
+            if (meta.media !== "text/plain" && meta.media !== "text/markdown")
+              return {
+                path,
+                text:
+                  `${renderBlobPointer(meta)} is binary; the current tool result format cannot ` +
+                  "return its bytes as an image or attachment part.",
+              };
+            const full = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+            const lines = full.split("\n");
+            const start = (line ?? 1) - 1;
+            const selected = lines.slice(start, limit === undefined ? undefined : start + limit);
+            const text = selected.join("\n");
+            if (Buffer.byteLength(text) > MAX_FILE_BYTES)
+              throw new Error(
+                `read_file failed for ${JSON.stringify(path)}: result exceeds 256 KiB. ` +
+                  `Call read_file with ${JSON.stringify({ path, line: line ?? 1, limit: limit === undefined ? 100 : Math.max(1, Math.floor(limit / 2)) })} to select fewer lines.`,
+              );
+            return { path, text };
           }
           const range = line === undefined && limit === undefined ? undefined : { line, limit };
           try {

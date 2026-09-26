@@ -4,11 +4,11 @@ import { ChatMessageSchema, type ChatMessage } from "../agent/agent.ts";
 import {
   parseSessionContext,
   projectConversationPrompt,
+  projectMediaPointers,
   type PromptInput,
 } from "../agent/prompt.ts";
 import { StepsSchema, ToolNameSchema, type AgentMessage, type Result } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
-import type { ResolvedModel } from "../providers/transport.ts";
 import {
   ProviderSettingsSchema,
   validateThinking,
@@ -82,13 +82,6 @@ export type PolicyResolvers = Readonly<{
   packs?: ReadonlyMap<string, PolicyPack>;
   projections: ReadonlyMap<string, Projection>;
   handoffs: ReadonlyMap<string, HandoffProjection>;
-  /**
-   * Resolves the target-aware capabilities (D3) of a bound provider/model, mirroring
-   * `session/runtime/instance.ts`'s `promptInput()`. Transitional: only staging's re-projection of
-   * a prepared prompt needs it, and that re-projection goes away with RC1 (prepared stops being a
-   * journaled event).
-   */
-  describeModel?: (provider: string, model: string) => ResolvedModel | undefined;
 }>;
 
 const history: Projection = (input) =>
@@ -154,7 +147,6 @@ export function copyResolvers(resolvers: PolicyResolvers = builtinResolvers): Po
     providerIds: resolvers.providerIds ? new Set(resolvers.providerIds) : undefined,
     projections: new Map(resolvers.projections),
     handoffs: new Map(resolvers.handoffs),
-    describeModel: resolvers.describeModel,
     packs: new Map(
       [...(resolvers.packs ?? packs)].map(([id, pack]) => [id, freeze(structuredClone(pack))]),
     ),
@@ -308,12 +300,16 @@ export function projectPolicy(
 ) {
   const project = resolvers.projections.get(policy.project);
   if (!project) throw new Error("Missing versioned projection");
+  const projected = project(input);
+  const { messages: pointered, pointers } = input.target
+    ? projectMediaPointers(projected, input.target)
+    : { messages: [...projected], pointers: [] };
   const messages = z
     .array(ChatMessageSchema)
     .parse([
       ...(input.agent.systemPrompt ? [{ role: "system", content: input.agent.systemPrompt }] : []),
       ...systemInputs.map((content) => ({ role: "system", content })),
-      ...project(input),
+      ...pointered,
     ]);
   parseSessionContext(
     messages.map((message) => {
@@ -341,7 +337,7 @@ export function projectPolicy(
       };
     }),
   );
-  return freeze(messages);
+  return { messages: freeze(messages), pointers: freeze(pointers) };
 }
 /** Deterministic domain conversion. The raw failed result remains in the journal. A tool deadline (classification `timeout`) is converted like any other tool failure. */
 export function effectiveToolResult(

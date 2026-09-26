@@ -1,7 +1,12 @@
 import { z } from "zod";
 
 import type { PreparedModel } from "../agent/agent.ts";
-import { MediaKindSchema, type BlobResolver, type MediaKind, type MediaSupport } from "../agent/content.ts";
+import {
+  MediaKindSchema,
+  type BlobResolver,
+  type MediaKind,
+  type MediaSupport,
+} from "../agent/content.ts";
 import { CompletionSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import { diagnostic, diagnosticError, redactDiagnostics } from "../logging/index.ts";

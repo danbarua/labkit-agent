@@ -3,6 +3,7 @@ import { z } from "zod";
 import { admittedCompletionSchema } from "../../agent/agent-fsm.ts";
 import type { TurnCommand } from "../../agent/agent-fsm.ts";
 import { PreparedModelSchema } from "../../agent/agent.ts";
+import type { MediaPointerEvent } from "../../agent/prompt.ts";
 import type { ActorId } from "../../agent/types.ts";
 import { diagnostic } from "../../logging/index.ts";
 import {
@@ -41,6 +42,22 @@ export function prepareModel(
       input: null,
       parseInput: z.null().parse,
       run: async (_, signal) => {
+        const raw = await context.projectPrompt(prompt, signal);
+        const projected = Array.isArray(raw)
+          ? { messages: raw as unknown, pointers: [] as readonly MediaPointerEvent[] }
+          : (raw as { messages: unknown; pointers?: readonly MediaPointerEvent[] });
+        for (const pointer of projected.pointers ?? [])
+          diagnostic("prompt", "debug", "prompt.media.pointer", {
+            sessionId: host.sessionId,
+            turnId,
+            childId: command.child.id,
+            provider: prompt.target?.provider,
+            model: prompt.target?.model,
+            media: pointer.media,
+            bytes: pointer.bytes,
+            support: pointer.support,
+            blobId: pointer.blobId,
+          });
         const prepared = PreparedModelSchema.parse({
           model: context.provider?.model ?? agent.model,
           ...(context.provider?.provider
@@ -53,7 +70,7 @@ export function prepareModel(
                 successors: agent.successors ?? [...host.agents.keys()],
               }
             : {}),
-          messages: await context.projectPrompt(prompt, signal),
+          messages: projected.messages,
           tools: agent.tools.map((name) => ({
             type: "function",
             function: {

@@ -2,6 +2,7 @@ import type { ConversationCommand, ConversationState } from "../../agent/agent-c
 import type { BlobRef } from "../../agent/content.ts";
 import type { ActorIdSchema } from "../../agent/types.ts";
 import type { Policy, PolicyResolvers } from "../../policy/policy.ts";
+import type { ResolvedModel } from "../../providers/transport.ts";
 import type { Continuation } from "../../providers/types.ts";
 import type { CompletionUsage } from "../../providers/usage.ts";
 import type { Revision } from "../persistence.ts";
@@ -70,7 +71,19 @@ export type JournalState = Readonly<{
  * written, and only what the fold needs to apply it is checked.
  */
 export type Fold =
-  Readonly<{ mode: "stage"; resolvers: PolicyResolvers }> | Readonly<{ mode: "load" }>;
+  | Readonly<{
+      mode: "stage";
+      resolvers: PolicyResolvers;
+      /**
+       * Transitional (RC1): resolves a bound provider/model's target capabilities, mirroring
+       * `session/runtime/instance.ts`'s `promptInput()`. Only staging's re-projection of a
+       * prepared prompt (`domain-event.ts`) needs it, and that re-projection goes away once
+       * `prepared` stops being a journaled event; kept off `PolicyResolvers` so it never becomes
+       * part of the public bindings surface.
+       */
+      describeModel?: (provider: string, model: string) => ResolvedModel | undefined;
+    }>
+  | Readonly<{ mode: "load" }>;
 
 export const load: Fold = { mode: "load" };
 

@@ -1,8 +1,8 @@
-import { diagnostic } from "../logging/index.ts";
 import type { ChatMessage } from "./agent.ts";
 import {
   partsText,
   renderBlobPointer,
+  type BlobId,
   type ContentPart,
   type MediaKind,
   type MediaSupport,
@@ -113,34 +113,53 @@ export const parseSessionContext = (raw: unknown): SessionContext =>
   SessionContextSchema.parse(raw);
 
 /**
- * Rewrites one message's blob parts for the target's capabilities: a part the target supports is
- * kept; a part it does not support, or might not, becomes a text pointer (see
- * {@link renderBlobPointer}). `text` is recomputed to match. Messages without parts, and roles
- * that never carry parts, pass through unchanged.
+ * One blob part a target-aware rewrite replaced with pointer text; see
+ * {@link projectMediaPointers}. Callers with correlation context (session, turn, operation ids)
+ * turn these into `prompt.media.pointer` diagnostic events; this module stays pure and never logs.
  */
-function projectMessageForTarget(
-  message: AgentMessage,
+export type MediaPointerEvent = Readonly<{
+  media: MediaKind;
+  bytes: number;
+  name?: string;
+  blobId: BlobId;
+  support: MediaSupport;
+}>;
+
+/**
+ * Rewrites every message's blob parts for the target's capabilities (D3): a part the target
+ * supports is kept; a part it does not support, or might not, becomes a text pointer (see
+ * {@link renderBlobPointer}), on a line of its own so it never glues onto neighbouring text.
+ * `content` is recomputed to match. Applies uniformly to whatever a projection (a built-in pack, a
+ * custom pack, or a handoff packet later re-projected) produced, covering every role that carries
+ * `parts` — including tool messages once tool results carry them. Pure: never logs: the caller
+ * (`projectPolicy`) reports the returned `pointers` with its own correlation ids.
+ */
+export function projectMediaPointers(
+  messages: readonly ChatMessage[],
   target: NonNullable<PromptInput["target"]>,
-): AgentMessage {
-  if (!("parts" in message) || !message.parts) return message;
-  let changed = false;
-  const parts: ContentPart[] = message.parts.map((part) => {
-    if (part.type !== "blob") return part;
-    const support = target.media[part.ref.media];
-    if (support === "supported") return part;
-    changed = true;
-    diagnostic("prompt", "debug", "prompt.media.pointer", {
-      provider: target.provider,
-      model: target.model,
-      media: part.ref.media,
-      bytes: part.ref.bytes,
-      support,
-      blobId: part.ref.id,
+): { messages: ChatMessage[]; pointers: MediaPointerEvent[] } {
+  const pointers: MediaPointerEvent[] = [];
+  const out = messages.map((message) => {
+    if (!("parts" in message) || !message.parts) return message;
+    let changed = false;
+    const parts: ContentPart[] = message.parts.map((part) => {
+      if (part.type !== "blob") return part;
+      const support = target.media[part.ref.media];
+      if (support === "supported") return part;
+      changed = true;
+      pointers.push({
+        media: part.ref.media,
+        bytes: part.ref.bytes,
+        ...(part.ref.name ? { name: part.ref.name } : {}),
+        blobId: part.ref.id,
+        support,
+      });
+      return { type: "text", text: `\n${renderBlobPointer(part.ref)}` };
     });
-    return { type: "text", text: renderBlobPointer(part.ref) };
+    if (!changed) return message;
+    return { ...message, content: partsText(parts), parts };
   });
-  if (!changed) return message;
-  return { ...message, text: partsText(parts), parts };
+  return { messages: out, pointers };
 }
 
 /**
@@ -160,7 +179,6 @@ export function projectConversationPrompt({
   context = [],
   log,
   turn,
-  target,
   agent,
 }: PromptInput): ChatMessage[] {
   const base = completedExchanges(context, "session context");
@@ -178,8 +196,7 @@ export function projectConversationPrompt({
       : [...base, ...history, ...current];
   return [
     ...(agent.systemPrompt ? [{ role: "system" as const, content: agent.systemPrompt }] : []),
-    ...messages.map((raw): ChatMessage => {
-      const message = target ? projectMessageForTarget(raw, target) : raw;
+    ...messages.map((message): ChatMessage => {
       if (message.role === "tool")
         return { role: "tool", content: message.text, tool_call_id: message.callId };
       if (message.role === "assistant" && message.calls)

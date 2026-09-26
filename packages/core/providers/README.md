@@ -222,7 +222,13 @@ emits no warning. Capture storage is caller-owned and separate from bounded diag
 
 `session.model.capabilities.media` is three-valued per media kind (D3): `supported` (a bound
 profile declares it — the model handles it), `unsupported` (the profile cannot encode it), or
-`unknown` (no confirmation either way). Attachments are stored and journaled regardless of the
+`unknown` (no confirmation either way). `mediaCapability()` (`providers/transport.ts`) does not
+currently produce `unknown`: a profile's declared media is always `supported`, because the
+committed models.dev snapshot carries no per-model modality data to distinguish a vetted catalog
+model from an unvetted pass-through (see `docs/session-model.md`'s "Code today" note). `unknown` is
+part of the type and the projection renders it exactly like `unsupported` (a pointer); a future
+catalog enrichment, or a caller building its own `ProjectionTarget`, can set it without changing
+the projection's contract. Attachments are stored and journaled regardless of the
 current model's media capabilities; whether the current step's target can read a given kind is a
 prompt-projection decision, not a provider-layer refusal. A part the target does not support, or
 might not, is projected as pointer text (`agent/content.ts` `renderBlobPointer`,

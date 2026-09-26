@@ -58,7 +58,7 @@ export function domainEvent(state: JournalState, event: WireEvent, fold: Fold): 
       )
         throw new Error("Prompt provider selection mismatch");
       const resolved = state.policy?.provider
-        ? fold.resolvers.describeModel?.(state.policy.provider, state.policy.model ?? agent.model)
+        ? fold.describeModel?.(state.policy.provider, state.policy.model ?? agent.model)
         : undefined;
       const projectionInput = {
         context: c.context,
@@ -82,7 +82,7 @@ export function domainEvent(state: JournalState, event: WireEvent, fold: Fold): 
         fold.resolvers,
       );
       const expectedContinuations = matchingContinuations(
-        expected,
+        expected.messages,
         state.continuations ?? [],
         captured.provider,
       );
@@ -129,7 +129,7 @@ export function domainEvent(state: JournalState, event: WireEvent, fold: Fold): 
         )
           throw new Error("Prompt tool permissions mismatch");
       }
-      if (JSON.stringify(expected) !== JSON.stringify(child.result.value.messages))
+      if (JSON.stringify(expected.messages) !== JSON.stringify(child.result.value.messages))
         throw new Error("Prompt differs from captured session projection");
     }
     return {

@@ -41,6 +41,8 @@ export function stage(
   appendId: AppendId,
   resolvers: PolicyResolvers = builtinResolvers,
   inputId = ActorIdSchema.parse(appendId),
+  /** Transitional (RC1); see {@link Fold}. */
+  describeModel?: Extract<Fold, { mode: "stage" }>["describeModel"],
 ) {
   if (input.kind === "created") {
     if (
@@ -51,7 +53,7 @@ export function stage(
       throw new Error("Creation requires an absent stream");
     return stageCreation(input.seed, appendId, resolvers);
   }
-  const fold: Fold = { mode: "stage", resolvers };
+  const fold: Fold = { mode: "stage", resolvers, describeModel };
   let next = state;
   const bodies: JournalBody[] = [];
   const commands: ConversationCommand[] = [];

@@ -145,7 +145,7 @@ export function openInstance(
     ),
     actor: new Actor<SessionState, SessionEvent, SessionCommand>(
       { status: "ready", durable: initial, queue: [] },
-      (state, event) => decideSession(state, event, resolvers),
+      (state, event) => decideSession(state, event, resolvers, configured.describeModel),
       (command) => executeSessionCommand(ctx, command),
       () => ({ type: "close" }),
     ),
