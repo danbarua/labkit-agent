@@ -4,6 +4,7 @@ import type { HostContext } from "../context.ts";
 import type { ExecutionContext } from "../host.ts";
 import { prepareHandoff } from "./handoff.ts";
 import { completeModel, prepareModel } from "./model.ts";
+import { requestPermission } from "./permission.ts";
 
 /**
  * A host command with a specific type.
@@ -29,6 +30,6 @@ export const hostCommands: { readonly [K in TurnCommand["type"]]: HostCommandHan
   prepare_model: prepareModel,
   complete: completeModel,
   prepare_handoff: prepareHandoff,
-  request_permission: undefined as unknown as HostCommandHandler<"request_permission">,
+  request_permission: requestPermission,
   run_tools: undefined as unknown as HostCommandHandler<"run_tools">,
 };
