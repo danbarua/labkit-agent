@@ -1,3 +1,4 @@
+import { blobUri } from "../../agent/content.ts";
 import type { AgentMessage } from "../../agent/types.ts";
 import { encodeRecord } from "./codec.ts";
 import type { JournalState } from "./state.ts";
@@ -59,7 +60,7 @@ export function journalMarkdown(
           lines.push(
             `Attachment: **${part.ref.name ?? "Unnamed attachment"}** — ${part.ref.media}, ${part.ref.bytes} bytes.`,
             "",
-            `Blob ID: \`${part.ref.id}\` (bytes are stored separately).`,
+            `Blob URI: \`${blobUri(part.ref)}\` (bytes are stored separately).`,
             "",
           );
       }

@@ -95,9 +95,12 @@ test("Bun stdio launcher exchanges ACP JSON lines, answers a malformed line and 
       params: { sessionId, prompt: [{ type: "text", text: "Hello 🌍" }] },
     });
     await waitForResponse(3);
-    expect(messages.find((m) => m.method === "session/update").params.update.content.text).toBe(
-      `hello 🌍 from ${directory}`,
-    );
+    expect(
+      messages.find(
+        (m) =>
+          m.method === "session/update" && m.params.update.sessionUpdate === "agent_message_chunk",
+      ).params.update.content.text,
+    ).toBe(`hello 🌍 from ${directory}`);
     expect(messages.find((m) => m.id === 3).result.stopReason).toBe("end_turn");
     child.stdin.end();
     expect(await child.exited).toBe(0);

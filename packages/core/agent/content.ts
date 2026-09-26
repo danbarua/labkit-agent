@@ -100,3 +100,33 @@ export type BlobResolver = (id: BlobId) => Uint8Array;
 export function hashBlob(bytes: Uint8Array): BlobId {
   return BlobIdSchema.parse(new Bun.CryptoHasher("sha256").update(bytes).digest("hex"));
 }
+
+/** File extension for each {@link MediaKind}, used to build a blob's URI. */
+const BLOB_EXTENSIONS: Readonly<Record<MediaKind, string>> = {
+  "text/markdown": "md",
+  "text/plain": "txt",
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "application/pdf": "pdf",
+  "audio/wav": "wav",
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/aiff": "aiff",
+  "audio/aac": "aac",
+  "audio/ogg": "ogg",
+  "audio/flac": "flac",
+  "audio/m4a": "m4a",
+  "audio/l16": "l16",
+  "audio/opus": "opus",
+  "audio/alaw": "alaw",
+  "audio/mulaw": "mulaw",
+  "audio/webm": "webm",
+};
+
+/**
+ * The reference form of a stored attachment: `blob://<sha256>.<ext>`. The harness resolves it
+ * against whatever store holds the bytes; a model that reads it with a tool receives the content.
+ */
+export function blobUri(ref: BlobRef): string {
+  return `blob://${ref.id}.${BLOB_EXTENSIONS[ref.media]}`;
+}

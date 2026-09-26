@@ -244,6 +244,23 @@ Consumer tests retain actual scripted HTTP traffic under `.session-artifacts/con
 `.session-artifacts/peer-review/<run-id>`. Read the [fixture guide](fixtures/README.md) before updating
 baselines. Tests use scripted responses and establish no live-provider or disk-durability guarantee.
 
+## Project one history for every consumer
+
+`projectConversation(state.durable)` (in `views.ts`, re-exported from the session entry point)
+turns folded state into the one `ConversationView` every consumer renders from: inherited context,
+settled turns and the live turn's messages so far, each message reduced to its role, text, typed
+blob refs (`id`, `media`, `bytes`, optional `name`, and a resolvable `blob://<sha256>.<ext>` `uri`),
+tool calls, and the call a tool result answers. `projectMessage`/`projectTurn` project one message
+or turn. It is a pure projection: never stored, never compared with a stored copy. ACP replay/live
+updates and the web console build their wire views from it instead of deriving history separately.
+
+`journalMarkdown(state.durable)` and `journalJSONL(state.durable)` (re-exported here from
+`journal/render.ts`) render the same folded facts as a person-readable Markdown report or one JSON
+record per line; blob attachments render as their `blob://` URI. Both back `/export`: the web
+server exposes `GET /api/session/:id/export.md` and `.jsonl`, and the ACP adapter's built-in
+`/export` slash command writes the Markdown form under `<cwd>/.labkit/exports/<sessionId>.md`
+without calling the model. Neither reads a stored prompt; both are ordinary projections of history.
+
 ## Journal modules
 
 `session-log.ts` is the public barrel. It also defines `toSeed` itself, so tests can spy on it

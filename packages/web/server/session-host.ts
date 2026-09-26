@@ -1,12 +1,10 @@
 import { z } from "zod";
 
-import type { TurnState } from "../../core/agent/agent-fsm.ts";
 import {
   BlobIdSchema,
   MAX_BLOB_BYTES,
   MediaKindSchema,
   SessionIdSchema,
-  type AgentMessage,
 } from "../../core/agent/types.ts";
 import type { PermissionPort, PermissionRequest } from "../../core/host/ports.ts";
 import {
@@ -21,10 +19,14 @@ import {
 import {
   createSession,
   defineTool,
+  journalJSONL,
+  journalMarkdown,
+  projectConversation,
   type EnvReceipt,
   type EnvSettlement,
   type HostStreamNotification,
   type HostToolNotification,
+  type MessageView,
   type SessionRuntime,
   type SessionState,
 } from "../../core/session/index.ts";
@@ -34,12 +36,12 @@ import type {
   CreateSessionBody,
   FailureView,
   HostInfo,
-  MessageView,
   OutcomeView,
   PermissionPrompt,
   ProviderOption,
   PublicReceipt,
   SessionView,
+  MessageView as WebMessageView,
 } from "../protocol.ts";
 
 const SYSTEM = "You are a lab operator assistant. Be concise. Use echo and now when they help.";
@@ -150,30 +152,24 @@ function publish(hosted: Hosted, event: ConsoleEvent) {
   }
 }
 
-function messageView(message: AgentMessage): MessageView {
-  if (message.role === "tool") {
-    return { role: "tool", text: message.text, callId: message.callId };
-  }
-  const attachments = message.parts?.flatMap((part) => (part.type === "blob" ? [part.ref] : []));
+function toMessageView(view: MessageView): WebMessageView {
+  if (view.role === "tool") return { role: "tool", text: view.text, callId: view.callId };
+  const attachments = view.blobs.length
+    ? view.blobs.map(({ id, media, bytes, name }) => ({
+        id,
+        media,
+        bytes,
+        ...(name ? { name } : {}),
+      }))
+    : undefined;
   return {
-    role: message.role,
-    text: message.text,
-    ...(message.role === "assistant" && message.calls
-      ? {
-          calls: message.calls.map((call) => ({
-            id: call.id,
-            name: call.name,
-            args: call.args,
-          })),
-        }
+    role: view.role,
+    text: view.text,
+    ...(view.role === "assistant" && view.calls
+      ? { calls: view.calls.map((call) => ({ id: call.id, name: call.name, args: call.args })) }
       : {}),
-    ...(attachments?.length ? { attachments } : {}),
+    ...(attachments ? { attachments } : {}),
   };
-}
-
-function liveMessages(turn: Exclude<TurnState, { status: "done" }>) {
-  if (turn.status === "idle") return [];
-  return turn.turn.messages.map(messageView);
 }
 
 function failureView(error: {
@@ -231,6 +227,7 @@ export function project(
 ): SessionView {
   const conversation = snapshot.durable.conversation;
   const policy = snapshot.durable.policy;
+  const conv = projectConversation(snapshot.durable);
   return {
     sessionId: conversation.sessionId,
     sessionStatus: snapshot.status,
@@ -258,12 +255,12 @@ export function project(
       completionTimeoutMs: policy?.completionTimeoutMs,
       toolTimeoutMs: policy?.toolTimeoutMs,
     },
-    log: conversation.log.map((turn) => ({
+    log: conv.log.map((turn) => ({
       agent: turn.agent,
       outcome: outcomeView(turn.outcome),
-      messages: turn.messages.map(messageView),
+      messages: turn.messages.map(toMessageView),
     })),
-    live: liveMessages(conversation.turn),
+    live: conv.live.map(toMessageView),
   };
 }
 
@@ -682,6 +679,19 @@ export async function readBlob(sessionId: string, blobId: string) {
     AbortSignal.timeout(30_000),
   );
   return "kind" in loaded ? null : loaded;
+}
+
+/** Renders a hosted session's journal for `/export`, without consulting or calling the model. */
+export function exportSession(
+  sessionId: string,
+  format: "markdown" | "jsonl",
+): { body: string; contentType: string } | undefined {
+  const hosted = sessions.get(sessionId);
+  if (!hosted) return undefined;
+  const state = hosted.runtime.snapshot.durable;
+  return format === "markdown"
+    ? { body: journalMarkdown(state), contentType: "text/markdown; charset=utf-8" }
+    : { body: journalJSONL(state), contentType: "application/x-ndjson; charset=utf-8" };
 }
 
 export function eventResponse(sessionId: string, signal: AbortSignal) {

@@ -158,6 +158,7 @@ test("JSON-RPC initialization, framing, validation and baseline text/resource-li
   expect(seen).toHaveLength(1);
   expect(seen[0]).toContain("https://example.invalid/DESIGN.md");
   expect(h.updates().map((m) => m.update)).toEqual([
+    expect.objectContaining({ sessionUpdate: "available_commands_update" }),
     expect.objectContaining({
       sessionUpdate: "agent_message_chunk",
       content: { type: "text", text: "Done" },

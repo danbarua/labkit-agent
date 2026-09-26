@@ -31,6 +31,7 @@ test("load replays committed history before response, never starts providers or 
   expect(second.updates().map((m) => m.update.sessionUpdate)).toEqual([
     "user_message_chunk",
     "agent_message_chunk",
+    "available_commands_update",
   ]);
   expect(completions).toBe(1);
   expect(second.messages.at(-1)?.result).toEqual({});
@@ -76,7 +77,7 @@ test("resume advertises durable support and restores without replay; list is gat
     h = harness(options);
     await h.initialize();
     expect((await h.request("session/resume", { sessionId: id, cwd: "/tmp" })).result).toEqual({});
-    expect(h.updates()).toHaveLength(0);
+    expect(h.updates().map((m) => m.update.sessionUpdate)).toEqual(["available_commands_update"]);
     expect(completions).toBe(1);
     expect((await h.request("session/resume", { sessionId: id, cwd: "/tmp" })).error?.code).toBe(
       -32602,
@@ -927,6 +928,7 @@ test("a reopened session adopts a changed tool manifest and prompts with its pri
         "tool_call",
         "tool_call_update",
         "agent_message_chunk",
+        "available_commands_update",
       ]);
       expect(
         h.updates().find(({ update }) => update.sessionUpdate === "tool_call_update")?.update,
