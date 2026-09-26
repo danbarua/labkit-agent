@@ -72,10 +72,6 @@ export function replaceLastMessage(
   const attachTurn = (turn: TurnData): TurnData => ({
     ...turn,
     messages: attachMessages(turn.messages),
-    view:
-      turn.view.kind === "handoff"
-        ? { ...turn.view, messages: attachMessages(turn.view.messages) }
-        : turn.view,
   });
   const attachLog = (log: readonly TurnRecord[]) =>
     log.map((record) => ({ ...record, messages: attachMessages(record.messages) }));

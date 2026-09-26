@@ -13,8 +13,14 @@ export type PromptInput = Readonly<{
   context?: readonly AgentMessage[];
   /** Finished turns of this session, oldest first. */
   log: readonly TurnRecord[];
-  /** The turn in progress. Its `view` decides whether history or the handoff packet is sent. */
+  /** The turn in progress. A `handoff` view marks the successor's steps after a handoff. */
   turn: TurnData;
+  /**
+   * On a handoff step, the handoff packet (built by the policy's handoff resolver from the turn's
+   * messages up to `turn.view.at`) followed by the messages added since. Computed when the step's
+   * prompt is projected and never stored; absent on an ordinary step.
+   */
+  handoff?: readonly AgentMessage[];
   /**
    * The agent that will run the step. {@link projectConversationPrompt} uses only `systemPrompt`;
    * the other fields are for custom projections.
@@ -27,7 +33,14 @@ export type PromptInput = Readonly<{
   }>;
 }>;
 
-function completedExchanges(
+/**
+ * Validates that `messages` holds only complete, correlated tool exchanges (every call answered,
+ * once, by the call that follows it), repairing a trailing interrupted exchange when `interrupted`.
+ * Exported so a target-aware or handoff projection can validate a slice of history the same way.
+ * @throws Error naming `source` when a result is orphaned, duplicated, or a non-trailing call is
+ * left unanswered.
+ */
+export function completedExchanges(
   messages: readonly AgentMessage[],
   source: string,
   interrupted = false,
@@ -92,16 +105,46 @@ export const parseSessionContext = (raw: unknown): SessionContext =>
   SessionContextSchema.parse(raw);
 
 /**
- * The default prompt projection: builds the chat messages for the next step.
- *
- * The agent's `systemPrompt`, when set, comes first as a `system` message. Then, with a `history`
- * view: session context, every finished turn and the current turn's messages. With a `handoff`
- * view: only the handoff packet. Stored history is not changed.
+ * Renders domain messages ({@link AgentMessage}) as provider-agnostic chat messages
+ * ({@link ChatMessage}): tool results become `tool` messages keyed by call ID, an assistant
+ * message with calls carries `tool_calls`, and any `parts` or completion `owner` pass through.
+ * Exported so a handoff or target-aware projection can render a slice of history the same way.
+ */
+export function agentMessagesToChat(messages: readonly AgentMessage[]): ChatMessage[] {
+  return messages.map((message) => {
+    if (message.role === "tool")
+      return { role: "tool", content: message.text, tool_call_id: message.callId };
+    if (message.role === "assistant" && message.calls)
+      return {
+        role: "assistant",
+        content: message.text,
+        ...(message.parts ? { parts: message.parts } : {}),
+        ...(message.owner ? { owner: message.owner } : {}),
+        tool_calls: message.calls.map((call) => ({
+          id: call.id,
+          type: "function",
+          function: { name: call.name, arguments: JSON.stringify(call.args) },
+        })),
+      };
+    return {
+      role: message.role,
+      content: message.text,
+      ...(message.parts ? { parts: message.parts } : {}),
+      ...(message.role === "assistant" && message.owner ? { owner: message.owner } : {}),
+    };
+  });
+}
+
+/**
+ * The default prompt projection: builds the chat messages for the next step. The agent's
+ * `systemPrompt`, when set, comes first as a `system` message. On an ordinary step: session
+ * context, every finished turn and the current turn's messages. On a handoff step: only
+ * `input.handoff`. Stored history is not changed.
  *
  * Tool exchanges must be complete. The one exception is the last exchange of a finished turn that
  * did not complete: calls without results are dropped from the request.
  *
- * @throws When any source (including one the view does not send) has an orphan, duplicate or
+ * @throws When any source (including one the step does not send) has an orphan, duplicate or
  * unmatched tool result, or a tool call without a result outside that exception.
  */
 export function projectConversationPrompt({
@@ -109,6 +152,7 @@ export function projectConversationPrompt({
   log,
   turn,
   agent,
+  handoff,
 }: PromptInput): ChatMessage[] {
   const base = completedExchanges(context, "session context");
   const history = log.flatMap((record, index) =>
@@ -119,33 +163,10 @@ export function projectConversationPrompt({
     ),
   );
   const current = completedExchanges(turn.messages, "current turn");
-  const messages =
-    turn.view.kind === "handoff"
-      ? completedExchanges(turn.view.messages, "handoff packet")
-      : [...base, ...history, ...current];
   return [
     ...(agent.systemPrompt ? [{ role: "system" as const, content: agent.systemPrompt }] : []),
-    ...messages.map((message): ChatMessage => {
-      if (message.role === "tool")
-        return { role: "tool", content: message.text, tool_call_id: message.callId };
-      if (message.role === "assistant" && message.calls)
-        return {
-          role: "assistant",
-          content: message.text,
-          ...(message.parts ? { parts: message.parts } : {}),
-          ...(message.owner ? { owner: message.owner } : {}),
-          tool_calls: message.calls.map((call) => ({
-            id: call.id,
-            type: "function",
-            function: { name: call.name, arguments: JSON.stringify(call.args) },
-          })),
-        };
-      return {
-        role: message.role,
-        content: message.text,
-        ...(message.parts ? { parts: message.parts } : {}),
-        ...(message.role === "assistant" && message.owner ? { owner: message.owner } : {}),
-      };
-    }),
+    ...agentMessagesToChat(
+      handoff ? completedExchanges(handoff, "handoff packet") : [...base, ...history, ...current],
+    ),
   ];
 }

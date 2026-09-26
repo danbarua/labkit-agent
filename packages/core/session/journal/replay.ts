@@ -187,14 +187,16 @@ export function replay(batches: readonly CommittedBatch[]): JournalState {
             `Turn ${ended.turnId} ended at ${ended.at.entryId}, but the next record is ${body.kind === "terminal" ? `the terminal record of turn ${body.turnId}` : body.kind}`,
             at,
           );
-        // The stored terminal record is the turn's log entry, whatever the fold derived.
+        // The terminal record is the turn-ended fact: its agent and outcome are what happened and
+        // are taken as written. The turn's messages are the fold's, built from the turn's facts.
         const c = state.conversation;
+        const settled = c.log.at(-1)!;
         state = {
           ...state,
           conversation: {
             ...c,
-            log: [...c.log.slice(0, -1), body.record],
-            turn: c.turn.status === "idle" ? { ...c.turn, agent: body.record.agent } : c.turn,
+            log: [...c.log.slice(0, -1), { ...settled, agent: body.agent, outcome: body.outcome }],
+            turn: c.turn.status === "idle" ? { ...c.turn, agent: body.agent } : c.turn,
           },
         };
         ended = undefined;

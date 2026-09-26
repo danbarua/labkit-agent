@@ -41,7 +41,7 @@ export type CompleteResults = z.infer<typeof CompleteResultsSchema>;
  * How a tool batch settled. `results` holds the results of the calls that succeeded before it settled.
  */
 export type BatchOutcome =
-  /** Every call succeeded; the turn prepares the next step. */
+  /** Every call succeeded; the turn starts the next step. */
   | Readonly<{ kind: "succeeded"; results: CompleteResults }>
   /**
    * A call failed (after the host applied the tool-failure policy) or the batch failed; the other

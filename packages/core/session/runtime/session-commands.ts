@@ -39,10 +39,12 @@ function releaseCommitted(ctx: SessionInstance, command: Command<"dispatch">) {
   const { sessionId } = ctx;
   const previousPolicy = ctx.dispatchBoundary.policy;
   ctx.dispatchBoundary = command.durable;
-  const terminal = command.durable.records.at(-1)?.body;
   const newBodies = command.durable.records
     .filter((record) => record.appendId === command.submission.appendId)
     .map((record) => record.body);
+  // An effect record may follow the fact it accounts for (and the terminal record that fact
+  // produced); it never changes which record ended the append's work.
+  const terminal = newBodies.findLast((body) => body.kind !== "effect");
   for (const body of newBodies)
     if (body.kind === "dequeued") {
       const waiting = ctx.queuedWaiters.get(body.inputId);
@@ -118,44 +120,42 @@ function releaseCommitted(ctx: SessionInstance, command: Command<"dispatch">) {
   ctx.afterCommit.get(command.submission.id)?.();
   ctx.afterCommit.delete(command.submission.id);
   if (terminal?.kind === "terminal") {
+    // The terminal record now holds only the outcome and agent; the fold's own log entry (which
+    // this same append just settled) is where the full record — including messages — lives.
+    const record = command.durable.conversation.log.at(-1)!;
     const input = command.submission.input;
     const trigger =
       input.kind === "event" && input.event.type === "child" ? input.event.event : undefined;
-    diagnostic(
-      "session",
-      terminal.record.outcome.kind === "failed" ? "warning" : "info",
-      "turn.settled",
-      {
-        sessionId,
-        turnId: terminal.turnId,
-        operation: "agent_turn",
-        agentId: terminal.record.agent,
-        message: `Agent turn ${terminal.record.outcome.kind}${terminal.record.outcome.kind === "failed" ? `: ${terminal.record.outcome.error.message}` : ""}`,
-        ...(trigger
-          ? {
-              trigger: trigger.type,
-              childId: trigger.child.id,
-              childOperation: trigger.child.kind,
-            }
-          : { trigger: input.kind === "event" ? input.event.type : input.kind }),
-        outcome: terminal.record.outcome.kind,
-        revision: command.durable.revision,
-        appendId: command.submission.appendId,
-        requestId: command.submission.id,
-        stepLimit: command.durable.conversation.allowance,
-        ...(terminal.record.outcome.kind === "failed"
-          ? {
-              reason: terminal.record.outcome.error.message,
-              error: diagnosticError(terminal.record.outcome.error),
-            }
-          : {}),
-        ...(terminal.record.outcome.kind === "exhausted"
-          ? { reason: "Turn step allowance exhausted; user continuation required" }
-          : {}),
-      },
-    );
+    diagnostic("session", record.outcome.kind === "failed" ? "warning" : "info", "turn.settled", {
+      sessionId,
+      turnId: terminal.turnId,
+      operation: "agent_turn",
+      agentId: record.agent,
+      message: `Agent turn ${record.outcome.kind}${record.outcome.kind === "failed" ? `: ${record.outcome.error.message}` : ""}`,
+      ...(trigger
+        ? {
+            trigger: trigger.type,
+            childId: trigger.child.id,
+            childOperation: trigger.child.kind,
+          }
+        : { trigger: input.kind === "event" ? input.event.type : input.kind }),
+      outcome: record.outcome.kind,
+      revision: command.durable.revision,
+      appendId: command.submission.appendId,
+      requestId: command.submission.id,
+      stepLimit: command.durable.conversation.allowance,
+      ...(record.outcome.kind === "failed"
+        ? {
+            reason: record.outcome.error.message,
+            error: diagnosticError(record.outcome.error),
+          }
+        : {}),
+      ...(record.outcome.kind === "exhausted"
+        ? { reason: "Turn step allowance exhausted; user continuation required" }
+        : {}),
+    });
     for (const settle of ctx.waiters.get(terminal.turnId) ?? [])
-      settle({ kind: "terminal", turnId: terminal.turnId, record: terminal.record });
+      settle({ kind: "terminal", turnId: terminal.turnId, record });
     ctx.waiters.delete(terminal.turnId);
   }
   for (const effect of command.commands) {

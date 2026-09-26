@@ -31,11 +31,7 @@ export function seedConversation(
     throw new Error("Invalid root boundary");
   if (seed.origin.kind === "compaction" && (seed.sequence !== 1 || seed.log.length))
     throw new Error("Invalid compaction boundary");
-  if (
-    seed.policy &&
-    validatePolicy(seed.policy, seed.configuration, resolvers).steps !== seed.allowance
-  )
-    throw new Error("Policy allowance mismatch");
+  validatePolicy(seed.policy, seed.configuration, resolvers);
   if (seed.continuations) {
     const owners = new Set<string>();
     for (const entry of seed.continuations) {
@@ -66,7 +62,7 @@ export function seedConversation(
       id: state.conversation.turnId,
       agent: seed.agent,
       generation: 0,
-      steps: seed.allowance,
+      steps: seed.policy.steps,
       messages: [],
       view: { kind: "history" },
     },
@@ -76,7 +72,7 @@ export function seedConversation(
 
 /** Loading a creation record: the committed seed is the initial state, as written. */
 export function foldSeed(seed: Seed): JournalState {
-  const initial = initialConversation(seed.agent, seed.allowance, seed.sessionId);
+  const initial = initialConversation(seed.agent, seed.policy.steps, seed.sessionId);
   const id = ActorIdSchema.parse(`${seed.sessionId}/turn/${seed.sequence}`);
   const conversation: ConversationState = {
     ...initial,
@@ -85,7 +81,7 @@ export function foldSeed(seed: Seed): JournalState {
     log: seed.log,
     sequence: seed.sequence,
     turnId: id,
-    turn: { ...initial.turn, status: "idle", id, agent: seed.agent, steps: seed.allowance },
+    turn: { ...initial.turn, status: "idle", id, agent: seed.agent, steps: seed.policy.steps },
   };
   return freeze({
     conversation,

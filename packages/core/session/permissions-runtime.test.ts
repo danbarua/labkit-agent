@@ -91,7 +91,13 @@ test("intent and permission receipts gate prompts and the entire batch; parsed i
       ...base,
       append: async (request, signal) => {
         const records = request.records.map((raw) => JSON.parse(raw));
-        if (records.some((r) => r.body.event?.event?.permissionRequired)) {
+        if (
+          records.some(
+            (r) =>
+              r.body.event?.event?.type === "model_settled" &&
+              r.body.event.event.result?.value?.kind === "tools",
+          )
+        ) {
           waitingIntent = true;
           await intent.promise;
         }
@@ -129,7 +135,7 @@ test("intent and permission receipts gate prompts and the entire batch; parsed i
       "completed",
     ]);
   }
-  expect(session.snapshot.durable.records.every((record) => record.version === 1)).toBe(true);
+  expect(session.snapshot.durable.records.every((record) => record.version === 2)).toBe(true);
   expect(journalJSONL(session.snapshot.durable)).toContain('"decision":"allow_once"');
   expect(journalJSONL(session.snapshot.durable)).not.toContain('"locations"');
   const restored = await restoreSession(options, session.snapshot.durable.conversation.sessionId);
@@ -224,7 +230,7 @@ for (const approved of [false, true])
     await restored.close();
   });
 
-test("missing binding fails create/restore; journal version, marker, and owner decisions cannot be forged", async () => {
+test("missing binding fails create/restore; journal version and owner decisions cannot be forged", async () => {
   const { options, backing } = setup();
   await expect(
     createSession({ ...options, bindings: { ...options.bindings, requestPermission: undefined } }),
@@ -240,9 +246,6 @@ test("missing binding fails create/restore; journal version, marker, and owner d
   ).rejects.toThrow("Missing permission");
   const batches = backing.get(id)!;
   for (const mutate of [
-    (r: any) => {
-      if (r.body.event?.event?.permissionRequired) delete r.body.event.event.permissionRequired;
-    },
     (r: any) => {
       if (r.body.event?.event?.type === "permission_settled")
         r.body.event.event.result.value[0].callId = "forged";
@@ -362,11 +365,11 @@ test("permission mode changes only at idle policy boundaries; off keeps existing
   await session.input("Read").settled;
   expect(requests).toHaveLength(0);
   expect(ran).toHaveLength(2);
-  expect(session.snapshot.durable.records[0]?.version).toBe(1);
+  expect(session.snapshot.durable.records[0]?.version).toBe(2);
   await session.updatePolicy({ permissions: "ask" });
   await session.input("Ask").settled;
   expect(requests).toHaveLength(2);
-  expect(session.snapshot.durable.records.at(-1)?.version).toBe(1);
+  expect(session.snapshot.durable.records.at(-1)?.version).toBe(2);
   await session.updatePolicy({ permissions: "off" });
   await session.input("Off").settled;
   expect(requests).toHaveLength(2);

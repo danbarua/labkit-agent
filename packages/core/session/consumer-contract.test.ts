@@ -176,7 +176,7 @@ test("consumer model aliases, extraction tools and explicit repeat preserve conf
       profile: openaiChatV2.id,
     });
     expect(new Set(session.snapshot.durable.records.map((record) => record.version))).toEqual(
-      new Set([1]),
+      new Set([2]),
     );
     expect(await session.updatePolicy({ model: "unknown" })).toMatchObject({
       kind: "failed",

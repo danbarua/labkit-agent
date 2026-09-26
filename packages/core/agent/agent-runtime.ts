@@ -26,10 +26,12 @@ import {
   ActorIdSchema,
   AgentIdSchema,
   failure,
+  MessagesSchema,
   SessionIdSchema,
   StepsSchema,
   UserEventSchema,
   type ActorId,
+  type AgentMessage,
   type ChildRef,
   type TurnData,
 } from "./types.ts";
@@ -121,7 +123,13 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
   if (!agents.has(agentId)) throw new Error(`Unknown agent: ${agentId}`);
   const apiKey = options.apiKey;
   const fetcher = options.fetch;
-  const projectHandoff = options.projectHandoff;
+  const projectHandoff =
+    options.projectHandoff ??
+    ((input: PromptInput & { from: string; to: string }) =>
+      [
+        input.turn.messages.findLast((message) => message.role === "user"),
+        input.turn.messages.at(-1),
+      ].filter((message): message is AgentMessage => message !== undefined));
   const toolUpdate = options.toolUpdate;
   const streamUpdate = options.streamUpdate;
   const requestPermission = options.requestPermission;
@@ -129,6 +137,34 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
     options.complete ??
     ((request: ChatCompletionRequest) => createChatCompletion(request, fetcher));
   const project = options.projectPrompt ?? projectConversationPrompt;
+  /**
+   * Prompt projection for the host's step. On a handoff step the packet is built by
+   * `projectHandoff` over the messages up to `turn.view.at`; the packet plus the messages added
+   * since are passed to `project` as `input.handoff`, so the projection option applies to every step.
+   */
+  const projectPrompt = async (input: PromptInput, signal: AbortSignal) => {
+    const view = input.turn.view;
+    if (view.kind !== "handoff") return project(input, signal);
+    const packet = MessagesSchema.parse(
+      await projectHandoff(
+        {
+          ...input,
+          turn: {
+            ...input.turn,
+            messages: input.turn.messages.slice(0, view.at),
+            view: { kind: "history" },
+          },
+          from: view.from,
+          to: input.turn.agent,
+        },
+        signal,
+      ),
+    );
+    return project(
+      { ...input, handoff: [...packet, ...input.turn.messages.slice(view.at)] },
+      signal,
+    );
+  };
   function build(initial: ConversationState): AgentRuntime {
     const replies = new Map<ActorId, (reply: SessionReply) => void>();
 
@@ -140,8 +176,17 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
       agent: agents.get(turn.agent)!,
     });
     const post = (turnId: ActorId, event: TurnEvent) => {
-      // Only validated, typed child outcomes enter this private mailbox.
-      void conversation.send({ type: "child", turnId, event });
+      // Only validated, typed child outcomes enter this private mailbox. There is no journal
+      // fold here to derive the permission route from a policy, so it is derived the same way
+      // `requestPermission` gates the host: configured means every tool batch asks first.
+      const enriched =
+        event.type === "model_settled" &&
+        event.result.kind === "succeeded" &&
+        event.result.value.kind === "tools" &&
+        requestPermission
+          ? { ...event, permissionRequired: true as const }
+          : event;
+      void conversation.send({ type: "child", turnId, event: enriched });
     };
     const host = createHost(
       {
@@ -166,9 +211,7 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
       } else
         host.dispatch(effect, {
           prompt: "turn" in effect.command ? input(effect.command.turn) : undefined,
-          projectPrompt: project,
-          permissions: requestPermission ? "ask" : "off",
-          projectHandoff,
+          projectPrompt,
         });
       return undefined;
     };

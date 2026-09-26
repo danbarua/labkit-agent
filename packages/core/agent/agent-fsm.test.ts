@@ -1,7 +1,6 @@
 import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { admittedCompletionSchema, decideTurn, type TurnState } from "./agent-fsm.ts";
-import { PreparedModelSchema } from "./agent.ts";
 import { context } from "./test-support.ts";
 import { ref } from "./types.ts";
 
@@ -11,28 +10,16 @@ const initial = (): TurnState => {
 };
 const admitted = admittedCompletionSchema(new Set(["writer", "reviewer"]), new Set(["search"]));
 function awaiting() {
-  const preparing = decideTurn(initial(), { type: "user", text: "hello" }).state;
-  if (preparing.status !== "preparing_model") throw new Error("Expected preparation");
-  const next = decideTurn(preparing, {
-    type: "prepared",
-    child: preparing.child,
-    result: {
-      kind: "succeeded",
-      value: PreparedModelSchema.parse({
-        model: "writer",
-        messages: [],
-      }),
-    },
-  }).state;
+  const next = decideTurn(initial(), { type: "user", text: "hello" }).state;
   if (next.status !== "awaiting_model") throw new Error("Expected completion");
   return next;
 }
 test("barge-in replaces the reference and emits cancellation in one pure decision", () => {
   const state = awaiting();
   const next = decideTurn(state, { type: "user", text: "actually" });
-  expect(next.commands.map((command) => command.type)).toEqual(["cancel", "prepare_model"]);
-  expect(next.state.status).toBe("preparing_model");
-  if (next.state.status !== "preparing_model") throw new Error();
+  expect(next.commands.map((command) => command.type)).toEqual(["cancel", "complete"]);
+  expect(next.state.status).toBe("awaiting_model");
+  if (next.state.status !== "awaiting_model") throw new Error();
   expect(next.state.child.id).not.toBe(state.child.id);
   expect(next.state.turn.messages.map((message) => message.text)).toEqual(["hello", "actually"]);
   expect(state.turn.messages).toHaveLength(1);
@@ -62,15 +49,15 @@ test("handoff changes agent and child together; stale same-kind requests cannot 
     },
   });
   expect(next.state).toMatchObject({
-    status: "preparing_handoff",
-    turn: { agent: "reviewer" },
-    child: { kind: "handoff" },
+    status: "awaiting_model",
+    turn: { agent: "reviewer", view: { kind: "handoff", from: "writer", at: 2 } },
+    child: { kind: "completion" },
   });
-  expect(next.commands[0]).toMatchObject({
-    type: "prepare_handoff",
-    from: "writer",
-    turn: { agent: "reviewer" },
-  });
+  if (next.state.status !== "awaiting_model") throw new Error();
+  expect(next.state.child.id).not.toBe(state.child.id);
+  expect(next.commands).toEqual([
+    { type: "complete", child: next.state.child, turn: next.state.turn },
+  ]);
 });
 test("completion and abort require outcomes and terminal states ignore late events", () => {
   const state = awaiting();

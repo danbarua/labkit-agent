@@ -36,16 +36,16 @@ test("recording and replacement commit before the next queued user event", async
   expect(parent.snapshot).toBe(current);
   expect(first.log).toEqual([]);
 });
-test("failed preparation records an outcome and restores the turn allowance", async () => {
+test("a failed step records an outcome and restores the turn allowance", async () => {
   const parent = conversation();
   await parent.send({ type: "user", text: "first" });
   const state = parent.snapshot;
-  if (state.turn.status !== "preparing_model") throw new Error();
+  if (state.turn.status !== "awaiting_model") throw new Error();
   await parent.send({
     type: "child",
     turnId: state.turnId,
     event: {
-      type: "prepared",
+      type: "model_settled",
       child: state.turn.child,
       result: { kind: "failed", error: { message: "offline" } },
     },

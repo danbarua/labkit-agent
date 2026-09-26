@@ -3,7 +3,6 @@ import type { z } from "zod";
 import { defineMachine, stay, type Decision } from "../fsm/fsm.ts";
 import type { Continuation } from "../providers/types.ts";
 import type { CompletionUsage } from "../providers/usage.ts";
-import type { PreparedModel } from "./agent.ts";
 import { validatePermissionDecisions, type PermissionDecisions } from "./permissions.ts";
 import type { BatchOutcome } from "./tool-batch.ts";
 import {
@@ -15,12 +14,10 @@ import {
   StepsSchema,
   type ActorId,
   type AgentId,
-  type AgentMessage,
   type ChildRef,
   type Completion,
   type Failure,
   type Outcome,
-  type PositiveSteps,
   type Ref,
   type Result,
   type Steps,
@@ -52,29 +49,19 @@ export type AdmittedCompletion = z.infer<ReturnType<typeof admittedCompletionSch
 
 /**
  * State of one turn: from the user prompt until the model stops. Each active state holds exactly one
- * `child`: the operation the turn is waiting on (not a child session). A step runs
- * `preparing_model` → `awaiting_model`, then ends the turn, hands off, or runs its tool batch
- * (optionally after `awaiting_permission`) before the next step starts.
+ * `child`: the operation the turn is waiting on (not a child session). A step runs in
+ * `awaiting_model` (prompt projection and LLM call as one operation), then ends the turn, hands
+ * off, or runs its tool batch (optionally after `awaiting_permission`) before the next step starts.
  */
 export type TurnState =
   /** No prompt yet. `steps` is the allowance the turn will start with. */
   | Readonly<{ status: "idle"; id: ActorId; agent: AgentId; steps: Steps }>
   /**
-   * Step boundary: the prompt projection for the next step is being assembled. `turn.steps` is at
-   * least 1 here and is decremented when the model is called. User input here is a barge-in.
+   * The step's prompt is projected and its LLM call is in flight, in one host operation. User
+   * input here is a barge-in that cancels the call and re-issues the step; a handoff's first step
+   * starts here too, with `turn.view` naming the predecessor and where its messages begin.
    */
-  | Readonly<{
-      status: "preparing_model";
-      turn: TurnData & { readonly steps: PositiveSteps };
-      child: Ref<"prepare">;
-    }>
-  /** The step's LLM call is in flight. User input here is a barge-in that re-issues the step. */
   | Readonly<{ status: "awaiting_model"; turn: TurnData; child: Ref<"completion"> }>
-  /**
-   * The settled step handed off; the successor agent's handoff context is being prepared. `turn.agent`
-   * is already the successor. User input here restarts preparation like a barge-in.
-   */
-  | Readonly<{ status: "preparing_handoff"; turn: TurnData; child: Ref<"handoff"> }>
   /**
    * The settled step proposed tool calls that need user permission. `batch` is the ref the tool
    * batch will use once permission is granted.
@@ -103,18 +90,19 @@ export type TurnState =
  */
 export type TurnEvent =
   /**
-   * User text. When idle it starts the turn. While preparing or awaiting the model, or preparing a
-   * handoff, it is a barge-in: the child is cancelled, the text is appended and the step is prepared
-   * again. It has no edge while permission or tools are pending.
+   * User text. When idle it starts the turn. While awaiting the model it is a barge-in: the child
+   * is cancelled, the text is appended and the step is prepared again. It has no edge while
+   * permission or tools are pending.
    */
   | { type: "user"; text: string }
   /** Ends the turn as aborted. While tools run it first waits for the batch to settle (`cancelling_tools`). */
   | { type: "abort" }
-  /** The step's prompt projection settled; on success the model is called. */
-  | { type: "prepared"; child: Ref<"prepare">; result: Result<PreparedModel> }
   /**
-   * The step's LLM call settled (a settled step). An answer ends the turn completed; tool calls start
-   * the batch or a permission request; a handoff prepares the successor agent.
+   * The step's prompt projection and LLM call settled (a settled step). An answer ends the turn
+   * completed; tool calls start the batch or a permission request; a handoff starts the successor
+   * agent's own step.
+   * @property provider Provider that produced this output, when the policy named one.
+   * @property model Application model name that produced this output.
    * @property continuation Provider continuation payload (thinking signatures), not the next step.
    * @property permissionRequired Ask the user before running the proposed tool calls.
    */
@@ -122,12 +110,12 @@ export type TurnEvent =
       type: "model_settled";
       child: Ref<"completion">;
       result: Result<AdmittedCompletion>;
+      provider?: string;
+      model?: string;
       continuation?: Continuation;
       usage?: CompletionUsage;
       permissionRequired?: true;
     }
-  /** The successor agent's handoff context is ready; the next step is prepared with it. */
-  | { type: "handoff_prepared"; child: Ref<"handoff">; result: Result<readonly AgentMessage[]> }
   /**
    * The user answered the permission request. Any `reject_once` ends the turn failed
    * (`permission_refused`); any `cancelled` ends it aborted; otherwise the batch runs.
@@ -135,7 +123,7 @@ export type TurnEvent =
   | { type: "permission_settled"; child: Ref<"permission">; result: Result<PermissionDecisions> }
   /**
    * The step's whole tool batch settled. Collected results are appended as tool messages; a
-   * succeeded batch prepares the next step, a failed or cancelled one ends the turn.
+   * succeeded batch starts the next step, a failed or cancelled one ends the turn.
    */
   | { type: "batch_settled"; child: Ref<"batch">; outcome: BatchOutcome }
   /** Dispatching or running the current child failed outside its result; ends the turn failed. */
@@ -146,12 +134,11 @@ export type TurnEvent =
  * `child` starts that child operation; its settlement comes back as a {@link TurnEvent}.
  */
 export type TurnCommand =
-  /** Assemble the next step's prompt (prompt projection); answers with `prepared`. */
-  | { type: "prepare_model"; child: Ref<"prepare">; turn: TurnData }
-  /** Make the step's LLM call with the prepared request; answers with `model_settled`. */
-  | { type: "complete"; child: Ref<"completion">; turn: TurnData; request: PreparedModel }
-  /** Build the successor agent's handoff context; `turn.agent` is the successor. Answers with `handoff_prepared`. */
-  | { type: "prepare_handoff"; child: Ref<"handoff">; turn: TurnData; from: AgentId }
+  /**
+   * Project the step's prompt and make its LLM call; answers with `model_settled`. `turn.view`
+   * tells the host whether this is a handoff's first step.
+   */
+  | { type: "complete"; child: Ref<"completion">; turn: TurnData }
   /** Ask the user to permit the step's tool calls; answers with `permission_settled`. */
   | {
       type: "request_permission";
@@ -187,13 +174,13 @@ function prepare(turn: TurnData): D {
   if (turn.steps === 0) return done(turn, { kind: "exhausted" });
   const next = {
     ...turn,
-    steps: PositiveStepsSchema.parse(turn.steps),
+    steps: StepsSchema.parse(PositiveStepsSchema.parse(turn.steps) - 1),
     generation: turn.generation + 1,
   };
-  const child = ref("prepare", `${turn.id}/${next.generation}`);
+  const child = ref("completion", `${turn.id}/${next.generation}`);
   return {
-    state: { status: "preparing_model", turn: next, child },
-    commands: [{ type: "prepare_model", child, turn: next }],
+    state: { status: "awaiting_model", turn: next, child },
+    commands: [{ type: "complete", child, turn: next }],
   };
 }
 
@@ -256,25 +243,6 @@ export const decideTurn = defineMachine<TurnState, TurnEvent, TurnCommand>({
       commands: [],
     }),
   },
-  preparing_model: {
-    user: bargeIn,
-    abort,
-    failed: fail,
-    prepared: (state, event) => {
-      if (event.child.id !== state.child.id) return stay(state);
-      if (event.result.kind !== "succeeded") return resultFailure(state.turn, event.result);
-      const turn = {
-        ...state.turn,
-        generation: state.turn.generation + 1,
-        steps: StepsSchema.parse(state.turn.steps - 1),
-      };
-      const child = ref("completion", `${turn.id}/${turn.generation}`);
-      return {
-        state: { status: "awaiting_model", turn, child },
-        commands: [{ type: "complete", child, turn, request: event.result.value }],
-      };
-    },
-  },
   awaiting_model: {
     user: bargeIn,
     abort,
@@ -290,38 +258,26 @@ export const decideTurn = defineMachine<TurnState, TurnEvent, TurnCommand>({
           : { role: "assistant", text: result.text },
       );
       if (result.kind === "answer") return done(turn, { kind: "completed" });
+      if (result.kind === "handoff")
+        return prepare({
+          ...turn,
+          agent: result.agent,
+          view: { kind: "handoff", from: turn.agent, at: turn.messages.length },
+        });
       const next = { ...turn, generation: turn.generation + 1 };
-      if (result.kind === "tools") {
-        if (event.permissionRequired) {
-          const child = ref("permission", `${turn.id}/${next.generation}`);
-          const batch = ref("batch", `${turn.id}/${next.generation + 1}`);
-          return {
-            state: { status: "awaiting_permission", turn: next, child, batch, completion: result },
-            commands: [{ type: "request_permission", child, batch, completion: result }],
-          };
-        }
-        const child = ref("batch", `${turn.id}/${next.generation}`);
+      if (event.permissionRequired) {
+        const child = ref("permission", `${turn.id}/${next.generation}`);
+        const batch = ref("batch", `${turn.id}/${next.generation + 1}`);
         return {
-          state: { status: "executing_tools", turn: next, child },
-          commands: [{ type: "run_tools", child, completion: result }],
+          state: { status: "awaiting_permission", turn: next, child, batch, completion: result },
+          commands: [{ type: "request_permission", child, batch, completion: result }],
         };
       }
-      const child = ref("handoff", `${turn.id}/${next.generation}`);
-      const successor = { ...next, agent: result.agent };
+      const child = ref("batch", `${turn.id}/${next.generation}`);
       return {
-        state: { status: "preparing_handoff", turn: successor, child },
-        commands: [{ type: "prepare_handoff", child, turn: successor, from: turn.agent }],
+        state: { status: "executing_tools", turn: next, child },
+        commands: [{ type: "run_tools", child, completion: result }],
       };
-    },
-  },
-  preparing_handoff: {
-    user: bargeIn,
-    abort,
-    failed: fail,
-    handoff_prepared: (state, event) => {
-      if (event.child.id !== state.child.id) return stay(state);
-      if (event.result.kind !== "succeeded") return resultFailure(state.turn, event.result);
-      return prepare({ ...state.turn, view: { kind: "handoff", messages: event.result.value } });
     },
   },
   awaiting_permission: {

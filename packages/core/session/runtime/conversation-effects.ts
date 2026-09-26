@@ -63,7 +63,6 @@ function dispatchTurn(ctx: SessionInstance, effect: Effect<"turn">) {
     prompt,
     allowedTools: prompt?.agent.tools,
     toolFailure: policy?.toolFailure,
-    permissions: policy?.permissions,
     policyVersion: policy?.version,
     completionTimeoutMs: policy?.completionTimeoutMs ?? undefined,
     toolTimeoutMs: policy?.toolTimeoutMs ?? undefined,
@@ -82,7 +81,6 @@ function dispatchTurn(ctx: SessionInstance, effect: Effect<"turn">) {
       ),
     projectPrompt: (value) =>
       projectPolicy(value, durable.systemInputs, policy, ctx.configured.resolvers),
-    projectHandoff: (value) => ctx.configured.resolvers.handoffs.get(policy.handoff)!(value),
   });
 }
 

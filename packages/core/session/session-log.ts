@@ -21,7 +21,6 @@ export function toSeed(state: JournalState, conversation = state.conversation): 
     context: conversation.context,
     log: conversation.log,
     sequence: conversation.sequence,
-    allowance: conversation.allowance,
     agent: conversation.turn.agent,
     systemInputs: state.systemInputs,
     systemVersion: state.systemVersion,
@@ -57,7 +56,7 @@ export { load } from "./journal/state.ts";
 export { accepts, partialResults } from "./journal/shared.ts";
 
 // Encoding/Decoding
-export { wireEvent, encodeRecord, decodeRecord } from "./journal/codec.ts";
+export { wireEvent, completionUsage, encodeRecord, decodeRecord } from "./journal/codec.ts";
 
 // Seeding
 export { seedConversation, foldSeed } from "./journal/seed.ts";

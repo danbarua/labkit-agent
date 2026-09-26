@@ -28,7 +28,7 @@ test("v2 policy changes allowance and tools only after idle commit, restores and
       },
     },
   });
-  expect(session.snapshot.durable.records[0]?.version).toBe(1);
+  expect(session.snapshot.durable.records[0]?.version).toBe(2);
   const before = session.snapshot;
   expect((await session.updatePolicy({ steps: 1, tools: { a: [] } })).kind).toBe("accepted");
   const turn = session.input("Go");
@@ -505,7 +505,7 @@ for (const [name, value] of [
   });
 }
 
-test("malformed projected arguments fail preparation without inventing tool results", async () => {
+test("malformed projected arguments fail the step without inventing tool results", async () => {
   const options = boundOptions();
   let completions = 0;
   const policies = {

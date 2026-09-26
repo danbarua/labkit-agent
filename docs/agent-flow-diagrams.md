@@ -10,29 +10,29 @@ not permission to bypass those gates.
 ```mermaid
 stateDiagram-v2
   [*] --> idle
-  idle --> preparing_model: user, steps remain
+  idle --> awaiting_model: user, steps remain / consume step
   idle --> done: user, no steps / exhausted
   idle --> done: abort
-  preparing_model --> awaiting_model: prepared / consume step
   awaiting_model --> done: answer
   awaiting_model --> awaiting_permission: tools, permissions ask
   awaiting_model --> executing_tools: tools, permissions off
   awaiting_permission --> executing_tools: every call approved
   awaiting_permission --> done: refusal, failure, or cancellation
-  awaiting_model --> preparing_handoff: handoff
-  preparing_handoff --> preparing_model: prepared, steps remain
-  preparing_handoff --> done: prepared, no steps / exhausted
-  executing_tools --> preparing_model: batch success, steps remain
+  awaiting_model --> awaiting_model: handoff, steps remain / successor's step
+  awaiting_model --> done: handoff, no steps / exhausted
+  executing_tools --> awaiting_model: batch success, steps remain / consume step
   executing_tools --> done: batch success, no steps / exhausted
   executing_tools --> done: batch failure or cancellation
   executing_tools --> cancelling_tools: abort
   cancelling_tools --> done: batch outcome, preserve accepted results
-  preparing_model --> done: failure or cancellation
-  awaiting_model --> done: failure or cancellation
-  preparing_handoff --> done: failure or cancellation
+  awaiting_model --> done: projection or completion failure, or cancellation
   done --> idle: record terminal turn and reset allowance
 ```
 
+`awaiting_model` is one host operation: it projects the step's prompt from the journaled facts, then
+calls the model. A handoff sets the turn's view to a marker naming the predecessor and the message
+index where the handoff happened; the successor's step renders the handoff packet from it. Neither
+the prompt nor the packet is journaled.
 Replacement input is omitted from this diagram for readability; the sequence below covers it.
 Permission refusal fails the whole turn before any tool starts. Permission-dialog cancellation
 aborts it. The distinction must survive into a client-facing result.
@@ -59,8 +59,8 @@ sequenceDiagram
   Note over C,H: Conversation also rejects mismatched turn or child identities.
 ```
 
-Both inputs settle with the same terminal turn. Under the default policy, replacement applies to
-preparation/completion/handoff, not tool or permission work. A timeout uses the same cancellation
+Both inputs settle with the same terminal turn. Under the default policy, replacement applies to a
+step in flight (including a handoff successor's first step), not tool or permission work. A timeout uses the same cancellation
 machinery with a distinct typed reason; it does not spawn a replacement automatically.
 
 ## Cancelling a batch preserves what was accepted

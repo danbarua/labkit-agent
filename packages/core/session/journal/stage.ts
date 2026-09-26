@@ -61,12 +61,15 @@ export function stage(
     next = decision.state;
     bodies.push(body);
     commands.push(...decision.commands);
-    if (next.conversation.sequence !== before.conversation.sequence)
+    if (next.conversation.sequence !== before.conversation.sequence) {
+      const settled = next.conversation.log.at(-1)!;
       bodies.push({
         kind: "terminal",
         turnId: before.conversation.turnId,
-        record: next.conversation.log.at(-1)!,
+        agent: settled.agent,
+        outcome: settled.outcome,
       });
+    }
   };
   if (input.kind === "policy") {
     apply({
@@ -102,12 +105,28 @@ export function stage(
         systemVersion: next.systemVersion,
         policyVersion: next.policy!.version,
       });
+  } else if (input.kind === "event") {
+    const { usage, ...event } = input;
+    const body = next.policy ? { ...event, policyVersion: next.policy.version } : event;
+    apply(body);
+    // The step's output is the fact; the usage it reported is an effect staged after it in the same
+    // append (after the terminal record when the step ended the turn). The conversation fold never
+    // reads it, so it never gates load or new work.
+    if (
+      usage &&
+      body.event.type === "child" &&
+      body.event.event.type === "model_settled" &&
+      body.event.event.result.kind === "succeeded"
+    )
+      apply({
+        kind: "effect",
+        turnId: body.event.turnId,
+        operationId: body.event.event.child.id,
+        effect: "usage",
+        usage,
+      });
   } else {
-    apply(
-      input.kind === "event" && next.policy
-        ? { ...input, policyVersion: next.policy.version }
-        : input,
-    );
+    apply(input);
   }
   if (input.kind === "recovery")
     for (const pending of next.pendingInputs ?? [])
@@ -124,7 +143,7 @@ function packageRecords(
 ) {
   const records = bodies.map((body, index) => {
     return JournalRecordSchema.parse({
-      version: 1,
+      version: 2,
       sessionId: previous.conversation.sessionId,
       revision: previous.revision + index + 1,
       entryId: `${appendId}/${index}`,

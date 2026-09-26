@@ -87,6 +87,11 @@ function rewrite(
   );
 }
 
+/** Index of the terminal record within its batch: the last record of the append that ended the turn. */
+function terminalIndex(batches: readonly CommittedBatch[]): number {
+  return batches[position(batches, "terminal")]!.records.length - 1;
+}
+
 function located(batches: readonly CommittedBatch[], at: number, index = 0): JournalLocation {
   const record = decodeRecord(batches[at]!.records[index]!);
   return { revision: record.revision, appendId: record.appendId, entryId: record.entryId };
@@ -120,30 +125,6 @@ function violation(load: () => unknown): JournalIntegrityError {
   throw new Error("The journal loaded");
 }
 
-const prompt = ["body", "event", "event", "result", "value"] as const;
-
-test("a captured prompt that no longer matches today's projection loads as written", async () => {
-  const { options, durable, batches } = await committed();
-  const at = position(batches, "prepared");
-  const changed = rewrite(batches, at, [
-    [[...prompt, "model"], "retired-model"],
-    [[...prompt, "messages", 0, "content"], "Agent A, as projected when the prompt was captured"],
-    [[...prompt, "tools"], []],
-  ]);
-  const stored = decodeRecord(changed[at]!.records[0]!);
-  const state = replay(changed);
-  expect(state.records.find((record) => record.entryId === stored.entryId)).toEqual(stored);
-  expect(state.conversation).toEqual(durable.conversation);
-  const restored = await restoreSession(serving(options, changed), durable.conversation.sessionId);
-  try {
-    expect(
-      restored.snapshot.durable.records.find((record) => record.entryId === stored.entryId),
-    ).toEqual(stored);
-  } finally {
-    await restored.close();
-  }
-});
-
 test("a policy record loads its stored policy, not the policy its patch derives today", async () => {
   const { durable, batches } = await committed();
   const at = position(batches, "policy");
@@ -158,30 +139,53 @@ test("a policy record loads its stored policy, not the policy its patch derives 
   expect(state.policy).not.toEqual(durable.policy);
 });
 
-test("a terminal record is the log entry as committed, not the entry the fold derives", async () => {
+test("a terminal record's agent and outcome load as written; the turn's messages come from the fold", async () => {
   const { options, durable, batches } = await committed();
   const at = position(batches, "terminal");
-  const index = batches[at]!.records.length - 1;
-  const original = decodeRecord(batches[at]!.records[index]!).body;
-  if (original.kind !== "terminal") throw new Error("Expected the terminal record");
-  const changed = rewrite(
-    batches,
-    at,
-    [[["body", "record", "messages", original.record.messages.length - 1, "text"], "as committed"]],
-    index,
-  );
-  const stored = decodeRecord(changed[at]!.records[index]!).body;
-  if (stored.kind !== "terminal") throw new Error("Expected the terminal record");
+  const outcome = { kind: "aborted", reason: { message: "as recorded by an older build" } };
+  const changed = rewrite(batches, at, [[["body", "outcome"], outcome]], terminalIndex(batches));
   const state = replay(changed);
-  expect(state.conversation.log.at(-1)).toEqual(stored.record);
-  expect(state.conversation.log.at(-1)?.messages.at(-1)).toMatchObject({ text: "as committed" });
-  expect(durable.conversation.log.at(-1)?.messages.at(-1)).toMatchObject({ text: "done" });
+  expect<unknown>(state.conversation.log.at(-1)).toEqual({
+    ...durable.conversation.log.at(-1)!,
+    outcome,
+  });
   const restored = await restoreSession(serving(options, changed), durable.conversation.sessionId);
   try {
-    expect(restored.snapshot.durable.conversation.log.at(-1)).toEqual(stored.record);
+    expect<unknown>(restored.snapshot.durable.conversation.log.at(-1)?.outcome).toEqual(outcome);
   } finally {
     await restored.close();
   }
+});
+
+test("an effect record loads whatever the turn state, and its usage becomes the latest", async () => {
+  const { durable, batches } = await committed();
+  const last = batches.at(-1)!;
+  const revision = RevisionSchema.parse(last.revision + 1);
+  const appendId = AppendIdSchema.parse("late-effect");
+  const usage = { status: "reported", inputTokens: 7, native: { input_tokens: 7 } };
+  const turnId = `${durable.conversation.sessionId}/turn/1`;
+  const operationId = `${turnId}/1`;
+  const state = replay([
+    ...batches,
+    {
+      sessionId: durable.conversation.sessionId,
+      expectedRevision: last.revision,
+      appendId,
+      revision,
+      records: [
+        JSON.stringify({
+          version: 2,
+          sessionId: durable.conversation.sessionId,
+          revision,
+          appendId,
+          entryId: `${appendId}/0`,
+          body: { kind: "effect", turnId, operationId, effect: "usage", usage },
+        }),
+      ],
+    },
+  ]);
+  expect(state.conversation).toEqual(durable.conversation);
+  expect<unknown>(state.lastCompletionUsage).toEqual({ turnId, operationId, usage });
 });
 
 const violations: readonly (readonly [
@@ -240,15 +244,9 @@ const violations: readonly (readonly [
   ],
   [
     "an unsupported record version",
-    (batches) => rewrite(batches, position(batches, "user"), [[["version"], 2]]),
+    (batches) => rewrite(batches, position(batches, "user"), [[["version"], 3]]),
     "record_decode",
     (batches) => located(batches, position(batches, "user")),
-  ],
-  [
-    "a credential field in a captured prompt",
-    (batches) => rewrite(batches, position(batches, "prepared"), [[[...prompt, "apiKey"], "x"]]),
-    "record_decode",
-    (batches) => located(batches, position(batches, "prepared")),
   ],
   [
     "a missing creation record",
@@ -274,15 +272,24 @@ const violations: readonly (readonly [
   [
     "a terminal record of another turn",
     (batches) =>
-      rewrite(batches, position(batches, "terminal"), [[["body", "turnId"], "other-turn"]], 1),
+      rewrite(
+        batches,
+        position(batches, "terminal"),
+        [[["body", "turnId"], "other-turn"]],
+        terminalIndex(batches),
+      ),
     "terminal_required",
-    (batches) => located(batches, position(batches, "terminal"), 1),
+    (batches) => located(batches, position(batches, "terminal"), terminalIndex(batches)),
   ],
   [
     "a terminal record without a turn transition",
     (batches) =>
       rewrite(batches, position(batches, "policy"), [
-        [["body"], decodeRecord(batches[position(batches, "terminal")]!.records[1]!).body],
+        [
+          ["body"],
+          decodeRecord(batches[position(batches, "terminal")]!.records[terminalIndex(batches)]!)
+            .body,
+        ],
       ]),
     "terminal_unexpected",
     (batches) => located(batches, position(batches, "policy")),
@@ -328,35 +335,17 @@ test("staging still rejects records that break commit-time rules", async () => {
     return () =>
       stage(replay(batches.slice(0, at)), body, AppendIdSchema.parse(batches[at]!.appendId));
   };
-  const prepared = position(batches, "prepared");
-  expect(staged(prepared, [])().records).toEqual([...batches[prepared]!.records]);
-  expect(staged(prepared, [[[...prompt, "model"], "retired-model"]])).toThrow(
-    "Prompt model mismatch",
-  );
-  expect(staged(prepared, [[[...prompt, "messages", 0, "content"], "Agent A, reworded"]])).toThrow(
-    "Prompt differs from captured session projection",
-  );
-  const advertised = decodeRecord(batches[prepared]!.records[0]!).body;
-  if (
-    advertised.kind !== "event" ||
-    advertised.event.type !== "child" ||
-    advertised.event.event.type !== "prepared" ||
-    advertised.event.event.result.kind !== "succeeded"
-  )
-    throw new Error("Expected the captured prompt");
+  const settled = position(batches, "model_settled");
+  expect(staged(settled, [])().records).toEqual([...batches[settled]!.records]);
+  expect(staged(settled, [[["body", "systemVersion"], 1]])).toThrow("Turn system version mismatch");
   expect(
-    staged(prepared, [
-      [[...prompt, "tools"], advertised.event.event.result.value.tools?.toReversed()],
+    staged(settled, [
+      [
+        ["body", "event", "event", "result", "value"],
+        { kind: "tools", text: "", calls: [{ id: "call", name: "unknown", args: {} }] },
+      ],
     ]),
-  ).toThrow("Prompt tool permissions mismatch");
-  expect(staged(prepared, [[["body", "systemVersion"], 1]])).toThrow(
-    "Turn system version mismatch",
-  );
-  expect(
-    staged(position(batches, "model_settled"), [
-      [["body", "event", "event", "permissionRequired"], true],
-    ]),
-  ).toThrow("Permission phase differs from captured policy");
+  ).toThrow("Unpermitted tool");
   const created = decodeRecord(batches[0]!.records[0]!).body;
   if (created.kind !== "created") throw new Error("Expected the creation record");
   const tools = Object.fromEntries(
@@ -405,7 +394,7 @@ test("a restore that fails integrity logs the rule and the offending record", as
 
 const newerBuild: readonly (readonly [name: string, edits: readonly Edit[], named: string])[] = [
   ["an unknown record kind", [[["body"], { kind: "future_kind" }]], 'kind "future_kind"'],
-  ["a newer record version", [[["version"], 2]], "version 2"],
+  ["a newer record version", [[["version"], 3]], "version 3"],
 ];
 
 for (const [name, edits, named] of newerBuild)
@@ -455,5 +444,15 @@ test("load reports a record that is not JSON as unreadable, not as a newer build
   );
   expect(error).toMatchObject({ rule: "record_decode", ...located(batches, at) });
   expect(error.message).toContain("not valid JSON");
+  expect(error.message).not.toContain("newer Labkit build");
+});
+
+test("load reports a record in the pre-break format as unreadable, with no migration", async () => {
+  const { batches } = await committed();
+  const at = position(batches, "user");
+  const error = violation(() => replay(rewrite(batches, at, [[["version"], 1]])));
+  expect(error).toMatchObject({ rule: "record_decode", ...located(batches, at) });
+  expect(error.message).toContain("older journal format");
+  expect(error.message).toContain("start a new session");
   expect(error.message).not.toContain("newer Labkit build");
 });

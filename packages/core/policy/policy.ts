@@ -107,7 +107,13 @@ export const builtinResolvers: PolicyResolvers = {
     ["history@1", history],
     [
       "context-only@1",
-      (input) => history({ ...input, log: [], turn: { ...input.turn, view: { kind: "history" } } }),
+      (input) =>
+        history({
+          ...input,
+          log: [],
+          handoff: undefined,
+          turn: { ...input.turn, view: { kind: "history" } },
+        }),
     ],
   ]),
   handoffs: new Map([
@@ -291,6 +297,35 @@ export function patchPolicy(
   );
 }
 
+/**
+ * The input the policy's projection pack renders. On a handoff step, the policy's handoff resolver
+ * builds the packet from the messages up to `turn.view.at` (the predecessor's history, as it stood
+ * at the handoff); the packet plus the messages the successor added since become
+ * `input.handoff`, and the pack decides what to send. The packet is computed here, from turn state
+ * and the resolver, and never journaled.
+ */
+function projectionInput(
+  input: PromptInput,
+  policy: Policy,
+  resolvers: PolicyResolvers,
+): PromptInput {
+  const view = input.turn.view;
+  if (view.kind !== "handoff") return input;
+  const handoff = resolvers.handoffs.get(policy.handoff);
+  if (!handoff) throw new Error("Missing versioned handoff projection");
+  const packet = handoff({
+    ...input,
+    turn: {
+      ...input.turn,
+      messages: input.turn.messages.slice(0, view.at),
+      view: { kind: "history" },
+    },
+    from: view.from,
+    to: input.turn.agent,
+  });
+  return { ...input, handoff: [...packet, ...input.turn.messages.slice(view.at)] };
+}
+
 export function projectPolicy(
   input: PromptInput,
   systemInputs: readonly string[],
@@ -299,12 +334,13 @@ export function projectPolicy(
 ) {
   const project = resolvers.projections.get(policy.project);
   if (!project) throw new Error("Missing versioned projection");
+  const projected = project(projectionInput(input, policy, resolvers));
   const messages = z
     .array(ChatMessageSchema)
     .parse([
       ...(input.agent.systemPrompt ? [{ role: "system", content: input.agent.systemPrompt }] : []),
       ...systemInputs.map((content) => ({ role: "system", content })),
-      ...project(input),
+      ...projected,
     ]);
   parseSessionContext(
     messages.map((message) => {

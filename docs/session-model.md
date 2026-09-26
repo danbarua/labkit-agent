@@ -170,13 +170,11 @@ session never requires today's models, tools or settings to match those of the p
 
 The correction work tracks these divergences:
 
-- Every step journals its full prepared prompt, and staging refuses unless it equals a fresh
-  projection (`session/journal/domain-event.ts`). Handoff packets are journaled the same way.
-- Turn messages, tool batch results, the policy patch result, the permission-required flag and the
-  step allowance are stored as copies next to the facts they derive from, checked on write, and the
-  stored copy wins on load.
-- Token usage is stored inside the model output fact on `model_settled` instead of as a typed effect
-  record.
+- A policy record stores the policy its patch produced next to the patch, and load applies the stored
+  policy as written.
+- Token usage (with its HTTP provenance) is the only recorded effect: core stages it as an `effect`
+  record in the step's append whenever the completion reports it; the environment cannot yet choose
+  which effects to record, and cost and stop details are not recorded.
 - Projection does not know the target model; media support is checked over the whole history after
   projection and again when input arrives. Capability is per provider profile and yes/no only.
 - Tool results are text only, so binary MCP results are refused.

@@ -1,25 +1,23 @@
 import { z } from "zod";
 
-import { ChatMessageSchema, ChatToolSchema } from "../agent/agent.ts";
 import { BlobRefSchema } from "../agent/content.ts";
 import { PermissionDecisionsSchema } from "../agent/permissions.ts";
 import { parseSessionContext } from "../agent/prompt.ts";
-import { ToolResultSchema } from "../agent/tool-batch.ts";
 import {
   ActorIdSchema,
   AgentIdSchema,
   CompletionSchema,
   FailureSchema,
   MessagesSchema,
+  OutcomeSchema,
   SessionIdSchema,
-  StepsSchema,
   ToolCallIdSchema,
   ToolNameSchema,
   TurnRecordSchema,
 } from "../agent/types.ts";
 import { PolicyPatchSchema, PolicySchema, PolicyVersionSchema } from "../policy/policy.ts";
-import { ContinuationSchema, ProviderSettingsSchema } from "../providers/types.ts";
-import { CompletionUsageSchema } from "../providers/usage.ts";
+import { ContinuationSchema } from "../providers/types.ts";
+import { CompletionUsageSchema, type CompletionUsage } from "../providers/usage.ts";
 import { AppendIdSchema, RevisionSchema } from "./persistence.ts";
 
 /**
@@ -109,8 +107,7 @@ export const SeedSchema = z
     log: z.array(TurnRecordSchema).readonly(),
     /** Agent the session's next turn starts with. */
     agent: AgentIdSchema,
-    /** Steps each turn may use (the policy's `steps`). Staging requires the two to match. */
-    allowance: StepsSchema,
+
     /**
      * Number of the next turn, `log.length + 1`; its turn ID is `<sessionId>/turn/<sequence>`. A
      * fork keeps its parent's sequence; root and compaction sessions start at 1.
@@ -139,27 +136,6 @@ export const SeedSchema = z
  */
 export type Seed = z.infer<typeof SeedSchema>;
 
-/**
- * The captured prompt of one step: the completion request prompt projection produced, committed
- * in the `prepared` child event before the completion is dispatched. Staging requires it to equal
- * today's projection of the folded session; load takes it as written.
- */
-export const PromptViewSchema = z
-  .strictObject({
-    ...ProviderSettingsSchema.unwrap().partial().shape,
-    /** Agents the step may hand off to; present when the policy names a provider. */
-    successors: z.array(AgentIdSchema).readonly().optional(),
-    /** Application model name, not the provider's wire model ID. */
-    model: z.string().min(1),
-    messages: z.array(ChatMessageSchema).readonly(),
-    /** Provider continuation payloads sent with the step. */
-    continuations: z.array(ContinuationSchema).readonly().optional(),
-    /** Tools advertised to the model: the policy's tools for the active agent, in its order. */
-    tools: z.array(ChatToolSchema).readonly().optional(),
-    temperature: z.number().finite().optional(),
-  })
-  .readonly();
-
 const child = <K extends string>(kind: K) =>
   z.strictObject({ kind: z.literal(kind), id: ActorIdSchema }).readonly();
 
@@ -179,14 +155,15 @@ const result = <T extends z.ZodType>(value: T) =>
  */
 export const StringResultSchema = result(z.string());
 
+/**
+ * How a tool batch settled, as the `batch_settled` event stores it: `kind` and, when it did not
+ * succeed, why. Individual results live in committed `tool` records; the fold assembles them from
+ * `partial` rather than storing them again here.
+ */
 const BatchOutcomeSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("succeeded"), results: z.array(ToolResultSchema).readonly() }),
-  z.strictObject({
-    kind: z.literal("failed"),
-    results: z.array(ToolResultSchema).readonly(),
-    error: FailureSchema,
-  }),
-  z.strictObject({ kind: z.literal("cancelled"), results: z.array(ToolResultSchema).readonly() }),
+  z.strictObject({ kind: z.literal("succeeded") }),
+  z.strictObject({ kind: z.literal("failed"), error: FailureSchema }),
+  z.strictObject({ kind: z.literal("cancelled") }),
 ]);
 
 /** Schema of {@link WireEvent}. */
@@ -214,22 +191,14 @@ export const WireEventSchema = z.discriminatedUnion("type", [
     turnId: ActorIdSchema,
     event: z.discriminatedUnion("type", [
       z.strictObject({
-        type: z.literal("prepared"),
-        child: child("prepare"),
-        result: result(PromptViewSchema),
-      }),
-      z.strictObject({
         type: z.literal("model_settled"),
+        /** Provider the step was made with, when the policy named one. */
+        provider: z.string().min(1).optional(),
+        /** Application model name the step was made with, whether or not it produced output. */
+        model: z.string().min(1),
         continuation: ContinuationSchema.optional(),
-        usage: CompletionUsageSchema.optional(),
-        permissionRequired: z.literal(true).optional(),
         child: child("completion"),
         result: result(CompletionSchema.brand<"AdmittedCompletion">()),
-      }),
-      z.strictObject({
-        type: z.literal("handoff_prepared"),
-        child: child("handoff"),
-        result: result(MessagesSchema),
       }),
       z.strictObject({
         type: z.literal("permission_settled"),
@@ -244,9 +213,7 @@ export const WireEventSchema = z.discriminatedUnion("type", [
       z.strictObject({
         type: z.literal("failed"),
         child: z.discriminatedUnion("kind", [
-          child("prepare"),
           child("completion"),
-          child("handoff"),
           child("batch"),
           child("tool"),
           child("permission"),
@@ -266,12 +233,12 @@ export const WireEventSchema = z.discriminatedUnion("type", [
  * - `abort`: cancel the active turn.
  * - `request`: branch into child session `sessionId` (a fork or compaction, not a child
  *   operation). The branch is taken at the next idle boundary.
- * - `child`: a child operation of turn `turnId` (not a child session) settled. `prepared`: prompt
- *   projection captured the step's prompt ({@link PromptViewSchema}). `model_settled`: a settled
- *   step, whose model output is now committed. `handoff_prepared`: the messages for the successor
- *   agent. `permission_settled`: permission decisions for the tool batch. `batch_settled`: the
- *   tool batch's outcome. `failed`: the operation failed without its normal result, for example
- *   because it could not be dispatched.
+ * - `child`: a child operation of turn `turnId` (not a child session) settled. `model_settled`: a
+ *   settled step — prompt projection and the LLM call run as one operation — whose model output is
+ *   now committed, along with the provider and model that produced it and any continuation.
+ *   `permission_settled`: permission decisions for the tool batch. `batch_settled`: the tool
+ *   batch's outcome (individual results live in `tool` records). `failed`: the operation failed
+ *   without its normal result, for example because it could not be dispatched.
  */
 export type WireEvent = z.infer<typeof WireEventSchema>;
 
@@ -333,7 +300,20 @@ export const BodySchema = z.discriminatedUnion("kind", [
     /** Raw outcome; see {@link StringResultSchema}. */
     result: StringResultSchema,
   }),
-  z.strictObject({ kind: z.literal("terminal"), turnId: ActorIdSchema, record: TurnRecordSchema }),
+  z.strictObject({
+    kind: z.literal("effect"),
+    turnId: ActorIdSchema,
+    /** The completion operation this effect is attributed to (not a child session). */
+    operationId: ActorIdSchema,
+    effect: z.literal("usage"),
+    usage: CompletionUsageSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("terminal"),
+    turnId: ActorIdSchema,
+    agent: AgentIdSchema,
+    outcome: OutcomeSchema,
+  }),
   z.strictObject({ kind: z.literal("recovery"), turnId: ActorIdSchema, reason: z.string().min(1) }),
 ]);
 
@@ -352,8 +332,11 @@ export const BodySchema = z.discriminatedUnion("kind", [
  * - `event`: a conversation event ({@link WireEvent}).
  * - `system`: a replacement of the standing session instructions (not a system notice).
  * - `tool`: one tool call's raw result, committed before its tool batch settles.
- * - `terminal`: a turn's log entry, committed in the same append as the record that ended the
- *   turn. Staging derives it; callers never submit it.
+ * - `effect`: a chosen effect the environment records alongside a step, typed apart from facts.
+ *   The conversation fold ignores these; only `usage` is defined today.
+ * - `terminal`: the outcome and final agent of a turn, committed in the same append as the record
+ *   that ended it. Staging derives it; callers never submit it. The fold derives the turn's
+ *   messages from its own facts, not from this record.
  * - `recovery`: closes a turn that process exit interrupted, with an `interrupted` failure, when
  *   the session is reopened. External effects are not repeated.
  *
@@ -365,8 +348,8 @@ export type JournalBody = z.infer<typeof BodySchema>;
 /** Schema of {@link JournalRecord}. */
 export const JournalRecordSchema = z
   .strictObject({
-    /** Record format. This build reads and writes only version 1. */
-    version: z.literal(1),
+    /** Record format. This build reads and writes only version 2. */
+    version: z.literal(2),
     sessionId: SessionIdSchema,
     /** Position in the session's journal: 1 for the creation record, then one more per record. */
     revision: RevisionSchema,
@@ -385,9 +368,18 @@ export const JournalRecordSchema = z
 export type JournalRecord = z.infer<typeof JournalRecordSchema>;
 
 /**
- * What `stage` in session-log.ts accepts: any journal body except `terminal`, which staging
- * derives. A `policy` change carries only the patch; staging computes the resulting policy.
+ * What `stage` in session-log.ts accepts: any journal body except `terminal` and `effect`, which
+ * staging derives. A `policy` change carries only the patch; staging computes the resulting
+ * policy. An `event` may carry the completion's `usage`, staged as a sibling `effect` record.
  */
 export type SessionInput =
-  | Exclude<JournalBody, { kind: "terminal" | "policy" }>
-  | Readonly<{ kind: "policy"; patch: z.input<typeof PolicyPatchSchema> }>;
+  | Exclude<JournalBody, { kind: "terminal" | "policy" | "effect" | "event" }>
+  | Readonly<{ kind: "policy"; patch: z.input<typeof PolicyPatchSchema> }>
+  | Readonly<{
+      kind: "event";
+      event: WireEvent;
+      systemVersion: z.infer<typeof SystemVersionSchema>;
+      policyVersion?: z.infer<typeof PolicyVersionSchema>;
+      /** Usage effect to record alongside the event, when the child reported one. */
+      usage?: CompletionUsage;
+    }>;

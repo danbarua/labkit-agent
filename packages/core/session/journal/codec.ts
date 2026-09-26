@@ -1,5 +1,6 @@
 import type { ConversationEvent } from "../../agent/agent-conversation.ts";
 import { freeze } from "../../fsm/fsm.ts";
+import type { CompletionUsage } from "../../providers/usage.ts";
 import {
   BodySchema,
   JournalRecordSchema,
@@ -9,9 +10,10 @@ import {
 } from "../types.ts";
 
 /**
- * Converts a conversation event into its journaled form ({@link WireEvent}). A captured prompt
- * response remains unchanged; a prepared model (tool definitions, inference result) is filtered to
- * only the fields that the runtime's next turn needs.
+ * Converts a conversation event into its journaled form ({@link WireEvent}). A settled step's
+ * usage is stripped here; {@link completionUsage} reads it separately for the caller to stage as a
+ * sibling `effect` record. A settled batch keeps only how it settled: its results are already
+ * committed as `tool` records, and the fold assembles them from those.
  */
 export function wireEvent(event: ConversationEvent): WireEvent {
   if (event.type === "dispatch_failed") {
@@ -22,45 +24,22 @@ export function wireEvent(event: ConversationEvent): WireEvent {
       event: { type: "failed", child: event.command.command.child, error: event.error },
     });
   }
-  if (
-    event.type === "child" &&
-    event.event.type === "prepared" &&
-    event.event.result.kind === "succeeded"
-  ) {
-    const {
-      model,
-      messages,
-      tools,
-      temperature,
-      provider,
-      thinking,
-      thinkingBudgetTokens,
-      stream,
-      maxOutputTokens,
-      successors,
-      continuations,
-    } = event.event.result.value;
-    return WireEventSchema.parse({
-      ...event,
-      event: {
-        ...event.event,
-        result: {
-          kind: "succeeded",
-          value: {
-            model,
-            messages,
-            tools,
-            temperature,
-            ...(continuations ? { continuations } : {}),
-            ...(provider
-              ? { provider, thinking, thinkingBudgetTokens, stream, maxOutputTokens, successors }
-              : {}),
-          },
-        },
-      },
-    });
+  if (event.type === "child" && event.event.type === "model_settled") {
+    const { usage: _usage, permissionRequired: _derived, ...settled } = event.event;
+    return WireEventSchema.parse({ ...event, event: settled });
+  }
+  if (event.type === "child" && event.event.type === "batch_settled") {
+    const { results: _results, ...outcome } = event.event.outcome;
+    return WireEventSchema.parse({ ...event, event: { ...event.event, outcome } });
   }
   return WireEventSchema.parse(event);
+}
+
+/** The usage a settled step reported, when it admitted a completion; undefined otherwise. */
+export function completionUsage(event: ConversationEvent): CompletionUsage | undefined {
+  return event.type === "child" && event.event.type === "model_settled"
+    ? event.event.usage
+    : undefined;
 }
 
 /**
@@ -90,6 +69,9 @@ export const recordKinds: ReadonlySet<string> = new Set(
 export const newerBuild =
   "the journal was probably written by a newer Labkit build, so restart the launcher on current code";
 
+/** The one record format this build reads and writes. */
+const currentVersion = JournalRecordSchema.unwrap().shape.version.value;
+
 /** Why stored bytes do not decode, read from the raw JSON without validating it. */
 export function decodeFailure(serialized: string): string {
   let raw: unknown;
@@ -103,10 +85,12 @@ export function decodeFailure(serialized: string): string {
       ? (value as Record<string, unknown>)[key]
       : undefined;
   const version = field(raw, "version");
-  if (typeof version === "number" && version > 1)
-    return `Record has version ${version}, but this Labkit build reads only version 1; ${newerBuild}`;
+  if (typeof version === "number" && version > currentVersion)
+    return `Record has version ${version}, but this Labkit build reads only version ${currentVersion}; ${newerBuild}`;
+  if (typeof version === "number" && version < currentVersion)
+    return `Record has version ${version}, an older journal format this Labkit build no longer reads (version ${currentVersion} only, no migration); start a new session`;
   const kind = field(field(raw, "body"), "kind");
   if (typeof kind === "string" && !recordKinds.has(kind))
     return `Record has kind ${JSON.stringify(kind)}, which this Labkit build does not know; ${newerBuild}`;
-  return "Record does not decode as a version 1 journal record";
+  return `Record does not decode as a version ${currentVersion} journal record`;
 }

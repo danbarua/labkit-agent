@@ -46,17 +46,17 @@ export const CompletionOwnerSchema = z
 
 /**
  * A number of steps (LLM calls): a policy's per-turn allowance, or what a turn has left of it.
- * Preparation failures use no step; see docs/core-runtime.md.
+ * One is used when a step starts; see docs/core-runtime.md.
  */
 export const StepsSchema = z.number().int().nonnegative().brand<"Steps">();
 
 /**
- * A step allowance of at least one: the turn may still prepare a step.
- * Parsing zero fails with "A model preparation requires remaining steps".
+ * A step allowance of at least one: the turn may still start a step.
+ * Parsing zero fails with "A model step requires remaining steps".
  */
 export const PositiveStepsSchema = StepsSchema.refine(
   (steps) => steps > 0,
-  "A model preparation requires remaining steps",
+  "A model step requires remaining steps",
 ).brand<"PositiveSteps">();
 
 /** Step allowance of at least one. See {@link PositiveStepsSchema}. */
@@ -104,9 +104,9 @@ export type ToolCalls = z.infer<typeof ToolCallsSchema>;
  *
  * - `answer`: no tool calls; the turn ends `completed`.
  * - `tools`: the step proposed a tool batch. The turn asks permission when required, runs the
- *   batch, and prepares the next step with the results.
- * - `handoff`: the step hands the turn to `agent`. The turn continues with that agent once its
- *   handoff packet is prepared.
+ *   batch, and starts the next step with the results.
+ * - `handoff`: the step hands the turn to `agent`, whose own step starts next with the handoff
+ *   packet the policy's handoff resolver renders.
  */
 export const CompletionSchema = z
   .discriminatedUnion("kind", [
@@ -214,17 +214,15 @@ export const FailureSchema = z
       ])
       .optional(),
     /**
-     * The operation that failed. `kind` is a turn's child operation (`prepare`, `completion`,
-     * `handoff`, `permission`, `batch`, `tool`) or session work: `append` and `load` (journal
+     * The operation that failed. `kind` is a turn's child operation (`completion`, `permission`,
+     * `batch`, `tool`) or session work: `append` and `load` (journal
      * storage), `admission` (an input receipt) or `branch` (publishing a fork or compaction).
      */
     operation: z
       .strictObject({
         id: z.string(),
         kind: z.enum([
-          "prepare",
           "completion",
-          "handoff",
           "permission",
           "batch",
           "tool",
@@ -321,14 +319,12 @@ export type TurnRecord = z.infer<typeof TurnRecordSchema>;
 
 /**
  * Kinds of child operation a turn spawns (child: an operation, not a child session):
- * - `prepare`: prompt projection for the next step;
- * - `completion`: the LLM call of a step;
- * - `handoff`: preparing the handoff packet for the successor agent;
+ * - `completion`: one step: its prompt projection and LLM call;
  * - `permission`: asking the user to approve a tool batch;
  * - `batch`: running a tool batch;
  * - `tool`: running one tool call inside a batch.
  */
-export type OperationKind = "prepare" | "completion" | "handoff" | "permission" | "batch" | "tool";
+export type OperationKind = "completion" | "permission" | "batch" | "tool";
 
 /** Identity of one child operation of a turn. Outcomes are matched to the turn by this ref. */
 export type Ref<K extends OperationKind> = Readonly<{ kind: K; id: ActorId }>;
@@ -368,41 +364,28 @@ export type TurnData = Readonly<{
   messages: readonly AgentMessage[];
   /**
    * What the default prompt projection sends to the model. `history`: session context, finished
-   * turns and this turn's messages. `handoff`: only the handoff packet prepared for the successor
-   * agent, plus the messages added after it.
+   * turns and this turn's messages. `handoff`: the handoff resolver's packet computed from the
+   * messages up to `at`, plus this turn's messages from `at` on.
    */
-  view:
-    | Readonly<{ kind: "history" }>
-    | Readonly<{ kind: "handoff"; messages: readonly AgentMessage[] }>;
+  view: Readonly<{ kind: "history" }> | Readonly<{ kind: "handoff"; from: AgentId; at: number }>;
   /**
-   * Steps the turn has left. One is used when a step's preparation succeeds, before its LLM
-   * call; at zero the next step is not prepared and the turn ends `exhausted`.
+   * Steps the turn has left. One is used when a step starts, before its prompt is projected; at
+   * zero the next step does not start and the turn ends `exhausted`.
    */
   steps: Steps;
 }>;
 
-/**
- * Returns `turn` with `message` added to its messages, and also to the handoff packet when the
- * turn's view is `handoff`, so the successor agent sees it in its next step.
- */
+/** Returns `turn` with `message` added to its messages. */
 export function appendMessage(turn: TurnData, message: AgentMessage): TurnData {
-  return {
-    ...turn,
-    messages: [...turn.messages, message],
-    view:
-      turn.view.kind === "handoff"
-        ? { kind: "handoff", messages: [...turn.view.messages, message] }
-        : turn.view,
-  };
+  return { ...turn, messages: [...turn.messages, message] };
 }
 
 /**
  * Input to the in-memory `/agent` runtime.
  *
- * - `user`: user text. With no active turn it starts one. While a step is being prepared or
- *   awaited, or a handoff is being prepared, it barges in: the live child operation is cancelled
- *   and the step is prepared again with the text appended. While permission or tools are
- *   pending it is refused with an error.
+ * - `user`: user text. With no active turn it starts one. While a step is in flight it barges in:
+ *   the live completion is cancelled and the step starts again with the text appended. While
+ *   permission or tools are pending it is refused with an error.
  * - `abort`: ends the active turn as `aborted`. During a tool batch it cancels the batch and
  *   keeps the results that already arrived. With no active turn it records an empty aborted turn.
  */

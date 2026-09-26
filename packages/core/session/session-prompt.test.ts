@@ -1,6 +1,7 @@
 import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { ActorIdSchema, AgentIdSchema, StepsSchema } from "../agent/types.ts";
+import { defaultPolicy, projectPolicy } from "../policy/policy.ts";
 import { projectSessionPrompt } from "./session-prompt.ts";
 import { createSession, restoreSession } from "./session-runtime.ts";
 import { scriptedCompletion, testOptions } from "./test-support.ts";
@@ -32,17 +33,37 @@ test("configured system, ordered session inputs, context, history and current me
     ).map((message) => message.content),
   ).toEqual(["configured", "first", "second", "context", "history", "current"]);
 });
-test("handoff replaces projected history but retains all system inputs; invalid correlation rejects", () => {
+test("a handoff step sees the resolver's packet and later messages, not the predecessor's history", () => {
+  const policy = defaultPolicy({ agents: [["a", { tools: [] }]] }, 3);
   expect(
-    projectSessionPrompt(
+    projectPolicy(
       {
         agent: { model: "m", systemPrompt: "configured", tools: [] },
-        log: [],
-        turn: { ...turn, view: { kind: "handoff", messages: [{ role: "user", text: "packet" }] } },
+        log: [
+          {
+            agent: turn.agent,
+            outcome: { kind: "completed" },
+            messages: [{ role: "assistant", text: "history" }],
+          },
+        ],
+        turn: {
+          ...turn,
+          messages: [
+            { role: "user", text: "earlier" },
+            { role: "assistant", text: "draft" },
+            { role: "user", text: "current" },
+            { role: "assistant", text: "review this" },
+            { role: "user", text: "after" },
+          ],
+          view: { kind: "handoff", from: AgentIdSchema.parse("writer"), at: 4 },
+        },
       },
       ["session"],
+      policy,
     ).map((message) => message.content),
-  ).toEqual(["configured", "session", "packet"]);
+  ).toEqual(["configured", "session", "current", "review this", "after"]);
+});
+test("an invalid correlation in the projected context rejects", () => {
   expect(() =>
     projectSessionPrompt(
       {
