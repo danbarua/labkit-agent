@@ -243,3 +243,27 @@ Default runs cover all scenarios; `--v2` selects the policy group, not a differe
 Consumer tests retain actual scripted HTTP traffic under `.session-artifacts/consumer*/<run-id>` and
 `.session-artifacts/peer-review/<run-id>`. Read the [fixture guide](fixtures/README.md) before updating
 baselines. Tests use scripted responses and establish no live-provider or disk-durability guarantee.
+
+## Journal Module Map
+
+The journal module (packages/core/session/journal/) refactors session-log.ts into focused modules with explicit dependencies:
+
+- **state.ts**: Core types (`JournalState`, `ToolEntry`, `LastCompletionUsage`, `Fold`, `ReducibleBody`, `Reduction`, `Reducer`) and `load` constant.
+- **shared.ts**: Reduce helpers common to multiple branches (`missingTarget`, `accepts`, `partialResults`, `replaceLastMessage`, `withUserParts`).
+- **codec.ts**: Serialization (`wireEvent`, `encodeRecord`, `decodeRecord`, `recordKinds`, `newerBuild`, `decodeFailure`).
+- **seed.ts**: Initial conversation setup (`seedConversation`, `foldSeed`); `toSeed` remains in session-log.ts for test spyOn compatibility.
+- **domain-event.ts**: Domain event interpretation (`domainEvent`).
+- **reduce-boundary.ts**: Boundary reducers (`reducePolicy`, `reduceConfiguration`, `reduceSystem`).
+- **reduce-queue.ts**: Queue reducers (`reduceQueued`, `reduceInputCancelled`, `reduceDequeued`).
+- **reduce-tools.ts**: Tool reducers (`reduceTool`, `reduceRecovery`).
+- **reduce-event.ts**: Event reducer (`reduceEvent`).
+- **reduce.ts**: Typed reducer registry and `reduce` dispatcher (entry guard: `accepts` + `missingTarget`).
+- **stage.ts**: Commit-time pipeline (`stage`, `packageRecords`, `stageCreation`).
+- **replay.ts**: Load-time integrity checks (`replay`, `JournalIntegrityError`, `JournalIntegrityRule`, `JournalLocation`).
+- **render.ts**: Debug output (`journalJSONL`, `journalMarkdown`).
+- **session-log.ts**: Public barrel re-exporting all above (except reducer modules, which are internal).
+
+### Load vs. Stage
+
+- **replay** (load-time): runs an integrity-only fold; checks batch continuity, record decode, session identity, revisions, entry format.
+- **stage** (commit-time): runs validation rules that enforce policy constraints (idle boundaries, input version matching, permission consistency, etc.).
