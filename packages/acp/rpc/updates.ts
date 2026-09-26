@@ -166,9 +166,8 @@ export function toolEvidence(state: JournalState) {
       const completed = owners.get(body.turnId) ?? [];
       let assistant = 0;
       // The fold appends exactly one log entry per terminal record, in the same order this loop
-      // sees them, so `historyIndex` already names the entry this record produced. Reading it from
-      // `state.conversation.log` (not `body`) keeps this independent of what a terminal record
-      // stores; the journal format may stop carrying the turn's own messages on that record.
+      // sees them, so `historyIndex` names the entry this record produced. Terminal records carry
+      // only turnId, agent and outcome; the turn's messages come from the fold's log entry.
       state.conversation.log[historyIndex]?.messages.forEach((message, index) => {
         if (message.role !== "assistant") return;
         const owner = completed[assistant++];

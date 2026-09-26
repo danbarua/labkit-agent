@@ -339,6 +339,46 @@ test("interrupted recovery keeps a committed tool result's parts, not just its t
   });
 });
 
+test("a tool's text-media part reaches the next request as text, not as a blob", async () => {
+  const requests: { messages: readonly { role: string; content?: unknown; parts?: unknown }[] }[] =
+    [];
+  const session = await createSession(
+    testOptions({
+      tools: new Map([
+        [
+          "echo",
+          defineTool({
+            input: z.object({ text: z.string() }),
+            run: () => ({
+              text: "see attachment",
+              parts: [
+                { type: "text", text: "see attachment" },
+                {
+                  type: "blob",
+                  bytes: new TextEncoder().encode("SECRET-TOOL-TEXT"),
+                  media: "text/plain",
+                },
+              ],
+            }),
+          }),
+        ],
+      ]),
+      complete: (request) => {
+        requests.push(request);
+        return requests.length === 1
+          ? { kind: "tools", text: "", calls: [{ id: "c1", name: "echo", args: { text: "x" } }] }
+          : { kind: "answer", text: "done" };
+      },
+    }),
+  );
+  session.input("Go");
+  await until(() => session.snapshot.durable.conversation.log.length === 1);
+  const tool = requests[1]?.messages.find((message) => message.role === "tool");
+  expect(tool?.content).toBe("see attachmentSECRET-TOOL-TEXT");
+  expect(JSON.stringify(tool?.parts ?? [])).not.toContain('"blob"');
+  await session.close();
+});
+
 test("abort overtaking a tool outcome does not accept a result into a settled batch", async () => {
   const port = createMemoryPersistence();
   const releaseAbort = deferred<void>();

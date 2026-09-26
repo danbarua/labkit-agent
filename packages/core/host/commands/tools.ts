@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { TurnCommand } from "../../agent/agent-fsm.ts";
-import type { ContentPart } from "../../agent/content.ts";
+import { partsText, type ContentPart } from "../../agent/content.ts";
 import {
   toolBatchMachine,
   type BatchCommand,
@@ -195,6 +195,12 @@ export function runTools(
                 const parts: ContentPart[] = await Promise.all(
                   rich.data.parts.map(async (part) => {
                     if (part.type === "text") return part;
+                    // Text media is text: every encoder sends tool text, so it is never a blob.
+                    if (part.media.startsWith("text/"))
+                      return {
+                        type: "text" as const,
+                        text: new TextDecoder("utf-8", { fatal: true }).decode(part.bytes),
+                      };
                     if (!storeBlob)
                       throw new Error("Tool returned blob parts but no blob store is configured");
                     return {
@@ -206,7 +212,7 @@ export function runTools(
                     };
                   }),
                 );
-                return { text: rich.data.text, ...(parts.length ? { parts } : {}) };
+                return { text: partsText(parts), ...(parts.length ? { parts } : {}) };
               }
               const parsed = z.json().safeParse(value);
               if (!parsed.success)

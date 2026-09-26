@@ -189,8 +189,8 @@ export type ProjectedPrompt = Readonly<{
  * {@link renderBlobPointer}), on a line of its own so it never glues onto neighbouring text.
  * `content` is recomputed to match. Applies uniformly to whatever a projection (a built-in pack, a
  * custom pack, or a handoff packet later re-projected) produced, covering every role that carries
- * `parts` — including tool messages once tool results carry them. Pure: never logs: the caller
- * (`projectPolicy`) reports the returned `pointers` with its own correlation ids.
+ * `parts`, tool results included. Pure: never logs: the caller (`projectPolicy`) reports the
+ * returned `pointers` with its own correlation ids.
  */
 export function projectMediaPointers(
   messages: readonly ChatMessage[],
