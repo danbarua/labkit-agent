@@ -244,26 +244,37 @@ Consumer tests retain actual scripted HTTP traffic under `.session-artifacts/con
 `.session-artifacts/peer-review/<run-id>`. Read the [fixture guide](fixtures/README.md) before updating
 baselines. Tests use scripted responses and establish no live-provider or disk-durability guarantee.
 
-## Journal Module Map
+## Journal modules
 
-The journal module (packages/core/session/journal/) refactors session-log.ts into focused modules with explicit dependencies:
+`session-log.ts` is the public barrel. It also defines `toSeed` itself, so tests can spy on it
+through the `session-log` namespace. The implementation lives in `journal/`:
 
-- **state.ts**: Core types (`JournalState`, `ToolEntry`, `LastCompletionUsage`, `Fold`, `ReducibleBody`, `Reduction`, `Reducer`) and `load` constant.
-- **shared.ts**: Reduce helpers common to multiple branches (`missingTarget`, `accepts`, `partialResults`, `replaceLastMessage`, `withUserParts`).
-- **codec.ts**: Serialization (`wireEvent`, `encodeRecord`, `decodeRecord`, `recordKinds`, `newerBuild`, `decodeFailure`).
-- **seed.ts**: Initial conversation setup (`seedConversation`, `foldSeed`); `toSeed` remains in session-log.ts for test spyOn compatibility.
-- **domain-event.ts**: Domain event interpretation (`domainEvent`).
-- **reduce-boundary.ts**: Boundary reducers (`reducePolicy`, `reduceConfiguration`, `reduceSystem`).
-- **reduce-queue.ts**: Queue reducers (`reduceQueued`, `reduceInputCancelled`, `reduceDequeued`).
-- **reduce-tools.ts**: Tool reducers (`reduceTool`, `reduceRecovery`).
-- **reduce-event.ts**: Event reducer (`reduceEvent`).
-- **reduce.ts**: Typed reducer registry and `reduce` dispatcher (entry guard: `accepts` + `missingTarget`).
-- **stage.ts**: Commit-time pipeline (`stage`, `packageRecords`, `stageCreation`).
-- **replay.ts**: Load-time integrity checks (`replay`, `JournalIntegrityError`, `JournalIntegrityRule`, `JournalLocation`).
-- **render.ts**: Debug output (`journalJSONL`, `journalMarkdown`).
-- **session-log.ts**: Public barrel re-exporting all above (except reducer modules, which are internal).
+- `state.ts`: `JournalState` and the other journal types, the `Fold` mode and the `Reducer` type.
+- `reduce.ts`: the typed reducer table (one reducer per journal body kind) and `reduce`, which
+  applies the entry guard before dispatch. The reducers live in `reduce-boundary.ts` (policy,
+  configuration, system), `reduce-queue.ts` (queued, input_cancelled, dequeued), `reduce-tools.ts`
+  (tool, recovery) and `reduce-event.ts` (event, with `domain-event.ts`). `shared.ts` holds their
+  common helpers.
+- `stage.ts`: commit time. It applies every commit-time rule before a record is written.
+- `replay.ts`: load time. It folds stored records and checks journal integrity only
+  (`JournalIntegrityError`).
+- `seed.ts`: creation seeds. `codec.ts`: record encoding and decoding. `render.ts`: the JSONL and
+  Markdown journal views.
 
-### Load vs. Stage
+## Runtime modules
 
-- **replay** (load-time): runs an integrity-only fold; checks batch continuity, record decode, session identity, revisions, entry format.
-- **stage** (commit-time): runs validation rules that enforce policy constraints (idle boundaries, input version matching, permission consistency, etc.).
+`session-runtime.ts` holds the public types and re-exports the entry points from `runtime/`:
+
+- `open.ts`: `createSession`, `restoreSession` and `SessionNotFoundError`.
+- `configure.ts`: `configureSession` validates options and captures the bindings a session and its
+  fork/compact children share; `bind-options.ts` resolves the completion port and policy resolvers.
+- `registry-adoption.ts`: plans the `configuration` record that journals live registry drift on
+  restore.
+- `instance.ts`: `SessionInstance`, the per-session state every handler receives explicitly, and
+  `openInstance`/`initializeSession`.
+- `session-commands.ts`, `conversation-effects.ts`, `env-events.ts`: one handler per session actor
+  command, conversation command and public event.
+- `facade.ts`: the `SessionRuntime` object over a `SessionInstance`.
+
+`openInstance` builds the state maps first, then the host, then the session actor, then the facade.
+The host and actor callbacks read the instance lazily, so none of them runs during construction.
