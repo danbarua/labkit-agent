@@ -1,5 +1,9 @@
+import type {
+  AgentApp,
+  AgentContext,
+  SetSessionConfigOptionResponse,
+} from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
-import type { AgentContext } from "@agentclientprotocol/sdk";
 import type { SessionRuntime } from "@labkit-agent/core";
 import { diagnostic } from "@labkit-agent/core/logging";
 import type { Policy } from "@labkit-agent/core/policy";
@@ -79,24 +83,8 @@ export function configProjection(core: Pick<AdapterCore, "connectionId" | "send"
   };
 }
 
-interface ConfigOptionRequest {
-  sessionId: string;
-  configId: string;
-  value: unknown;
-  type?: string;
-}
-
-interface SetModeRequest {
-  sessionId: string;
-  modeId: string;
-}
-
-interface ConfigOptionResponse {
-  configOptions: unknown[];
-}
-
 export function registerConfiguration(
-  app: unknown,
+  app: AgentApp,
   deps: {
     lookup: (id: string) => Session;
     setConfig: (
@@ -106,32 +94,21 @@ export function registerConfiguration(
       client: AgentContext,
       signal: AbortSignal,
       type?: string,
-    ) => Promise<ConfigOptionResponse>;
+    ) => Promise<SetSessionConfigOptionResponse>;
   },
 ): readonly string[] {
-  const builder = app as { onRequest(method: string, handler: (arg: unknown) => unknown): unknown };
-  builder
-    .onRequest("session/set_config_option", (arg: unknown) => {
-      const { params, client, signal } = arg as {
-        params: ConfigOptionRequest;
-        client: AgentContext;
-        signal: AbortSignal;
-      };
-      return deps.setConfig(
+  app
+    .onRequest("session/set_config_option", ({ params, client, signal }) =>
+      deps.setConfig(
         params.sessionId,
         params.configId,
-        params.value,
+        params.value as unknown,
         client,
         signal,
-        params.type,
-      );
-    })
-    .onRequest("session/set_mode", async (arg: unknown) => {
-      const { params, client, signal } = arg as {
-        params: SetModeRequest;
-        client: AgentContext;
-        signal: AbortSignal;
-      };
+        "type" in params ? params.type : undefined,
+      ),
+    )
+    .onRequest("session/set_mode", async ({ params, client, signal }) => {
       const entry = deps.lookup(params.sessionId);
       const mode = entry.config.find(
         (binding) => binding.category === "mode" && binding.type !== "boolean",
