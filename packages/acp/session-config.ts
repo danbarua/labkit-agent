@@ -145,10 +145,13 @@ export function unlistedValues(
   });
 }
 
+/** Config options and mode state projected to the client for one policy. */
+export type ConfigState = { configOptions?: SessionConfigOption[]; modes?: SessionModeState };
+
 export function configState(
   bindings: readonly AcpConfigBinding[],
   policy: Policy | undefined,
-): { configOptions?: SessionConfigOption[]; modes?: SessionModeState } {
+): ConfigState {
   if (!bindings.length) return {};
   if (!policy) throw new Error("ACP config requires journaled policy");
   const modeChoices = new Map<string, readonly AcpSelectOption[]>();

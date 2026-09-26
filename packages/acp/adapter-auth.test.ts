@@ -40,7 +40,7 @@ test("ACP authentication gates session access, negotiates terminal methods, and 
     },
   });
   try {
-    expect((await h.request("authenticate", { methodId: "login" })).error?.code).toBe(-32002);
+    expect((await h.request("authenticate", { methodId: "login" })).error?.code).toBe(-32600);
     const init = await h.initialize();
     expect(init.result.authMethods).toEqual([{ id: "login", name: "Sign in" }]);
     expect(init.result.agentCapabilities.auth).toEqual({ logout: {} });

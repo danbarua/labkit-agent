@@ -13,8 +13,15 @@ export const McpMessageSchema = z.object({
 });
 const ConnectResultSchema = z.object({ connectionId: z.string().min(1).max(4096) });
 
+/** Routes ACP-transported MCP traffic between the client and each session's MCP transports. */
+export type AcpMcpBridge = Readonly<{
+  request(params: MessageMcpRequest, signal: AbortSignal): Promise<unknown>;
+  notify(params: MessageMcpRequest): void;
+  transport(serverId: string, client: AgentContext): Transport;
+}>;
+
 /** Connection IDs belong to one ACP connection; MCP request IDs remain transport-local. */
-export function acpMcpBridge(connectionSignal: () => AbortSignal) {
+export function acpMcpBridge(connectionSignal: () => AbortSignal): AcpMcpBridge {
   type Endpoint = {
     request: (params: MessageMcpRequest, signal: AbortSignal) => Promise<unknown>;
     notify: (params: MessageMcpRequest) => void;

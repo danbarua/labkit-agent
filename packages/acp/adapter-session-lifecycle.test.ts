@@ -62,7 +62,7 @@ test("resume advertises durable support and restores without replay; list is gat
   };
   let h = harness(options);
   try {
-    expect((await h.request("session/list", {})).error?.code).toBe(-32002);
+    expect((await h.request("session/list", {})).error?.code).toBe(-32600);
     expect((await h.initialize()).result.agentCapabilities.sessionCapabilities).toMatchObject({
       list: {},
       resume: {},
