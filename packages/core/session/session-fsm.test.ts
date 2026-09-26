@@ -1,6 +1,6 @@
 import { expect, test } from "@logtape/testing-bun/autoload";
 
-import { PolicyVersionSchema } from "../policy/policy.ts";
+import { PolicySchema, PolicyVersionSchema } from "../policy/policy.ts";
 import { AppendIdSchema, RevisionSchema } from "./persistence.ts";
 import { decideSession, type SessionEvent, type SessionState } from "./session-fsm.ts";
 import { createSession } from "./session-runtime.ts";
@@ -253,25 +253,61 @@ test("idle boundary with accepted queued inputs keeps system updates busy", asyn
   expect(decision.state).toBe(state);
   expect(decision.commands).toEqual([{ type: "reply", id: "change", result: { kind: "busy" } }]);
 });
-test("a configuration-applied record stages at an idle boundary even with accepted queued inputs, so it lands before the queued dequeue (D6)", async () => {
+
+test("a selection waits for the running turn, then applies at the idle boundary before a queued input dequeues", async () => {
   const before = await initial();
-  const state: SessionState = {
+  const running = decideSession(before, submission(before));
+  const policy = PolicySchema.parse({ ...before.durable.policy!, steps: 7 });
+  const selected = decideSession(running.state, { type: "select", id: "pick", policy });
+  expect(selected.commands).toEqual([
+    { type: "reply", id: "pick", result: { kind: "selected", policy } },
+  ]);
+  expect(selected.state.selection).toEqual({ id: "pick", policy });
+  const boundary: SessionState = {
     status: "ready",
     queue: [],
+    selection: { id: "pick", policy },
     durable: {
       ...before.durable,
-      pendingInputs: [{ inputId: before.durable.conversation.turnId, text: "accepted" }],
+      pendingInputs: [{ inputId: before.durable.conversation.turnId, text: "queued" }],
     },
   };
-  const policy = {
-    ...state.durable.policy!,
-    permissions: state.durable.policy!.permissions === "ask" ? ("off" as const) : ("ask" as const),
-    version: PolicyVersionSchema.parse(state.durable.policy!.version + 1),
-  };
-  const decision = decideSession(state, {
-    type: "submit",
-    submission: { id: "change", appendId: AppendIdSchema.parse("change"), input: { kind: "policy", policy } },
+  const drained = decideSession(boundary, { type: "drain" });
+  if (drained.state.status !== "committing") throw new Error("Expected the selection to stage");
+  expect(drained.state.selection).toBeUndefined();
+  expect(drained.state.pending.submission.input).toEqual({
+    kind: "policy",
+    policy: { ...policy, version: PolicyVersionSchema.parse(before.durable.policy!.version + 1) },
   });
-  expect(decision.commands).not.toEqual([{ type: "reply", id: "change", result: { kind: "busy" } }]);
-  expect(decision.state.status).not.toBe("failed");
+  expect(drained.state.pending.next.pendingInputs).toHaveLength(1);
+  expect(drained.commands.map((command) => command.type)).toEqual(["append"]);
+});
+
+test("new input at an idle boundary waits for the pending selection to apply first", async () => {
+  const before = await initial();
+  const policy = PolicySchema.parse({ ...before.durable.policy!, steps: 7 });
+  const state: SessionState = { ...before, selection: { id: "pick", policy } };
+  const next = submission(before, "next");
+  const decision = decideSession(state, next);
+  expect(decision.state.queue).toEqual(next.type === "submit" ? [next.submission] : []);
+  expect(decision.commands).toEqual([{ type: "drain" }]);
+  const drained = decideSession(decision.state, { type: "drain" });
+  if (drained.state.status !== "committing") throw new Error("Expected the selection to stage");
+  expect(drained.state.pending.submission.input.kind).toBe("policy");
+  expect(drained.state.queue).toEqual(decision.state.queue);
+});
+
+test("a selection matching the configuration in force records nothing", async () => {
+  const before = await initial();
+  const policy = {
+    ...before.durable.policy!,
+    version: PolicyVersionSchema.parse(before.durable.policy!.version + 3),
+  };
+  const decision = decideSession(before, { type: "select", id: "same", policy });
+  expect(decision.state.status).toBe("ready");
+  expect(decision.state.selection).toBeUndefined();
+  expect(decision.commands).toEqual([
+    { type: "reply", id: "same", result: { kind: "ignored" } },
+    { type: "drain" },
+  ]);
 });

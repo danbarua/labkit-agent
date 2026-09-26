@@ -28,7 +28,7 @@ function scripted() {
 
 async function committed(options: SessionOptions = scripted()) {
   const session = await createSession(options);
-  await session.updatePolicy({});
+  await session.updatePolicy({ steps: 5 });
   await session.input("Go").settled;
   const durable = session.snapshot.durable;
   await session.close();
@@ -146,7 +146,7 @@ test("a captured prompt that no longer matches today's projection loads as writt
   }
 });
 
-test("a policy record loads its stored policy, not the policy its patch derives today", async () => {
+test("a configuration-applied record loads its stored policy, whatever today's rules derive", async () => {
   const { durable, batches } = await committed();
   const at = position(batches, "policy");
   const changed = rewrite(batches, at, [

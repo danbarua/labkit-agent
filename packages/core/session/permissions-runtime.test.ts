@@ -375,7 +375,7 @@ test("permission mode changes only at idle policy boundaries; off keeps existing
   await Promise.all([session.close(), restored.close()]);
 });
 
-test("session tool approval is committed before reuse, retained across model changes, explicitly revoked, and absent on restore", async () => {
+test("session tool approval is committed before reuse, retained across model changes, revoked when the permission mode changes, and absent on restore", async () => {
   const { withFixtureDiagnostics } = await import("../logging/fixture-capture.ts");
   const directory = `.session-artifacts/permission-grants/${crypto.randomUUID()}`;
   await withFixtureDiagnostics(directory, {}, async () => {
@@ -450,7 +450,7 @@ test("session tool approval is committed before reuse, retained across model cha
           if (
             request.records.some((raw) => {
               const body = JSON.parse(raw).body;
-              return body.kind === "policy" && body.policy.permissions === "ask";
+              return body.kind === "policy" && body.policy.permissions === "off";
             })
           ) {
             awaitingReset = true;
@@ -472,13 +472,13 @@ test("session tool approval is committed before reuse, retained across model cha
       expect(ran).toHaveLength(4);
       expect(parses()).toBe(4);
       expect(journalJSONL(session.snapshot.durable)).toContain('"source":"remembered"');
-      for (const patch of [
-        { model: "another-model" },
-        { thinking: "off" as const },
-        { steps: 8, completionTimeoutMs: 1000, toolTimeoutMs: 1000 },
-        { tools: { a: ["echo"] } },
-      ]) {
-        expect((await session.updatePolicy(patch)).kind).toBe("accepted");
+      for (const [patch, kind] of [
+        [{ model: "another-model" }, "accepted"],
+        [{ thinking: "off" as const }, "accepted"],
+        [{ steps: 8, completionTimeoutMs: 1000, toolTimeoutMs: 1000 }, "accepted"],
+        [{ tools: { a: ["echo"] } }, "ignored"],
+      ] as const) {
+        expect((await session.updatePolicy(patch)).kind).toBe(kind);
         expect(await session.input("Keep the existing tool approval").settled).toMatchObject({
           kind: "terminal",
           record: { outcome: { kind: "completed" } },
@@ -486,7 +486,7 @@ test("session tool approval is committed before reuse, retained across model cha
         expect(requests).toHaveLength(1);
       }
       const beforeReset = session.snapshot.durable.policy!.version;
-      const reset = session.updatePolicy({ permissions: "ask" });
+      const reset = session.updatePolicy({ permissions: "off" });
       await until(() => awaitingReset);
       expect(session.snapshot.durable.policy!.version).toBe(beforeReset);
       expect(await Bun.file(`${directory}/diagnostics.jsonl`).text()).not.toContain(
@@ -494,6 +494,7 @@ test("session tool approval is committed before reuse, retained across model cha
       );
       resetReceipt.resolve();
       expect((await reset).kind).toBe("accepted");
+      expect((await session.updatePolicy({ permissions: "ask" })).kind).toBe("accepted");
       await session.input("Ask again after revocation").settled;
       expect(requests).toHaveLength(2);
       expect((await session.updatePolicy({ tools: { a: [] } })).kind).toBe("accepted");
@@ -536,10 +537,11 @@ test("session tool approval is committed before reuse, retained across model cha
     ),
   ).toBe(true);
   const resets = logs.filter((entry) => entry.event === "permission.grants_cleared");
-  expect(resets).toHaveLength(3);
-  expect(resets[0].reason).toContain("Permission mode explicitly committed");
+  expect(resets).toHaveLength(4);
+  expect(resets[0].reason).toContain("Permission mode changed");
   expect(resets[0].toolNames).toEqual(["echo"]);
-  expect(resets[1].reason).toContain("Allowed tool scope changed");
+  expect(resets[1].reason).toContain("Permission mode changed");
+  expect(resets[2].reason).toContain("Allowed tool scope changed");
   for (const reset of resets) {
     expect(reset.sessionId).toBeTruthy();
     expect(reset.policyVersion).toBeGreaterThan(0);

@@ -1,6 +1,7 @@
 import { SessionIdSchema } from "../../agent/types.ts";
 import { freeze } from "../../fsm/fsm.ts";
 import { diagnostic, diagnosticError } from "../../logging/index.ts";
+import { changedPolicyFields } from "../../policy/policy.ts";
 import { AppendIdSchema } from "../persistence.ts";
 import { JournalIntegrityError, replay } from "../session-log.ts";
 import { loadSession } from "../session-operation.ts";
@@ -93,16 +94,12 @@ export async function restoreSession(
       );
     }
     stage = "load_selected_configuration";
-    const selectedConfiguration = await configured.port.getConfig(
-      sessionId,
-      new AbortController().signal,
-    );
+    const stored = await configured.port.getConfig(sessionId, new AbortController().signal);
     stage = "open_session";
     const built = openInstance(
       configured,
       freeze({ ...journal, conversation: { ...journal.conversation, pending: [] } }),
       true,
-      selectedConfiguration,
     );
     if (journal.conversation.turn.status !== "idle" || journal.pendingInputs?.length) {
       stage = "recover_interrupted_turn";
@@ -162,6 +159,25 @@ export async function restoreSession(
           ...reconciliation.fields,
         });
       built.pend(plan);
+    }
+    if (stored && durable.policy && changedPolicyFields(durable.policy, stored).length) {
+      stage = "apply_selected_configuration";
+      // Applying the selection is new work, so any registry adoption is journaled ahead of it.
+      built.adopt();
+      const receipt = await built.reselect(stored);
+      if (receipt.kind === "failed" && built.runtime.snapshot.status !== "failed") {
+        const inForce = built.runtime.policy ?? durable.policy;
+        diagnostic("session", "warning", "configuration.rejected", {
+          sessionId,
+          version: stored.version,
+          inForceVersion: inForce.version,
+          reason: receipt.message,
+          error: receipt.error,
+          consequence:
+            "The selection stored before the session closed no longer validates against the live registry; the configuration in force is stored as the selection instead",
+        });
+        await configured.port.putConfig(sessionId, inForce, new AbortController().signal);
+      }
     }
     diagnostic("session", "info", "session.restored", {
       sessionId,

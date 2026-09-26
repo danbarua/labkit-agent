@@ -413,29 +413,152 @@ test("observer reentrancy enters the mailbox and sees frozen snapshots", async (
   expect(seen).toEqual([...seen].sort((a, b) => a - b));
 });
 
-test("a configuration change selects immediately even while its own turn's append is still in flight (D6: never busy)", async () => {
+function configurationEvents() {
+  const logger = getLogger(["labkit", "session"]);
+  const emit = logger.emit.bind(logger);
+  const events: { event: string; level: string; fields: Record<string, unknown> }[] = [];
+  const spy = spyOn(logger, "emit").mockImplementation((record) => {
+    if (String(record.rawMessage).startsWith("configuration."))
+      events.push({
+        event: String(record.rawMessage),
+        level: record.level,
+        fields: record.properties,
+      });
+    emit(record);
+  });
+  return { events, restore: () => spy.mockRestore() };
+}
+
+test("a configuration selected while its turn is admitted applies at the next boundary; the running turn keeps its settings", async () => {
   const options = boundOptions();
-  const release = deferred<void>();
-  let writing = false;
+  const admitted = deferred<void>();
+  const answer = deferred<unknown>();
+  let admitting = false;
+  const offered: string[][] = [];
+  const log = configurationEvents();
   const session = await createSession({
     ...options,
+    bindings: {
+      ...options.bindings,
+      complete: (request) => {
+        offered.push(request.tools?.map((tool) => tool.function.name) ?? []);
+        return offered.length === 1 ? answer.promise : { kind: "answer", text: "second" };
+      },
+    },
     persistence: {
       ...options.persistence,
       async append(request, signal) {
         const result = await options.persistence.append(request, signal);
         if (request.records.some((record) => JSON.parse(record).body.event?.type === "user")) {
-          writing = true;
-          await release.promise;
+          admitting = true;
+          await admitted.promise;
         }
         return result;
       },
     },
   });
-  const turn = session.input("Go");
-  await until(() => writing);
-  expect((await session.updatePolicy({ steps: 0 })).kind).toBe("selected");
-  release.resolve();
-  await turn.settled;
+  try {
+    const sessionId = session.snapshot.durable.conversation.sessionId;
+    const first = session.input("First");
+    await until(() => admitting);
+    const selected = await session.updatePolicy({ tools: { a: [] } });
+    expect(selected).toMatchObject({ kind: "selected", policy: { tools: { a: [] } } });
+    expect(await options.persistence.getConfig(sessionId, new AbortController().signal)).toEqual(
+      session.selectedPolicy,
+    );
+    expect(session.selectedPolicy?.tools.a).toHaveLength(0);
+    expect(session.policy?.tools.a).toHaveLength(1);
+    admitted.resolve();
+    await until(() => offered.length === 1);
+    expect(offered[0]).toEqual(["echo"]);
+    answer.resolve({ kind: "answer", text: "first" });
+    const settled = await first.settled;
+    if (settled.kind !== "terminal") throw new Error("Expected the first turn to settle");
+    await until(() => log.events.some((entry) => entry.event === "configuration.applied"));
+    const kinds = session.snapshot.durable.records.map((record) => record.body.kind);
+    expect(kinds.slice(kinds.lastIndexOf("terminal"))).toEqual(["terminal", "policy"]);
+    expect(session.policy?.tools.a).toHaveLength(0);
+    const second = await session.input("Second").settled;
+    if (second.kind !== "terminal") throw new Error("Expected the second turn to settle");
+    expect(offered).toEqual([["echo"], []]);
+    const policyRecord = session.snapshot.durable.records.find(
+      (record) => record.body.kind === "policy",
+    );
+    expect(log.events.map((entry) => [entry.level, entry.event])).toEqual([
+      ["info", "configuration.selected"],
+      ["info", "configuration.applied"],
+    ]);
+    expect(log.events[0]!.fields).toMatchObject({
+      sessionId,
+      version: 1,
+      inForceVersion: 0,
+      changedFields: ["tools"],
+    });
+    expect(log.events[1]!.fields).toMatchObject({
+      sessionId,
+      turnId: second.turnId,
+      selectionId: log.events[0]!.fields.selectionId,
+      version: 1,
+      revision: policyRecord?.revision,
+      appendId: policyRecord?.appendId,
+      changedFields: ["tools"],
+    });
+  } finally {
+    log.restore();
+    await session.close();
+  }
+});
+
+test("a selection pending when the session stopped survives restart and applies at the recovered boundary", async () => {
+  const options = boundOptions();
+  const offered: string[][] = [];
+  const stalled = deferred<unknown>();
+  const session = await createSession({
+    ...options,
+    bindings: {
+      ...options.bindings,
+      complete: (request) => {
+        offered.push(request.tools?.map((tool) => tool.function.name) ?? []);
+        return stalled.promise;
+      },
+    },
+  });
+  const sessionId = session.snapshot.durable.conversation.sessionId;
+  void session.input("Interrupted");
+  await until(() => offered.length === 1);
+  expect((await session.updatePolicy({ tools: { a: [] } })).kind).toBe("selected");
+  await session.close();
+  expect(session.snapshot.durable.policy?.tools.a).toHaveLength(1);
+  const log = configurationEvents();
+  const restored = await restoreSession(
+    {
+      ...options,
+      bindings: {
+        ...options.bindings,
+        complete: (request) => {
+          offered.push(request.tools?.map((tool) => tool.function.name) ?? []);
+          return { kind: "answer", text: "resumed" };
+        },
+      },
+    },
+    sessionId,
+  );
+  try {
+    const kinds = restored.snapshot.durable.records.map((record) => record.body.kind);
+    expect(kinds.slice(-3)).toEqual(["recovery", "terminal", "policy"]);
+    expect(restored.policy?.tools.a).toHaveLength(0);
+    expect(restored.selectedPolicy).toEqual(restored.policy);
+    expect(log.events.map((entry) => entry.event)).toEqual([
+      "configuration.selected",
+      "configuration.applied",
+    ]);
+    expect(log.events[1]!.fields).toMatchObject({ sessionId, changedFields: ["tools"] });
+    await restored.input("After restart").settled;
+    expect(offered).toEqual([["echo"], []]);
+  } finally {
+    log.restore();
+    await restored.close();
+  }
 });
 
 test("restore binds historical resolvers without requiring unrelated creation defaults", async () => {

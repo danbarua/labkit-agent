@@ -4,10 +4,17 @@ import { failure, type ActorId, type SessionId, type TurnData } from "../../agen
 import { Actor } from "../../fsm/fsm.ts";
 import { createHost } from "../../host/host.ts";
 import { diagnostic } from "../../logging/index.ts";
-import { patchPolicy, validatePolicy, type Policy, type PolicyPatch } from "../../policy/policy.ts";
+import {
+  changedPolicyFields,
+  patchPolicy,
+  validatePolicy,
+  type Policy,
+  type PolicyPatch,
+} from "../../policy/policy.ts";
 import { AppendIdSchema, type AppendId } from "../persistence.ts";
 import {
   decideSession,
+  pendingSelection,
   type CommandReceipt,
   type SessionCommand,
   type SessionEvent,
@@ -17,6 +24,7 @@ import { seedConversation, wireEvent, type JournalState } from "../session-log.t
 import type { SessionRuntime, TerminalResult } from "../session-runtime.ts";
 import type { Seed, SessionInput } from "../types.ts";
 import type { ConfiguredSession } from "./configure.ts";
+import { adopt } from "./env-events.ts";
 import { createFacade } from "./facade.ts";
 import { registryDifferences, type Adoption } from "./registry-adoption.ts";
 import { executeSessionCommand } from "./session-commands.ts";
@@ -51,14 +59,10 @@ export type SessionInstance = {
   /** Storage operations and blob copies that closing the session cancels. */
   readonly storage: Set<{ cancel(): Promise<unknown> }>;
   /**
-   * The session's selected configuration (D6): the user's most recent choice, committed to the
-   * configuration store immediately. Undefined when the selection matches the policy in force
-   * (nothing pending to apply). Never journaled directly; {@link applyPendingConfiguration} stages
-   * it as a "configuration applied" fact once the conversation is idle.
+   * Tail of the configuration selections in progress. Each selection patches the one before it, so
+   * they store and reach the session actor one at a time, in call order.
    */
-  selection: Policy | undefined;
-  /** Guards against a concurrent or re-entrant apply while one is already in flight. */
-  applyingSelection: boolean;
+  selecting: Promise<unknown>;
   readonly send: (event: SessionEvent) => Promise<SessionState>;
   readonly submit: (
     input: SessionInput,
@@ -96,15 +100,11 @@ export async function initializeSession(
 /**
  * Opens one session over the committed state `initial`: its actor, host and runtime facade.
  * `restoring` skips the checks that a restore replaces with a registry adoption plan.
- * `selectedConfiguration` seeds a configuration selection read from the persistence port's
- * configuration store ahead of time (restore only), so a selection made before the process last
- * exited applies at the first idle boundary instead of being silently dropped.
  */
 export function openInstance(
   configured: ConfiguredSession,
   initial: JournalState,
   restoring = false,
-  selectedConfiguration?: Policy,
 ) {
   const { resolvers, configuration } = configured;
   const sessionId = initial.conversation.sessionId;
@@ -133,11 +133,7 @@ export function openInstance(
     storage: new Set(),
     dispatchBoundary: initial,
     observed: { transition: "", usage: initial.lastCompletionUsage?.operationId },
-    selection:
-      selectedConfiguration && selectedConfiguration.version !== initial.policy?.version
-        ? selectedConfiguration
-        : undefined,
-    applyingSelection: false,
+    selecting: Promise.resolve(),
     send: (event) => send(ctx, event),
     promptInput: (turn) => promptInput(ctx, turn),
     post: (turnId, event) => post(ctx, turnId, event),
@@ -173,7 +169,9 @@ export function openInstance(
   const pend = (plan: Adoption) => {
     ctx.adoption.plan = plan;
   };
-  return { runtime, submit: ctx.submit, pend };
+  /** Restore-only: applies a selection stored before the session last closed. */
+  const reselect = (policy: Policy) => select(ctx, policy);
+  return { runtime, submit: ctx.submit, pend, adopt: () => adopt(ctx), reselect };
 }
 
 function promptInput(ctx: SessionInstance, turn: TurnData): PromptInput {
@@ -260,87 +258,91 @@ function post(ctx: SessionInstance, turnId: ActorId, event: TurnEvent) {
 }
 
 /**
- * Applies a pending configuration selection (D6) as a "configuration applied" journal fact, if
- * one is pending and the conversation is idle. A no-op when there is nothing to apply or a turn
- * is running; the next call at an idle boundary (the next submission, or the drain after a turn
- * ends) applies it. Returns the resulting receipt when it staged one, so a caller waiting on the
- * selection itself can report the real journal outcome.
+ * Sends a stored configuration selection to the session actor, which applies it at once when the
+ * conversation is idle and otherwise at the next boundary between turns.
  */
-export function applyPendingConfiguration(ctx: SessionInstance): Promise<CommandReceipt | undefined> {
-  const durable = ctx.actor.snapshot.durable;
-  if (
-    !ctx.selection ||
-    ctx.applyingSelection ||
-    // An in-flight append (status other than "ready") means `durable` is a stale pre-commit
-    // snapshot; submitting now would only queue behind it. Selection must never wait for that,
-    // so this defers to the next opportunity (the drain the append's own commit triggers).
-    ctx.actor.snapshot.status !== "ready" ||
-    durable.conversation.turn.status !== "idle" ||
-    ctx.selection.version === durable.policy?.version
-  )
-    return Promise.resolve(undefined);
-  ctx.applyingSelection = true;
-  const policy = ctx.selection;
-  return submit(ctx, { kind: "policy", policy }).then((receipt) => {
-    ctx.applyingSelection = false;
-    if (receipt.kind === "accepted")
-      diagnostic("session", "info", "configuration.applied", {
-        sessionId: ctx.sessionId,
-        turnId: ctx.actor.snapshot.durable.conversation.turnId,
-        version: policy.version,
-        revision: receipt.receipt.revision,
-      });
-    return receipt;
+function select(ctx: SessionInstance, policy: Policy): Promise<CommandReceipt> {
+  const id = ctx.configured.id();
+  const { durable } = ctx.actor.snapshot;
+  const inForce = ctx.adoption.plan?.body.policy ?? durable.policy;
+  const turn = durable.conversation.turn;
+  diagnostic("session", "info", "configuration.selected", {
+    sessionId: ctx.sessionId,
+    selectionId: id,
+    turnId: durable.conversation.turnId,
+    version: policy.version,
+    inForceVersion: inForce?.version,
+    changedFields: inForce ? changedPolicyFields(inForce, policy) : [],
+    turnStatus: turn.status,
+    message:
+      turn.status === "idle"
+        ? "Configuration stored; applies at this idle boundary"
+        : "Configuration stored; the running turn keeps its settings and this applies when it ends",
   });
+  const { promise, resolve } = Promise.withResolvers<CommandReceipt>();
+  ctx.receipts.set(id, resolve);
+  void ctx.send({ type: "select", id, policy });
+  return promise;
 }
 
 /**
- * Selects a configuration change (D6): validates `patch` against the current selection (or the
- * policy in force, if nothing is yet selected), commits the result to the persistence port's
- * configuration store immediately — regardless of turn status or queued inputs — and applies it
- * right away if the conversation happens to be idle. Never returns `busy`.
+ * Selects a configuration change (D6): applies `patch` to the configuration the next turn runs
+ * under, validates it against the live registry, stores it in the persistence port's
+ * configuration store and hands it to the session actor — at any time, including mid-turn. Never
+ * `busy`.
  */
-export async function selectConfiguration(
+export function selectConfiguration(
   ctx: SessionInstance,
   patch: PolicyPatch,
 ): Promise<CommandReceipt> {
-  const durable = ctx.actor.snapshot.durable;
-  const operation = { id: ctx.configured.id(), kind: "admission" as const, sessionId: ctx.sessionId };
-  if (!durable.policy) {
-    const cause = failure("Session has no journaled policy to select against", {
-      classification: "admission",
-      operation,
-      phase: "select",
-      details: { inputKind: "policy" },
-    });
-    return { kind: "failed", message: cause.message, error: cause };
-  }
-  let next: Policy;
-  try {
-    next = patchPolicy(ctx.selection ?? durable.policy, patch, durable.configuration, ctx.configured.resolvers);
-  } catch (error) {
-    const cause = failure(error, {
-      classification: "admission",
-      operation,
-      phase: "stage",
-      details: { inputKind: "policy" },
-    });
-    return { kind: "failed", message: cause.message, error: cause };
-  }
-  try {
-    await ctx.configured.port.putConfig(ctx.sessionId, next, new AbortController().signal);
-  } catch (error) {
-    const cause = failure(error, { classification: "persistence", operation, phase: "select" });
-    return { kind: "failed", message: cause.message, error: cause };
-  }
-  ctx.selection = next;
-  diagnostic("session", "info", "configuration.selected", {
-    sessionId: ctx.sessionId,
-    version: next.version,
-    inForceVersion: durable.policy.version,
+  const selected = ctx.selecting.then(async (): Promise<CommandReceipt> => {
+    const { durable } = ctx.actor.snapshot;
+    const operation = {
+      id: ctx.configured.id(),
+      kind: "admission" as const,
+      sessionId: ctx.sessionId,
+    };
+    const base =
+      pendingSelection(ctx.actor.snapshot) ?? ctx.adoption.plan?.body.policy ?? durable.policy;
+    let next: Policy;
+    try {
+      if (!base) throw new Error("Session has no configuration to select against");
+      next = patchPolicy(base, patch, ctx.configured.configuration, ctx.configured.resolvers);
+    } catch (error) {
+      const cause = failure(error, {
+        classification: "admission",
+        operation,
+        phase: "stage",
+        details: { inputKind: "policy" },
+      });
+      diagnostic("session", "warning", "configuration.rejected", {
+        sessionId: ctx.sessionId,
+        turnId: durable.conversation.turnId,
+        fields: Object.keys(patch),
+        reason: cause.message,
+        error: cause,
+        consequence: "Nothing stored; the selected configuration is unchanged",
+      });
+      return { kind: "failed", message: cause.message, error: cause };
+    }
+    try {
+      await ctx.configured.port.putConfig(ctx.sessionId, next, new AbortController().signal);
+    } catch (error) {
+      const cause = failure(error, { classification: "persistence", operation, phase: "select" });
+      diagnostic("session", "error", "configuration.store_failed", {
+        sessionId: ctx.sessionId,
+        turnId: durable.conversation.turnId,
+        version: next.version,
+        reason: cause.message,
+        error: cause,
+        consequence: "Selection not stored or applied; the selected configuration is unchanged",
+      });
+      return { kind: "failed", message: cause.message, error: cause };
+    }
+    return select(ctx, next);
   });
-  const applied = await applyPendingConfiguration(ctx);
-  return applied ?? { kind: "selected", policy: next };
+  ctx.selecting = selected;
+  return selected;
 }
 
 function submit(
@@ -350,24 +352,18 @@ function submit(
   settlement?: (result: TerminalResult) => void,
   stableAppendId?: AppendId,
 ): Promise<CommandReceipt> {
-  const submitNow = (): Promise<CommandReceipt> => {
-    const requestId = stableAppendId ?? ctx.configured.id();
-    return new Promise((resolve) => {
-      ctx.receipts.set(requestId, resolve);
-      if (committed) ctx.afterCommit.set(requestId, committed);
-      if (settlement) ctx.admissions.set(requestId, settlement);
-      void ctx.send({
-        type: "submit",
-        submission: {
-          id: requestId,
-          appendId: stableAppendId ?? AppendIdSchema.parse(`${ctx.sessionId}/append/${requestId}`),
-          input,
-        },
-      });
+  const requestId = stableAppendId ?? ctx.configured.id();
+  return new Promise((resolve) => {
+    ctx.receipts.set(requestId, resolve);
+    if (committed) ctx.afterCommit.set(requestId, committed);
+    if (settlement) ctx.admissions.set(requestId, settlement);
+    void ctx.send({
+      type: "submit",
+      submission: {
+        id: requestId,
+        appendId: stableAppendId ?? AppendIdSchema.parse(`${ctx.sessionId}/append/${requestId}`),
+        input,
+      },
     });
-  };
-  // Every submission except the internal configuration-apply record itself and session creation
-  // first applies a pending selection while idle, so it never races the boundary it depends on.
-  if (input.kind === "policy" || input.kind === "created") return submitNow();
-  return applyPendingConfiguration(ctx).then(submitNow);
+  });
 }

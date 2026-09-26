@@ -384,9 +384,9 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
       const sessionId = SessionIdSchema.parse(rawId);
       const db = database();
       try {
-        const row = db.query("SELECT policy FROM session_config WHERE session=?").get(sessionId) as
-          | { policy: string }
-          | null;
+        const row = db
+          .query<{ policy: string }, [string]>("SELECT policy FROM session_config WHERE session=?")
+          .get(sessionId);
         return row ? PolicySchema.parse(JSON.parse(row.policy)) : undefined;
       } catch (error) {
         diagnostic("acp.storage", "error", "workspace.storage.config_get_failed", {
@@ -404,10 +404,14 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
       const sessionId = SessionIdSchema.parse(rawId);
       const db = database();
       try {
-        db.query(
-          `INSERT INTO session_config VALUES (?, ?)
-          ON CONFLICT(session) DO UPDATE SET policy=excluded.policy`,
-        ).run(sessionId, JSON.stringify(policy));
+        db.transaction(() => {
+          if (db.query("SELECT 1 FROM deleted_sessions WHERE session=?").get(sessionId))
+            throw new Error("Cannot select a configuration for a deleted session");
+          db.query(
+            `INSERT INTO session_config VALUES (?, ?)
+            ON CONFLICT(session) DO UPDATE SET policy=excluded.policy`,
+          ).run(sessionId, JSON.stringify(policy));
+        }).immediate();
         diagnostic("acp.storage", "debug", "workspace.storage.config_saved", {
           sessionId,
           path,

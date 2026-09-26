@@ -148,7 +148,10 @@ export interface SessionPersistence {
    * (a fresh session, or one whose selection was already applied). Does not advance the journal
    * revision and is never itself journaled.
    */
-  getConfig(sessionId: z.infer<typeof SessionIdSchema>, signal: AbortSignal): Promise<Policy | undefined>;
+  getConfig(
+    sessionId: z.infer<typeof SessionIdSchema>,
+    signal: AbortSignal,
+  ): Promise<Policy | undefined>;
   /**
    * Stores the session's selected configuration immediately, independent of journal boundaries and
    * of any turn in progress. Applying a selection to the journal (a "configuration applied" fact)

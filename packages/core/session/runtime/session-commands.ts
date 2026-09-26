@@ -1,10 +1,11 @@
 import { failure } from "../../agent/types.ts";
 import { diagnostic, diagnosticError } from "../../logging/index.ts";
+import { changedPolicyFields } from "../../policy/policy.ts";
 import type { SessionCommand } from "../session-fsm.ts";
 import { appendOperation, loadOperation } from "../session-operation.ts";
 import type { TerminalResult } from "../session-runtime.ts";
 import { executeConversationCommand } from "./conversation-effects.ts";
-import { applyPendingConfiguration, type SessionInstance } from "./instance.ts";
+import type { SessionInstance } from "./instance.ts";
 
 /** The session actor command of type `K`. */
 type Command<K extends SessionCommand["type"]> = Extract<SessionCommand, { type: K }>;
@@ -70,12 +71,17 @@ function releaseCommitted(ctx: SessionInstance, command: Command<"dispatch">) {
             : "Allowed tool scope changed; remembered tool approvals revoked",
           { policyVersion: body.policy.version, appendId: command.submission.appendId },
         );
-      diagnostic("session", "info", "policy.committed", {
+      diagnostic("session", "info", "configuration.applied", {
         sessionId,
+        turnId: command.durable.conversation.turnId,
+        selectionId: command.submission.id,
         appendId: command.submission.appendId,
-        requestId: command.submission.id,
         revision: command.durable.revision,
+        version: body.policy.version,
+        previousVersion: previousPolicy?.version,
+        changedFields: previousPolicy ? changedPolicyFields(previousPolicy, body.policy) : [],
         policy: body.policy,
+        message: "Configuration applied at a boundary between turns; the next turn runs with it",
       });
     }
     if (body.kind === "configuration" && ctx.adoption.plan) {
@@ -237,9 +243,7 @@ function reply(ctx: SessionInstance, command: Command<"reply">) {
 }
 
 function drain(ctx: SessionInstance) {
-  // A pending configuration selection applies before any queued input dequeues, so the dequeued
-  // turn always starts under the settings selected while it waited.
-  void applyPendingConfiguration(ctx).then(() => ctx.send({ type: "drain" }));
+  void ctx.send({ type: "drain" });
 }
 
 function stop(ctx: SessionInstance) {

@@ -42,7 +42,7 @@ function branch(ctx: SessionInstance, request: SessionRequest) {
  * Journal the live registry ahead of the first new work. That work queues behind this append in
  * the session actor, so its commit-time prompt checks run against the registry it actually uses.
  */
-function adopt(ctx: SessionInstance) {
+export function adopt(ctx: SessionInstance) {
   const { sessionId } = ctx;
   if (!ctx.adoption.plan || ctx.adoption.submitted) return;
   ctx.adoption.submitted = true;
