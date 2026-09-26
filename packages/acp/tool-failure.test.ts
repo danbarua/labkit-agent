@@ -463,6 +463,9 @@ async function expectTurnFailure(
     },
   });
   expect(run.cardText).toBeDefined();
+  // The failed card names the actual cause, never a generic "not granted" placeholder.
+  expect(run.cardText).not.toContain("Tool permission not granted or cancelled");
+  if (scenario.operation === "permission") expect(run.cardText).toContain(scenario.detail);
   expect(records()).toContainEqual(
     expect.objectContaining({
       event: "acp.prompt.failed",

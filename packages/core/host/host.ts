@@ -271,7 +271,8 @@ export function createHost(
       remembered: Map<string, string>;
     }
   >();
-  const revoke = (id: ActorId) => {
+  /** Drop a permission grant; tool cards still pending approval fail with `reason`. */
+  const revoke = (id: ActorId, reason: string) => {
     const grant = grants.get(id);
     grants.delete(id);
     for (const { sessionId, turnId, batchId, callId, toolCallId } of grant?.pending ?? [])
@@ -283,7 +284,7 @@ export function createHost(
         toolCallId,
         sessionUpdate: "tool_call_update",
         status: "failed",
-        rawOutput: { error: "Tool permission not granted or cancelled" },
+        rawOutput: { error: reason },
       });
   };
   let closed = false;
@@ -389,7 +390,7 @@ export function createHost(
     void actor.start();
   }
   const cancel = (child: ChildRef, reason?: Failure) => {
-    revoke(child.id);
+    revoke(child.id, reason?.message ?? "Tool permission request cancelled");
     diagnostic("host", "debug", "child.cancellation_requested", {
       sessionId: bindings.sessionId,
       childId: child.id,
@@ -878,13 +879,17 @@ export function createHost(
             parseOutput: PermissionDecisionsSchema.parse,
           },
           (result) => {
-            if (
-              result.kind !== "succeeded" ||
-              result.value.some(
-                (entry) => entry.decision === "reject_once" || entry.decision === "cancelled",
-              )
-            )
-              revoke(command.child.id);
+            if (result.kind !== "succeeded")
+              revoke(
+                command.child.id,
+                result.kind === "failed"
+                  ? result.error.message
+                  : "Tool permission request cancelled",
+              );
+            else if (result.value.some((entry) => entry.decision === "reject_once"))
+              revoke(command.child.id, "Tool permission rejected by the user");
+            else if (result.value.some((entry) => entry.decision === "cancelled"))
+              revoke(command.child.id, "Tool permission request cancelled");
             else grant.approved = true;
             post(turnId, { type: "permission_settled", child: command.child, result });
           },
