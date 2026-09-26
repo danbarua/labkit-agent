@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 import type { McpServer, SessionNotification } from "@agentclientprotocol/sdk";
 import type { CompletionPortRequest } from "@labkit-agent/core";
+import { anthropicMessagesV2 } from "@labkit-agent/core/providers";
+import { createMemoryPersistence } from "@labkit-agent/core/testing";
 import { withConfig, type LogRecord } from "@logtape/logtape";
 import { expect, test } from "@logtape/testing-bun/autoload";
 
@@ -494,22 +496,96 @@ test("session/new refuses an MCP server whose tool catalog cannot be loaded, nam
   }
 });
 
-test("MCP binary tool results are refused as a failed tool result the model reads, not dropped", async () => {
+test("D4: a media-capable Anthropic request carries an MCP-returned image in tool_result content", async () => {
   const server = await mcpServer("stdio");
-  const { options, requests } = scripted("return-error-and-continue");
+  const persistence = createMemoryPersistence();
+  const bodies: { messages: { role: string; content: unknown }[] }[] = [];
+  const options: AcpOptions = {
+    loadSession: true,
+    sessionOptions: () => ({
+      persistence,
+      configuration: {
+        agent: "a",
+        agents: new Map([["a", { model: "claude", tools: [], successors: [] }]]),
+        steps: 3,
+        policy: {
+          maxOutputTokens: 16384,
+          provider: anthropicMessagesV2.id,
+          model: "claude",
+          permissions: "off",
+          toolFailure: "return-error-and-continue",
+        },
+      },
+      bindings: {
+        providers: new Map([
+          [
+            anthropicMessagesV2.id,
+            {
+              profile: anthropicMessagesV2,
+              models: new Map([["claude", { wireModel: "claude", profile: anthropicMessagesV2 }]]),
+              transport: {
+                baseUrl: "https://test.invalid",
+                fetch: (async (_url, init) => {
+                  const body = JSON.parse(String(init?.body));
+                  bodies.push(body);
+                  return bodies.length === 1
+                    ? Response.json({
+                        role: "assistant",
+                        stop_reason: "tool_use",
+                        content: [
+                          { type: "tool_use", id: "call-1", name: echo, input: { text: "binary" } },
+                        ],
+                      })
+                    : Response.json({
+                        role: "assistant",
+                        stop_reason: "end_turn",
+                        content: [{ type: "text", text: "Done" }],
+                      });
+                }) as typeof fetch,
+              },
+            },
+          ],
+        ]),
+      },
+    }),
+  };
   const h = harness(options);
   try {
     await h.initialize();
     const sessionId = (await h.request("session/new", { cwd: "/tmp", mcpServers: [server.spec] }))
       .result.sessionId as string;
-    expect((await h.request("session/prompt", say(sessionId, "binary"))).result.stopReason).toBe(
+    expect((await h.request("session/prompt", say(sessionId, "go"))).result.stopReason).toBe(
       "end_turn",
     );
-    expect(toolUpdates(h, "call-1").at(-1)).toMatchObject({ status: "failed" });
-    expect(requests[1]!.messages.at(-1)).toMatchObject({
-      role: "tool",
-      tool_call_id: "call-1",
-      content: expect.stringContaining("Binary MCP tool results are not supported"),
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]!.messages.at(-1)).toMatchObject({
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "call-1",
+          content: expect.arrayContaining([
+            { type: "image", source: { type: "base64", media_type: "image/png", data: "AA==" } },
+          ]),
+        },
+      ],
+    });
+    const update = toolUpdates(h, "call-1").at(-1);
+    if (update?.sessionUpdate !== "tool_call_update")
+      throw new Error("Expected a tool_call_update");
+    expect(update.status).toBe("completed");
+    const links = (update.content ?? []).filter(
+      (item) => item.type === "content" && item.content.type === "resource_link",
+    );
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({
+      type: "content",
+      content: {
+        type: "resource_link",
+        uri: expect.stringMatching(/^blob:\/\/[a-f0-9]{64}\.png$/),
+        mimeType: "image/png",
+        size: 1,
+      },
     });
   } finally {
     await h.close();

@@ -840,7 +840,9 @@
               "callId": "read-design",
               "result": {
                 "kind": "succeeded",
-                "value": "{\"body\":\"Keep decisions pure; persist before releasing effects.\"}"
+                "value": {
+                  "text": "{\"body\":\"Keep decisions pure; persist before releasing effects.\"}"
+                }
               }
             }
           },
@@ -3833,7 +3835,9 @@
               "callId": "ok",
               "result": {
                 "kind": "succeeded",
-                "value": "ok"
+                "value": {
+                  "text": "ok"
+                }
               }
             }
           },
@@ -4213,7 +4217,9 @@
               "callId": "ok",
               "result": {
                 "kind": "succeeded",
-                "value": "ok"
+                "value": {
+                  "text": "ok"
+                }
               }
             }
           },
@@ -4717,7 +4723,9 @@
               "callId": "fast",
               "result": {
                 "kind": "succeeded",
-                "value": "fast"
+                "value": {
+                  "text": "fast"
+                }
               }
             }
           },
@@ -5144,7 +5152,9 @@
               "callId": "fast",
               "result": {
                 "kind": "succeeded",
-                "value": "fast"
+                "value": {
+                  "text": "fast"
+                }
               }
             }
           },
@@ -8820,7 +8830,9 @@
               "callId": "c0",
               "result": {
                 "kind": "succeeded",
-                "value": "result-0"
+                "value": {
+                  "text": "result-0"
+                }
               }
             }
           },
@@ -8920,7 +8932,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "result-1"
+                "value": {
+                  "text": "result-1"
+                }
               }
             }
           },
@@ -9507,7 +9521,9 @@
               "callId": "c0",
               "result": {
                 "kind": "succeeded",
-                "value": "result-0"
+                "value": {
+                  "text": "result-0"
+                }
               }
             }
           },
@@ -9607,7 +9623,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "result-1"
+                "value": {
+                  "text": "result-1"
+                }
               }
             }
           },
@@ -12769,7 +12787,9 @@
               "callId": "c0-0",
               "result": {
                 "kind": "succeeded",
-                "value": "result-0-0"
+                "value": {
+                  "text": "result-0-0"
+                }
               }
             }
           },
@@ -12786,7 +12806,9 @@
               "callId": "c0-1",
               "result": {
                 "kind": "succeeded",
-                "value": "result-0-1"
+                "value": {
+                  "text": "result-0-1"
+                }
               }
             }
           },
@@ -12916,7 +12938,9 @@
               "callId": "c1-0",
               "result": {
                 "kind": "succeeded",
-                "value": "result-1-0"
+                "value": {
+                  "text": "result-1-0"
+                }
               }
             }
           },
@@ -12933,7 +12957,9 @@
               "callId": "c1-1",
               "result": {
                 "kind": "succeeded",
-                "value": "result-1-1"
+                "value": {
+                  "text": "result-1-1"
+                }
               }
             }
           },
@@ -13481,7 +13507,9 @@
               "callId": "c0-0",
               "result": {
                 "kind": "succeeded",
-                "value": "result-0-0"
+                "value": {
+                  "text": "result-0-0"
+                }
               }
             }
           },
@@ -13498,7 +13526,9 @@
               "callId": "c0-1",
               "result": {
                 "kind": "succeeded",
-                "value": "result-0-1"
+                "value": {
+                  "text": "result-0-1"
+                }
               }
             }
           },
@@ -13628,7 +13658,9 @@
               "callId": "c1-0",
               "result": {
                 "kind": "succeeded",
-                "value": "result-1-0"
+                "value": {
+                  "text": "result-1-0"
+                }
               }
             }
           },
@@ -13645,7 +13677,9 @@
               "callId": "c1-1",
               "result": {
                 "kind": "succeeded",
-                "value": "result-1-1"
+                "value": {
+                  "text": "result-1-1"
+                }
               }
             }
           },
@@ -14438,7 +14472,9 @@
               "callId": "c0",
               "result": {
                 "kind": "succeeded",
-                "value": "result-0"
+                "value": {
+                  "text": "result-0"
+                }
               }
             }
           },
@@ -14539,7 +14575,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "result-1"
+                "value": {
+                  "text": "result-1"
+                }
               }
             }
           },
@@ -14990,7 +15028,9 @@
               "callId": "c0",
               "result": {
                 "kind": "succeeded",
-                "value": "result-0"
+                "value": {
+                  "text": "result-0"
+                }
               }
             }
           },
@@ -15091,7 +15131,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "result-1"
+                "value": {
+                  "text": "result-1"
+                }
               }
             }
           },
@@ -17216,7 +17258,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "Hello 🌍"
+                "value": {
+                  "text": "Hello 🌍"
+                }
               }
             }
           },
@@ -17626,7 +17670,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "Hello 🌍"
+                "value": {
+                  "text": "Hello 🌍"
+                }
               }
             }
           },
@@ -18279,7 +18325,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "Hello 🌍"
+                "value": {
+                  "text": "Hello 🌍"
+                }
               }
             }
           },
@@ -18774,7 +18822,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "Hello 🌍"
+                "value": {
+                  "text": "Hello 🌍"
+                }
               }
             }
           },
@@ -19508,7 +19558,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "Hello 🌍"
+                "value": {
+                  "text": "Hello 🌍"
+                }
               }
             }
           },
@@ -20036,7 +20088,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "Hello 🌍"
+                "value": {
+                  "text": "Hello 🌍"
+                }
               }
             }
           },
@@ -20747,7 +20801,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "Hello 🌍"
+                "value": {
+                  "text": "Hello 🌍"
+                }
               }
             }
           },
@@ -21235,7 +21291,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "Hello 🌍"
+                "value": {
+                  "text": "Hello 🌍"
+                }
               }
             }
           },
@@ -22685,7 +22743,9 @@
               "callId": "one",
               "result": {
                 "kind": "succeeded",
-                "value": "one"
+                "value": {
+                  "text": "one"
+                }
               }
             }
           },
@@ -22702,7 +22762,9 @@
               "callId": "two",
               "result": {
                 "kind": "succeeded",
-                "value": "two"
+                "value": {
+                  "text": "two"
+                }
               }
             }
           },
@@ -23087,7 +23149,9 @@
               "callId": "one",
               "result": {
                 "kind": "succeeded",
-                "value": "one"
+                "value": {
+                  "text": "one"
+                }
               }
             }
           },
@@ -23104,7 +23168,9 @@
               "callId": "two",
               "result": {
                 "kind": "succeeded",
-                "value": "two"
+                "value": {
+                  "text": "two"
+                }
               }
             }
           },

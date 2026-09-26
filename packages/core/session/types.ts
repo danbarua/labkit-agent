@@ -3,6 +3,7 @@ import { z } from "zod";
 import { BlobRefSchema } from "../agent/content.ts";
 import { PermissionDecisionsSchema } from "../agent/permissions.ts";
 import { parseSessionContext } from "../agent/prompt.ts";
+import { ToolRunResultSchema } from "../agent/tool-batch.ts";
 import {
   ActorIdSchema,
   AgentIdSchema,
@@ -149,11 +150,12 @@ const result = <T extends z.ZodType>(value: T) =>
     .readonly();
 
 /**
- * Raw outcome of one tool call, as a `tool` record stores it: `succeeded` with the result text,
- * `failed` with a structured failure, or `cancelled`. The policy's `toolFailure` decides at use
- * whether a failure reaches the model as an error message; the stored result stays raw.
+ * Raw outcome of one tool call, as a `tool` record stores it: `succeeded` with the result (text and
+ * any blob parts), `failed` with a structured failure, or `cancelled`. The policy's `toolFailure`
+ * decides at use whether a failure reaches the model as an error message; the stored result stays
+ * raw.
  */
-export const StringResultSchema = result(z.string());
+export const ToolRunOutcomeSchema = result(ToolRunResultSchema);
 
 /**
  * How a tool batch settled, as the `batch_settled` event stores it: `kind` and, when it did not
@@ -295,8 +297,8 @@ export const BodySchema = z.discriminatedUnion("kind", [
     /** The tool batch the call belongs to (a tool batch, not a journal append). */
     batchId: ActorIdSchema,
     callId: ToolCallIdSchema,
-    /** Raw outcome; see {@link StringResultSchema}. */
-    result: StringResultSchema,
+    /** Raw outcome; see {@link ToolRunOutcomeSchema}. */
+    result: ToolRunOutcomeSchema,
   }),
   z.strictObject({
     kind: z.literal("effect"),

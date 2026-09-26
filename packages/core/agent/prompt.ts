@@ -134,7 +134,12 @@ export const parseSessionContext = (raw: unknown): SessionContext =>
 export function agentMessagesToChat(messages: readonly AgentMessage[]): ChatMessage[] {
   return messages.map((message) => {
     if (message.role === "tool")
-      return { role: "tool", content: message.text, tool_call_id: message.callId };
+      return {
+        role: "tool",
+        content: message.text,
+        tool_call_id: message.callId,
+        ...(message.parts ? { parts: message.parts } : {}),
+      };
     if (message.role === "assistant" && message.calls)
       return {
         role: "assistant",

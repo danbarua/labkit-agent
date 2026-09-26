@@ -549,9 +549,15 @@ status, an ACP host error reply) become failed tool outcomes with the error text
 receives that text and the turn continues; under `fail-turn` `session/prompt` fails with the
 structured failure (tool name and call ID in `data.operation`). The ACP connection stays open
 either way. Text, structured JSON, resource links, and embedded textual resources remain JSON
-results. Image, audio and binary embedded-resource content is rejected as a failed tool outcome
-("Binary MCP tool results are not supported") rather than written as base64 in the journal; the
-model sees that failure, not the content. Results and input schemas are limited to 256 KiB; each server may expose at
+results. Image, audio and binary embedded-resource content is stored as a blob (content-addressed
+by SHA-256, `blob://<sha256>.<ext>`); the text envelope replaces it with a `resource_link` to that
+URI (base64 never appears in text), and `tool_call_update` also carries the link as a rendered
+content item. A provider whose bound profile has that media in its capabilities encodes the blob
+natively from the tool result's stored parts (for example Anthropic `tool_result` image/document
+content blocks, Google `functionResponse` sibling `inlineData` parts). A provider without that
+capability does not yet get a graceful pointer: the whole-history media gate (`session/blobs.ts`)
+still fails the turn before the next request is built, pending its planned replacement with
+pointer rendering. Results and input schemas are limited to 256 KiB; each server may expose at
 most 256 tools, with at most 32 servers per session. Initialization/list requests time out after
 15 seconds; tool calls time out after 60 seconds. Cancellation sends the MCP cancellation notification;
 remote effects already started cannot be undone. Session close/disconnect also closes the transports

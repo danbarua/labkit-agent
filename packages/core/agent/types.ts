@@ -150,11 +150,15 @@ export const MessageSchema = z
       owner: CompletionOwnerSchema.optional(),
       parts: ContentPartsSchema.optional(),
     }),
-    z.strictObject({ role: z.literal("tool"), text: z.string(), callId: ToolCallIdSchema }),
+    z.strictObject({
+      role: z.literal("tool"),
+      text: z.string(),
+      callId: ToolCallIdSchema,
+      parts: ContentPartsSchema.optional(),
+    }),
   ])
   .refine(
-    (message) =>
-      message.role === "tool" || !message.parts || message.text === partsText(message.parts),
+    (message) => !message.parts || message.text === partsText(message.parts),
     "Message text must equal its text parts",
   )
   .readonly();

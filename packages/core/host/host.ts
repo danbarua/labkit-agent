@@ -1,8 +1,9 @@
 import type { ConversationCommand } from "../agent/agent-conversation.ts";
 import type { TurnEvent } from "../agent/agent-fsm.ts";
 import type { PreparedModel } from "../agent/agent.ts";
-import type { BlobResolver } from "../agent/content.ts";
+import type { BlobResolver, ContentPart } from "../agent/content.ts";
 import type { ProjectedPrompt, PromptInput } from "../agent/prompt.ts";
+import type { ToolRunResult } from "../agent/tool-batch.ts";
 import type { ActorId, Result, ToolCall } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import { diagnostic } from "../logging/index.ts";
@@ -28,7 +29,7 @@ export type HostToolOutcome = Readonly<{
   /** The provider's call ID, unique only within its tool batch. */
   callId: ToolCall["id"];
   /** Raw result, before the configuration's `toolFailure` handling (applied on release). */
-  result: Result<string>;
+  result: Result<ToolRunResult>;
 }>;
 /**
  * A display update about one tool call, for UI cards. Non-authoritative display data. toolCallId is
@@ -66,6 +67,8 @@ export type HostToolNotification = Readonly<
          * message.
          */
         rawOutput?: unknown;
+        /** On `completed`, the result's blob parts (D4: for example a stored MCP image), if any. */
+        parts?: readonly ContentPart[];
       }
   )
 >;

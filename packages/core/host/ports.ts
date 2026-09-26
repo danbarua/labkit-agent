@@ -3,11 +3,57 @@ import { isAbsolute } from "node:path";
 import { z } from "zod";
 
 import { createChatCompletion, type PreparedModel } from "../agent/agent.ts";
-import type { BlobResolver } from "../agent/content.ts";
+import {
+  MediaKindSchema,
+  type BlobRef,
+  type BlobResolver,
+  type MediaKind,
+} from "../agent/content.ts";
 import { AgentIdSchema, ToolNameSchema, type CompletionSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import type { StreamDeltaSink } from "../providers/types.ts";
 import type { CompletionUsage } from "../providers/usage.ts";
+
+/**
+ * One part of a rich tool result `run` may return instead of a JSON value: inline text, or bytes
+ * for the host to store as a blob before the result becomes a fact (D4: for example an MCP tool
+ * returning an image). `parts` are ordered; `bytes` are content-addressed by the host on storage.
+ */
+export type ToolOutputPart =
+  | Readonly<{ type: "text"; text: string }>
+  | Readonly<{ type: "blob"; bytes: Uint8Array; media: MediaKind; name?: string }>;
+
+/**
+ * Rich tool output: `run` may return `{ text, parts }` instead of a plain JSON value to attach
+ * blob content. `text` must equal the concatenation of the text parts; blob parts carry raw bytes
+ * that {@link ExecutionBindings.storeBlob} stores before the tool result commits as a fact.
+ */
+export type ToolOutput = Readonly<{ text: string; parts: readonly ToolOutputPart[] }>;
+
+const ToolOutputPartSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("text"), text: z.string() }),
+  z.strictObject({
+    type: z.literal("blob"),
+    bytes: z.instanceof(Uint8Array),
+    media: MediaKindSchema,
+    name: z.string().min(1).optional(),
+  }),
+]);
+
+/**
+ * Validates a raw {@link ToolOutput} a tool's `run` returned, before blob parts are stored.
+ * Distinguishes it from a plain JSON output: both `text` and `parts` (possibly empty) must be
+ * present, with no other keys.
+ */
+export const ToolOutputSchema = z
+  .strictObject({ text: z.string(), parts: z.array(ToolOutputPartSchema) })
+  .refine(
+    (output) =>
+      output.text ===
+      output.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
+    "Tool output text must equal its text parts",
+  )
+  .readonly();
 
 /**
  * Display category of a tool (the ACP tool-call kinds). Adapters use it to pick a card or icon.
@@ -63,9 +109,10 @@ export type ToolRunContext = Readonly<{
 
 /**
  * Existential tool adapter: defineTool retains input-schema inference at the authoring boundary.
- * Successful outputs must be JSON values. The host rejects undefined, Date, class instances,
- * functions and other non-JSON values as correlated failed tool outcomes. Return null for no value.
- * Strings pass through; other JSON values are serialized for model tool messages.
+ * Successful outputs must be a JSON value or a {@link ToolOutput} (text plus blob parts). The host
+ * rejects undefined, Date, class instances, functions and other non-JSON, non-`ToolOutput` values
+ * as correlated failed tool outcomes. Return null for no value. Strings pass through; other JSON
+ * values are serialized for model tool messages.
  */
 export type Tool = Readonly<{
   /** Sent to the model together with {@link Tool.parameters}. */
@@ -87,7 +134,9 @@ export type Tool = Readonly<{
    * Performs the tool's effect with the parsed input. The signal aborts on cancellation or when the
    * configuration's tool deadline (`toolTimeoutMs`) expires. A tool that ignores it may still
    * change the outside world, but its late result is discarded. Throwing or rejecting fails this
-   * call. `context` is absent when the tool is called directly, outside the host.
+   * call. `context` is absent when the tool is called directly, outside the host. Return a
+   * {@link ToolOutput} to attach blob content (for example an image); the host stores each blob's
+   * bytes through {@link ExecutionBindings.storeBlob} before the result commits.
    */
   run: (
     input: unknown,
@@ -270,6 +319,12 @@ export type ExecutionBindings = Readonly<{
   complete: CompletionPort;
   /** Required when permissions are `ask`; without it every permission request fails. */
   requestPermission?: PermissionPort;
+  /**
+   * Stores blob bytes a tool's {@link ToolOutput} returned, before the tool result commits as a
+   * fact. Required when any registered tool may return blob parts; a tool result carrying one
+   * without it fails the call.
+   */
+  storeBlob?: (bytes: Uint8Array, meta: { media: MediaKind; name?: string }) => Promise<BlobRef>;
 }>;
 /**
  * A {@link CompletionPort} that posts OpenAI chat-completions requests to `baseUrl`.

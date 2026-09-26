@@ -140,6 +140,8 @@ export function openInstance(
         sessionId,
         requestPermission: configured.requestPermission,
         complete: configured.completePort,
+        storeBlob: (bytes, meta) =>
+          configured.port.putBlob(sessionId, bytes, meta, new AbortController().signal),
       },
       {
         turn: (turnId, event) => ctx.post(turnId, event),

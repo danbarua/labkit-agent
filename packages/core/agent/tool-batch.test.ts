@@ -11,7 +11,7 @@ const decide = toolBatchMachine(ref("batch", "turn/1/batch"));
 const result = (id: string) => ({
   type: "tool_settled" as const,
   callId: ToolCallIdSchema.parse(id),
-  result: { kind: "succeeded" as const, value: id },
+  result: { kind: "succeeded" as const, value: { text: id } },
 });
 test("only outstanding calls advance the batch; the last result produces a complete outcome", () => {
   const started = decide({ status: "ready", calls }, { type: "start" });

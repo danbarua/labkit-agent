@@ -280,6 +280,65 @@ test("fresh adapter restores interrupted partial tools, records one recovery, ne
   );
 });
 
+test("interrupted recovery keeps a committed tool result's parts, not just its text", async () => {
+  const backing = createMemoryBacking();
+  const slow = deferred<string>();
+  const options = testOptions({
+    persistence: createMemoryPersistence(backing),
+    tools: new Map([
+      [
+        "echo",
+        defineTool({
+          input: z.object({ text: z.string() }),
+          run: ({ text }) =>
+            text === "slow"
+              ? slow.promise
+              : {
+                  text: "fast",
+                  parts: [
+                    { type: "text", text: "fast" },
+                    { type: "blob", bytes: new Uint8Array([1, 2, 3]), media: "image/png" },
+                  ],
+                },
+        }),
+      ],
+    ]),
+    complete: () => ({
+      kind: "tools",
+      text: "work",
+      calls: [
+        { id: "fast", name: "echo", args: { text: "fast" } },
+        { id: "slow", name: "echo", args: { text: "slow" } },
+      ],
+    }),
+  });
+  const session = await createSession(options);
+  session.input("Go");
+  await until(() => session.snapshot.durable.partial.length === 1);
+  const sessionId = session.snapshot.durable.conversation.sessionId;
+  await session.close();
+  const restoreOptions = {
+    ...options,
+    persistence: createMemoryPersistence(backing),
+    complete: () => {
+      throw new Error("MUST NOT RUN");
+    },
+  };
+  const restored = await restoreSession(restoreOptions, sessionId);
+  const toolMessages = restored.snapshot.durable.conversation.log[0]!.messages.filter(
+    (m) => m.role === "tool",
+  );
+  expect(toolMessages).toHaveLength(1);
+  expect(toolMessages[0]).toMatchObject({
+    callId: "fast",
+    text: "fast",
+    parts: [
+      { type: "text", text: "fast" },
+      { type: "blob", ref: expect.objectContaining({ media: "image/png", bytes: 3 }) },
+    ],
+  });
+});
+
 test("abort overtaking a tool outcome does not accept a result into a settled batch", async () => {
   const port = createMemoryPersistence();
   const releaseAbort = deferred<void>();

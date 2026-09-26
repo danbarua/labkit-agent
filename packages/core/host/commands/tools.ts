@@ -1,18 +1,20 @@
 import { z } from "zod";
 
 import type { TurnCommand } from "../../agent/agent-fsm.ts";
+import type { ContentPart } from "../../agent/content.ts";
 import {
   toolBatchMachine,
   type BatchCommand,
   type BatchEvent,
   type BatchState,
+  type ToolRunResult,
 } from "../../agent/tool-batch.ts";
 import { failure, type ActorId } from "../../agent/types.ts";
 import { Actor } from "../../fsm/fsm.ts";
 import { diagnostic, diagnosticError } from "../../logging/index.ts";
 import type { HostContext } from "../context.ts";
 import type { ExecutionContext, HostToolOutcome } from "../host.ts";
-import { ToolLocationSchema } from "../ports.ts";
+import { ToolLocationSchema, ToolOutputSchema } from "../ports.ts";
 
 /**
  * Runs a completion's tool calls as a tool batch actor. Installs the remembered grants of the
@@ -186,13 +188,34 @@ export function runTools(
               return input;
             },
             run: (input, signal) => tool.run(input, signal, Object.freeze(identity)),
-            parseOutput: (value) => {
+            parseOutput: async (value): Promise<ToolRunResult> => {
+              const rich = ToolOutputSchema.safeParse(value);
+              if (rich.success) {
+                const storeBlob = host.storeBlob;
+                const parts: ContentPart[] = await Promise.all(
+                  rich.data.parts.map(async (part) => {
+                    if (part.type === "text") return part;
+                    if (!storeBlob)
+                      throw new Error("Tool returned blob parts but no blob store is configured");
+                    return {
+                      type: "blob" as const,
+                      ref: await storeBlob(part.bytes, {
+                        media: part.media,
+                        ...(part.name ? { name: part.name } : {}),
+                      }),
+                    };
+                  }),
+                );
+                return { text: rich.data.text, ...(parts.length ? { parts } : {}) };
+              }
               const parsed = z.json().safeParse(value);
               if (!parsed.success)
                 throw new Error(
                   "Tool output must be a JSON value: null, boolean, finite number, string, array, or plain object",
                 );
-              return typeof parsed.data === "string" ? parsed.data : JSON.stringify(parsed.data);
+              return {
+                text: typeof parsed.data === "string" ? parsed.data : JSON.stringify(parsed.data),
+              };
             },
           },
           (result) => {
@@ -244,7 +267,10 @@ export function runTools(
               sessionUpdate: "tool_call_update",
               status: next,
               ...(state.status === "succeeded"
-                ? { rawOutput: state.value }
+                ? {
+                    rawOutput: state.value.text,
+                    ...(state.value.parts ? { parts: state.value.parts } : {}),
+                  }
                 : state.status === "failed"
                   ? { rawOutput: { error: state.error.message } }
                   : state.status === "cancelled"

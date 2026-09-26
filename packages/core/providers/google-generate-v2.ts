@@ -4,6 +4,7 @@ import { AUDIO_MEDIA_KINDS } from "../agent/content.ts";
 import { ToolCallSchema } from "../agent/types.ts";
 import {
   advertisements,
+  attachmentBytes,
   completion,
   continuationPayload,
   googleMessageParts,
@@ -63,13 +64,27 @@ export const googleGenerateV2: CompletionProfile = {
         : undefined;
       const parts: unknown[] = [];
       if (message.role === "tool")
-        parts.push({
-          functionResponse: {
-            id: message.callId,
-            name: calls.get(message.callId),
-            response: { output: text },
+        parts.push(
+          {
+            functionResponse: {
+              id: message.callId,
+              name: calls.get(message.callId),
+              response: { output: text },
+            },
           },
-        });
+          ...(message.parts ?? []).flatMap((part) =>
+            part.type === "blob"
+              ? [
+                  {
+                    inlineData: {
+                      mimeType: part.ref.media,
+                      data: Buffer.from(attachmentBytes(part.ref, blobs)).toString("base64"),
+                    },
+                  },
+                ]
+              : [],
+          ),
+        );
       else {
         if (replay) parts.push(...replay);
         else parts.push(...googleMessageParts(message, blobs));

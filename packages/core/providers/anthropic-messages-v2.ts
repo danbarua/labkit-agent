@@ -42,10 +42,7 @@ const block = z.discriminatedUnion("type", [
   }),
 ]);
 
-function messageBlocks(
-  message: Exclude<AgentMessage, { role: "tool" }>,
-  blobs?: BlobResolver,
-): unknown[] {
+function messageBlocks(message: AgentMessage, blobs?: BlobResolver): unknown[] {
   if (!message.parts) return message.text ? [{ type: "text", text: message.text }] : [];
   return message.parts.map((part) => {
     if (part.type === "text") return { type: "text", text: part.text };
@@ -54,8 +51,8 @@ function messageBlocks(
       part.ref.media === "image/jpeg" ||
       part.ref.media === "application/pdf"
     ) {
-      if (message.role !== "user")
-        throw new Error("Anthropic image/document attachments require a user message");
+      if (message.role !== "user" && message.role !== "tool")
+        throw new Error("Anthropic image/document attachments require a user or tool message");
       return {
         type: part.ref.media === "application/pdf" ? "document" : "image",
         source: {
@@ -87,7 +84,13 @@ export function anthropicMessagesProfile(id: string, nativeAdaptive = false): Co
         const role = message.role === "assistant" ? "assistant" : "user";
         const content: unknown[] =
           message.role === "tool"
-            ? [{ type: "tool_result", tool_use_id: message.callId, content: message.text }]
+            ? [
+                {
+                  type: "tool_result",
+                  tool_use_id: message.callId,
+                  content: message.parts ? messageBlocks(message, blobs) : message.text,
+                },
+              ]
             : [
                 ...matchingContinuations([message], request.continuations ?? [], id).flatMap(
                   (entry) => payloadSchema.parse(continuationPayload(entry, blobs)).blocks,

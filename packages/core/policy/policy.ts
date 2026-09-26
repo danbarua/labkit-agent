@@ -7,6 +7,7 @@ import {
   projectMediaPointers,
   type PromptInput,
 } from "../agent/prompt.ts";
+import type { ToolRunResult } from "../agent/tool-batch.ts";
 import { StepsSchema, ToolNameSchema, type AgentMessage, type Result } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import {
@@ -360,7 +361,12 @@ export function projectPolicy(
   parseSessionContext(
     messages.map((message) => {
       if (message.role === "tool")
-        return { role: "tool", text: message.content, callId: message.tool_call_id };
+        return {
+          role: "tool",
+          text: message.content,
+          callId: message.tool_call_id,
+          ...(message.parts ? { parts: message.parts } : {}),
+        };
       if (message.role === "assistant" && message.tool_calls)
         return {
           role: "assistant",
@@ -393,23 +399,25 @@ export function projectPolicy(
  * guidance for the model, not the stored audit message.
  */
 export function effectiveToolResult(
-  result: Result<string>,
+  result: Result<ToolRunResult>,
   policy?: Pick<Policy, "toolFailure">,
-): Result<string> {
+): Result<ToolRunResult> {
   if (result.kind !== "failed") return result;
   if (result.error.classification === "permission_refused")
     return {
       kind: "succeeded",
-      value: JSON.stringify({
-        refused: true,
-        reason:
-          "The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.",
-      }),
+      value: {
+        text: JSON.stringify({
+          refused: true,
+          reason:
+            "The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.",
+        }),
+      },
     };
   return policy?.toolFailure === "return-error-and-continue"
     ? {
         kind: "succeeded",
-        value: JSON.stringify({ error: result.error.message, failure: result.error }),
+        value: { text: JSON.stringify({ error: result.error.message, failure: result.error }) },
       }
     : result;
 }

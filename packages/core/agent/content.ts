@@ -132,8 +132,11 @@ const MEDIA_EXTENSION: Record<MediaKind, string> = {
   "audio/webm": "webm",
 };
 
-/** The reference form of a stored blob: `blob://<sha256>.<ext>`. The harness resolves it. */
-export function blobUri(ref: BlobRef): string {
+/**
+ * The reference form of a stored blob: `blob://<sha256>.<ext>`. The harness resolves it against
+ * whatever store holds the bytes; a model that reads it with a tool receives the content.
+ */
+export function blobUri(ref: Pick<BlobRef, "id" | "media">): string {
   return `blob://${ref.id}.${MEDIA_EXTENSION[ref.media]}`;
 }
 

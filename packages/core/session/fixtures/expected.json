@@ -1766,7 +1766,9 @@
               "callId": "c1",
               "result": {
                 "kind": "succeeded",
-                "value": "one"
+                "value": {
+                  "text": "one"
+                }
               }
             }
           },
@@ -1783,7 +1785,9 @@
               "callId": "c2",
               "result": {
                 "kind": "succeeded",
-                "value": "two"
+                "value": {
+                  "text": "two"
+                }
               }
             }
           },
@@ -2235,7 +2239,9 @@
               "callId": "fast",
               "result": {
                 "kind": "succeeded",
-                "value": "fast"
+                "value": {
+                  "text": "fast"
+                }
               }
             }
           },
@@ -2575,7 +2581,9 @@
               "callId": "fast",
               "result": {
                 "kind": "succeeded",
-                "value": "fast"
+                "value": {
+                  "text": "fast"
+                }
               }
             }
           },
@@ -7358,7 +7366,9 @@
             "callId": "fast",
             "result": {
               "kind": "succeeded",
-              "value": "fast"
+              "value": {
+                "text": "fast"
+              }
             }
           }
         ],
@@ -7511,7 +7521,9 @@
               "callId": "fast",
               "result": {
                 "kind": "succeeded",
-                "value": "fast"
+                "value": {
+                  "text": "fast"
+                }
               }
             }
           }
@@ -7791,7 +7803,9 @@
               "callId": "fast",
               "result": {
                 "kind": "succeeded",
-                "value": "fast"
+                "value": {
+                  "text": "fast"
+                }
               }
             }
           },
@@ -8112,7 +8126,9 @@
               "callId": "fast",
               "result": {
                 "kind": "succeeded",
-                "value": "fast"
+                "value": {
+                  "text": "fast"
+                }
               }
             }
           },
