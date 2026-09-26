@@ -1,6 +1,5 @@
 import {
   bindingPolicyFields,
-  patchPolicy,
   resolverPolicyFields,
   validatePolicy,
   type Policy,
@@ -8,9 +7,11 @@ import {
 import type { Fold, JournalState, ReducibleBody, Reduction } from "./state.ts";
 
 /**
- * Reduces a policy record: validates the new policy against the configuration and
- * resolvers, updates the conversation's allowance to match, and preserves the idle
- * turn's step limit.
+ * Reduces a policy record: a "configuration applied" fact holding the resulting settings. The
+ * runtime only ever stages one at an idle boundary (selection is committed to a separate
+ * configuration store outside the journal), so stage revalidates the resulting policy against the
+ * live configuration and resolvers rather than re-deriving it from a patch. Updates the
+ * conversation's allowance to match and preserves the idle turn's step limit.
  */
 function reducePolicy(
   state: JournalState,
@@ -18,18 +19,11 @@ function reducePolicy(
   fold: Fold,
 ): Reduction {
   const c = state.conversation;
-  // Load: the stored policy is the policy, whatever today's patch rules would derive.
+  // Load: the stored policy is the policy, whatever today's rules would derive.
   let policy = input.policy;
   if (fold.mode === "stage") {
-    if (c.turn.status !== "idle" || state.pendingInputs?.length)
-      throw new Error("Policy changes require an idle boundary");
+    if (c.turn.status !== "idle") throw new Error("Configuration applies only at an idle boundary");
     policy = validatePolicy(input.policy, state.configuration, fold.resolvers);
-    if (
-      !state.policy ||
-      JSON.stringify(policy) !==
-        JSON.stringify(patchPolicy(state.policy, input.patch, state.configuration, fold.resolvers))
-    )
-      throw new Error("Invalid policy patch/version");
   }
   return {
     state: {

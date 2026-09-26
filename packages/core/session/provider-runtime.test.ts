@@ -132,7 +132,7 @@ test("provider and model patches commit at idle; missing bindings fail admission
   });
   await Promise.all([session.close(), restored.close()]);
 });
-test("active completion sees frozen selection and a mid-turn policy change is busy", async () => {
+test("active completion sees frozen selection and a mid-turn policy change selects without blocking it (D6)", async () => {
   const opts = options();
   const pending = deferred<Response>();
   let body: unknown;
@@ -150,9 +150,9 @@ test("active completion sees frozen selection and a mid-turn policy change is bu
   const session = await createSession({ ...opts, bindings: { ...opts.bindings, providers } });
   const handle = session.input("hello");
   await until(() => body !== undefined);
-  expect(await session.updatePolicy({ provider: anthropicMessages.id, model: "other" })).toEqual({
-    kind: "busy",
-  });
+  expect(
+    await session.updatePolicy({ provider: anthropicMessages.id, model: "other" }),
+  ).toMatchObject({ kind: "selected" });
   expect(body).toMatchObject({ model: "default-model" });
   pending.resolve(Response.json(answer(openaiChat)));
   await handle.settled;
@@ -167,6 +167,8 @@ test("rejected policy append never starts dependent work or changes durable sele
     putBlob: backing.putBlob.bind(backing),
     getBlob: backing.getBlob.bind(backing),
     load: backing.load.bind(backing),
+    getConfig: backing.getConfig.bind(backing),
+    putConfig: backing.putConfig.bind(backing),
     append: (request, signal) =>
       reject
         ? Promise.resolve({ kind: "rejected", message: "offline" })
@@ -356,6 +358,8 @@ test("lost policy acknowledgement reconciles the same v3 selection exactly once"
     putBlob: backing.putBlob.bind(backing),
     getBlob: backing.getBlob.bind(backing),
     load: backing.load.bind(backing),
+    getConfig: backing.getConfig.bind(backing),
+    putConfig: backing.putConfig.bind(backing),
     async append(request, signal) {
       const result = await backing.append(request, signal);
       if (!lost && request.records.some((record) => JSON.parse(record).body.kind === "policy")) {

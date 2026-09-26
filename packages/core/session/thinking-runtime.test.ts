@@ -201,6 +201,8 @@ test("indeterminate envelope append reconciles stable bytes before releasing too
     putBlob: backing.putBlob.bind(backing),
     getBlob: backing.getBlob.bind(backing),
     load: backing.load.bind(backing),
+    getConfig: backing.getConfig.bind(backing),
+    putConfig: backing.putConfig.bind(backing),
     async append(request, signal) {
       const result = await backing.append(request, signal);
       if (!lost && request.records.some((raw) => JSON.parse(raw).body.event?.event?.continuation)) {

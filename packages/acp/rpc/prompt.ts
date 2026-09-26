@@ -5,7 +5,7 @@ import { expandCommand } from "../commands.ts";
 import { promptInput, requireAdvertisedContent } from "../prompt-input.ts";
 import type { ConnectionGate } from "./connection.ts";
 import type { AdapterCore } from "./core.ts";
-import { awaitConfigurationQuiet } from "./session.ts";
+import { awaitForksQuiet } from "./session.ts";
 import type { SessionRegistry } from "./sessions.ts";
 import type { SessionUpdates } from "./updates.ts";
 
@@ -56,7 +56,7 @@ export function registerPrompt(
       const entry = lookup(params.sessionId);
       requireAdvertisedContent(params.prompt, gate.promptCapabilities(), trace);
       if (entry.busy) throw new RequestError(-32000, "Session already has an active prompt");
-      await awaitConfigurationQuiet(entry, AbortSignal.any([signal, core.signal()]));
+      await awaitForksQuiet(entry, AbortSignal.any([signal, core.signal()]));
       if (!isCurrent(params.sessionId, entry) || !entry.acceptingUpdates)
         throw new RequestError(-32000, "Session closed");
       if (entry.busy) throw new RequestError(-32000, "Session already has an active prompt");

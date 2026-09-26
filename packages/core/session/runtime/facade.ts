@@ -1,6 +1,6 @@
 import { parseSessionContext } from "../../agent/prompt.ts";
 import type { EnvEvent } from "../events.ts";
-import type { CommandReceipt } from "../session-fsm.ts";
+import { pendingSelection, type CommandReceipt } from "../session-fsm.ts";
 import type {
   EnvCommandHandle,
   EnvSettlement,
@@ -45,6 +45,9 @@ export function createFacade(ctx: SessionInstance): SessionRuntime {
     },
     get policy() {
       return ctx.adoption.plan?.body.policy ?? ctx.actor.snapshot.durable.policy;
+    },
+    get selectedPolicy() {
+      return pendingSelection(ctx.actor.snapshot) ?? runtime.policy;
     },
     get model() {
       const { conversation } = ctx.actor.snapshot.durable;

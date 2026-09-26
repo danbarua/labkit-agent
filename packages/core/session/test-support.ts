@@ -85,6 +85,8 @@ export function lostAcknowledgement(
     putBlob: port.putBlob.bind(port),
     getBlob: port.getBlob.bind(port),
     load: port.load.bind(port),
+    getConfig: port.getConfig.bind(port),
+    putConfig: port.putConfig.bind(port),
     async append(request, signal) {
       const result = await port.append(request, signal);
       if (!lost && result.kind === "committed" && predicate(request.records)) {

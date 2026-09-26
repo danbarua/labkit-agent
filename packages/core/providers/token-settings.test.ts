@@ -146,14 +146,17 @@ test("explicit token settings validate before admission, stay captured in flight
       const first = session.input("First review");
       await until(() => requests.length === 1);
       expect(await session.updatePolicy({ thinkingBudgetTokens: 4096 })).toMatchObject({
-        kind: "busy",
+        kind: "selected",
+        policy: { thinkingBudgetTokens: 4096 },
       });
+      expect(session.selectedPolicy).toMatchObject({ thinkingBudgetTokens: 4096 });
+      expect(session.policy).toMatchObject({ thinkingBudgetTokens: 8192 });
       expect(requests[0]).toMatchObject({ thinking: { budget_tokens: 8192 }, max_tokens: 32768 });
       release.resolve();
       expect(await first.settled).toMatchObject({ record: { outcome: { kind: "completed" } } });
-      expect(
-        await session.updatePolicy({ thinkingBudgetTokens: 4096, maxOutputTokens: 16384 }),
-      ).toMatchObject({ kind: "accepted" });
+      expect(await session.updatePolicy({ maxOutputTokens: 16384 })).toMatchObject({
+        kind: "accepted",
+      });
       await session.input("Second review").settled;
       expect(requests[1]).toMatchObject({ thinking: { budget_tokens: 4096 }, max_tokens: 16384 });
       const restored = await restoreSession(
@@ -178,7 +181,7 @@ test("explicit token settings validate before admission, stay captured in flight
   expect(logs.filter((log) => ["warning", "error"].includes(log.level))).toEqual([]);
   expect(
     logs.some(
-      (log) => log.event === "policy.committed" && log.policy.thinkingBudgetTokens === 4096,
+      (log) => log.event === "configuration.applied" && log.policy.thinkingBudgetTokens === 4096,
     ),
   ).toBe(true);
   const manifest = await Bun.file(`${capture.directory}/manifest.json`).json();

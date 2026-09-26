@@ -1,6 +1,7 @@
 import { SessionIdSchema } from "../../agent/types.ts";
 import { freeze } from "../../fsm/fsm.ts";
 import { diagnostic, diagnosticError } from "../../logging/index.ts";
+import { changedPolicyFields } from "../../policy/policy.ts";
 import { AppendIdSchema } from "../persistence.ts";
 import { JournalIntegrityError, replay } from "../session-log.ts";
 import { loadSession } from "../session-operation.ts";
@@ -60,6 +61,12 @@ export class SessionNotFoundError extends Error {
  * from the live bindings are not written yet: {@link SessionRuntime.registry} reports
  * `pending_adoption` and {@link SessionRuntime.policy} shows the reconciled policy until the first
  * new work commits them in a `configuration` record.
+ *
+ * A selection in the persistence port's configuration store that differs from the journaled policy
+ * was made before the process stopped and never applied. Restore applies it before resolving:
+ * after recovery, and after the `configuration` record it forces when adoption is pending. A
+ * stored selection that no longer validates logs `configuration.rejected` and is replaced in the
+ * store by the policy in force.
  * @param rawSessionId ID of the saved session; `options.sessionId` is ignored.
  * @throws (rejects) {@link SessionNotFoundError} when no journal is saved under the ID, and
  * otherwise when loading fails, the journal fails an integrity
@@ -91,6 +98,8 @@ export async function restoreSession(
         { revision: last?.revision, appendId: last?.appendId, entryId: last?.entryId },
       );
     }
+    stage = "load_selected_configuration";
+    const stored = await configured.port.getConfig(sessionId, new AbortController().signal);
     stage = "open_session";
     const built = openInstance(
       configured,
@@ -155,6 +164,25 @@ export async function restoreSession(
           ...reconciliation.fields,
         });
       built.pend(plan);
+    }
+    if (stored && durable.policy && changedPolicyFields(durable.policy, stored).length) {
+      stage = "apply_selected_configuration";
+      // Applying the selection is new work, so any registry adoption is journaled ahead of it.
+      built.adopt();
+      const receipt = await built.reselect(stored);
+      if (receipt.kind === "failed" && built.runtime.snapshot.status !== "failed") {
+        const inForce = built.runtime.policy ?? durable.policy;
+        diagnostic("session", "warning", "configuration.rejected", {
+          sessionId,
+          version: stored.version,
+          inForceVersion: inForce.version,
+          reason: receipt.message,
+          error: receipt.error,
+          consequence:
+            "The selection stored before the session closed no longer validates against the live registry; the configuration in force is stored as the selection instead",
+        });
+        await configured.port.putConfig(sessionId, inForce, new AbortController().signal);
+      }
     }
     diagnostic("session", "info", "session.restored", {
       sessionId,

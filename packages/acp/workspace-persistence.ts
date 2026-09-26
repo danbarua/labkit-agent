@@ -3,6 +3,7 @@ import { isAbsolute, join } from "node:path";
 import { Database } from "bun:sqlite";
 
 import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
+import { PolicySchema, type Policy } from "@labkit-agent/core/policy";
 import {
   AppendRequestSchema,
   BlobIdSchema,
@@ -71,6 +72,7 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
       CREATE TABLE IF NOT EXISTS batches (session TEXT NOT NULL, append_id TEXT NOT NULL, revision INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(session, append_id), UNIQUE(session, revision));
       CREATE TABLE IF NOT EXISTS session_info (session TEXT PRIMARY KEY, title TEXT, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS session_scope (session TEXT PRIMARY KEY, additional_directories TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS session_config (session TEXT PRIMARY KEY, policy TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS deleted_sessions (session TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS blobs (session TEXT NOT NULL, id TEXT NOT NULL, meta TEXT NOT NULL, bytes BLOB NOT NULL, PRIMARY KEY(session, id));
     `);
@@ -148,6 +150,7 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
           db.query("DELETE FROM batches WHERE session=?").run(sessionId);
           db.query("DELETE FROM session_info WHERE session=?").run(sessionId);
           db.query("DELETE FROM session_scope WHERE session=?").run(sessionId);
+          db.query("DELETE FROM session_config WHERE session=?").run(sessionId);
           db.query("DELETE FROM blobs WHERE session=?").run(sessionId);
         }).immediate();
         diagnostic("acp.storage", "info", "workspace.storage.deleted", { sessionId, path });
@@ -368,6 +371,55 @@ export function workspacePersistence(cwd: string): WorkspacePersistence {
         diagnostic("acp.storage", "error", "workspace.storage.blob_get_failed", {
           sessionId,
           blobId: id,
+          path,
+          error: diagnosticError(error),
+        });
+        throw error;
+      } finally {
+        db.close();
+      }
+    },
+    async getConfig(rawId, signal): Promise<Policy | undefined> {
+      signal.throwIfAborted();
+      const sessionId = SessionIdSchema.parse(rawId);
+      const db = database();
+      try {
+        const row = db
+          .query<{ policy: string }, [string]>("SELECT policy FROM session_config WHERE session=?")
+          .get(sessionId);
+        return row ? PolicySchema.parse(JSON.parse(row.policy)) : undefined;
+      } catch (error) {
+        diagnostic("acp.storage", "error", "workspace.storage.config_get_failed", {
+          sessionId,
+          path,
+          error: diagnosticError(error),
+        });
+        throw error;
+      } finally {
+        db.close();
+      }
+    },
+    async putConfig(rawId, policy, signal): Promise<void> {
+      signal.throwIfAborted();
+      const sessionId = SessionIdSchema.parse(rawId);
+      const db = database();
+      try {
+        db.transaction(() => {
+          if (db.query("SELECT 1 FROM deleted_sessions WHERE session=?").get(sessionId))
+            throw new Error("Cannot select a configuration for a deleted session");
+          db.query(
+            `INSERT INTO session_config VALUES (?, ?)
+            ON CONFLICT(session) DO UPDATE SET policy=excluded.policy`,
+          ).run(sessionId, JSON.stringify(policy));
+        }).immediate();
+        diagnostic("acp.storage", "debug", "workspace.storage.config_saved", {
+          sessionId,
+          path,
+          version: policy.version,
+        });
+      } catch (error) {
+        diagnostic("acp.storage", "error", "workspace.storage.config_put_failed", {
+          sessionId,
           path,
           error: diagnosticError(error),
         });

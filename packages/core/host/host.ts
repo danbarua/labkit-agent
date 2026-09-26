@@ -243,12 +243,15 @@ export function createHost(
     dispatch,
     /**
      * Forgets all remembered `allow-session` grants, so later calls of those tools ask again. Call
-     * it after committing an explicit permission mode or a changed tool scope; dispatch never
-     * infers this from a configuration change. Grants from a settled permission request whose tool
-     * batch has not started yet are installed when it starts. `reason` and `correlation` only label
-     * the log.
+     * it after applying a changed permission mode or tool scope; dispatch never infers this from a
+     * configuration change. Grants from a settled permission request whose tool batch has not
+     * started yet are installed when it starts. `reason` and `correlation` (the applying append,
+     * or the selection that changed and restored the mode) only label the log.
      */
-    resetPermissions(reason: string, correlation: { policyVersion: number; appendId: string }) {
+    resetPermissions(
+      reason: string,
+      correlation: { policyVersion: number; appendId?: string; selectionId?: string },
+    ) {
       diagnostic("host", "info", "permission.grants_cleared", {
         sessionId: bindings.sessionId,
         reason,

@@ -28,7 +28,7 @@ function scripted() {
 
 async function committed(options: SessionOptions = scripted()) {
   const session = await createSession(options);
-  await session.updatePolicy({});
+  await session.updatePolicy({ steps: 5 });
   await session.input("Go").settled;
   const durable = session.snapshot.durable;
   await session.close();
@@ -107,6 +107,8 @@ function serving(options: SessionOptions, batches: readonly CommittedBatch[]): S
       putBlob: port.putBlob.bind(port),
       getBlob: port.getBlob.bind(port),
       append: port.append.bind(port),
+      getConfig: port.getConfig.bind(port),
+      putConfig: port.putConfig.bind(port),
       async load(sessionId, signal) {
         const loaded = await port.load(sessionId, signal);
         return loaded.kind === "loaded" ? { ...loaded, batches } : loaded;
@@ -125,7 +127,7 @@ function violation(load: () => unknown): JournalIntegrityError {
   throw new Error("The journal loaded");
 }
 
-test("a policy record loads its stored policy, not the policy its patch derives today", async () => {
+test("a configuration-applied record loads its stored policy, whatever today's rules derive", async () => {
   const { durable, batches } = await committed();
   const at = position(batches, "policy");
   const changed = rewrite(batches, at, [

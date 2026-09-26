@@ -66,12 +66,21 @@ bun packages/core/session/examples/completion-binding.ts
 ## Change the next turn, not an operation in flight
 
 Call `updatePolicy(patch)` to change model, thinking, streaming, allowed tools, permission mode, or
-limits. Call `updateSystem(inputs)` to replace session instructions. Both require an idle boundary
-with no accepted queued inputs; check for a `busy` receipt. Wait for the current work to settle,
-then commit the change before submitting the next input. ACP performs that sequencing for its
-configuration controls.
+limits. It selects at once, at any time: the result is stored in the persistence port's
+configuration store and applied as a "configuration applied" `policy` record at the next boundary
+between turns, before any queued input starts. It never answers `busy`. The receipt says which:
+`accepted` (idle; applied now), `selected` (a turn is running; applies when it ends), `ignored`
+(matches the policy in force), or `failed`. A new input submitted at an idle boundary waits for a
+pending selection to apply first. `selectedPolicy` shows what the next turn runs under; `policy`
+shows what is in force. A selection pending when the process stopped applies when the session is
+restored, after recovery and registry adoption. Applying a changed permission mode or tool scope
+revokes remembered `allow-session` approvals; re-selecting the same mode changes nothing.
 
-This prevents a single turn from starting under one permission/model configuration and finishing
+Call `updateSystem(inputs)` to replace session instructions. It requires an idle boundary with no
+accepted queued inputs; check for a `busy` receipt, wait for the current work to settle, then
+commit the change before submitting the next input.
+
+Both rules keep a single turn from starting under one permission/model configuration and finishing
 under another. Mutating the original options map does not reconfigure an open session: bindings
 are captured at construction. `session.model` exposes the resolved selection and capabilities;
 [provider bindings](../providers/README.md) explain how to declare them.
@@ -165,12 +174,11 @@ record belongs to the session, the first record (and only the first) creates it,
 terminal record follows the record that ended the turn in the same batch. A record must also name a
 turn, operation, tool batch, call or queued input that exists in the folded state. An effect record
 has no such precondition: its turn and operation IDs correlate it, and it loads whatever state the
-conversation is in. Commit-time rules (policy patches, permissions, admission, bindings) run only
-when new work is staged, never again on load. No prompt is stored. A terminal record's agent and
-outcome are the fact of how the turn ended and are taken as written, so a later change to how a
-build words or serializes an outcome never makes an old session unloadable. A policy record still
-stores the policy its patch produced next to the patch, and load applies that stored policy as
-written; this is a known divergence from the [session model](../../../docs/session-model.md#code-today).
+conversation is in. Commit-time rules (configuration validation, permissions, admission, bindings)
+run only when new work is staged, never again on load. No prompt is stored. A configuration-applied
+record's policy, and a terminal record's agent and outcome, are facts and are taken as written, so a
+later change to how a build validates settings or words an outcome never makes an old session
+unloadable.
 
 A load failure is a `JournalIntegrityError` with `rule`, `revision`, `appendId` and `entryId` of the
 offending record (for an undecodable record, where it should be). `session.restore_failed` reports
@@ -197,8 +205,8 @@ the policy the next turn uses. History is never filtered: the next prompt includ
 removed tools and advertises only live tools. Opening writes nothing else;
 `session.registry.mismatch`, `.reconciled` (a warning for a model, agent, projection or handoff
 change), `.adopted` and `.adoption_failed` explain each step. A failed adoption
-append fails the session and the waiting work with its storage cause. New policy patches are still
-validated against live bindings. See [registry adoption](../../../docs/session-runtime.md#restore-adopts-the-live-registry-and-bindings).
+append fails the session and the waiting work with its storage cause. New configuration selections
+are still validated against live bindings. See [registry adoption](../../../docs/session-runtime.md#restore-adopts-the-live-registry-and-bindings).
 
 Restore invokes no completion, tool, or permission callback. An interrupted turn is closed with an
 explicit recovery failure; committed partial tool results survive. Accepted queued inputs are
@@ -215,7 +223,9 @@ as rollback. See [receipt and recovery diagrams](../../../docs/session-runtime.m
 Implement `SessionPersistence` and run its
 [contract suite](testing/persistence-contract.ts). An append must atomically accept the complete
 batch at its expected revision. Its stable append ID must recognize identical retries and reject
-changed bytes. A lost acknowledgement is `indeterminate`, not proof of failure.
+changed bytes. A lost acknowledgement is `indeterminate`, not proof of failure. `getConfig` and
+`putConfig` hold the session's selected configuration outside the journal: the latest selection per
+session, written before the session applies it.
 
 Persistence adapters can return a serializable `error` alongside a failed/rejected/indeterminate
 message to preserve database codes and nested causes. Thrown exceptions are captured by the storage

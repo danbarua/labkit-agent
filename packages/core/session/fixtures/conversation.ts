@@ -369,7 +369,7 @@ export const queueUserV2: Scenario = {
   version: 2,
   group: "conversation",
   purpose:
-    "Queue a second user input while the first model call is pending; reject a policy change across that queue.",
+    "Queue a second user input while the first model call is pending; a configuration selected meanwhile applies at the boundary before the queued input starts.",
   source: "packages/core/session/fixtures/conversation.ts#queueUserV2",
   dependencies: {
     format: 2,
@@ -405,16 +405,26 @@ export const queueUserV2: Scenario = {
     const admission3 = await turn3.accepted;
     f.record({ op: "input", session: "root", accepted: admission3 });
     f.check("Input admission is accepted", admission3.kind, "accepted");
-    f.action("Update root policy; expect busy.");
+    f.action(
+      "Select a root configuration change; expect selected (stored now, applied at the next boundary between turns).",
+    );
     const receipt4 = await root.updatePolicy({
       steps: 9,
     });
-    f.check("Policy update admission", receipt4.kind, "busy");
+    f.check("Policy update admission", receipt4.kind, "selected");
     f.record({ op: "policy", session: "root", receipt: receipt4 });
     f.action("Release deferred first work.");
     await f.release("first");
     f.action("Settle the active turn in root.");
     f.record({ session: "root", terminal: await turn3.settled });
+    f.check(
+      "The selection applies after the first turn and before the queued input starts",
+      root.snapshot.durable.records
+        .map((record) => record.body.kind)
+        .filter((kind) => kind === "terminal" || kind === "policy" || kind === "dequeued"),
+      ["terminal", "policy", "dequeued", "terminal"],
+    );
+    f.check("The queued turn runs with the selected steps", root.snapshot.durable.policy?.steps, 9);
     f.action("Restore root as restored from its journal, without model work.");
     const requestsBeforeRestore7 = f.requests.length;
     const restored = f.track(

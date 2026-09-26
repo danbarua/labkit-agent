@@ -225,7 +225,7 @@ export function configState(
   };
 }
 
-/** Patch for choosing `value`, resolved against the policy in effect when it is applied. */
+/** Patch for choosing `value`, resolved against the selected configuration `policy`. */
 export function configPatch(
   binding: AcpConfigBinding,
   value: unknown,

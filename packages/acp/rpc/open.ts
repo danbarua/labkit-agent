@@ -280,7 +280,7 @@ export function opener(deps: OpenDeps): OpenSession {
         persistence: original.persistence,
         busy: false,
         promptDone: Promise.resolve(),
-        configurationTail: Promise.resolve(),
+        forkTail: Promise.resolve(),
         config: bindConfig(
           original.config,
           gate.clientCapabilities().session?.configOptions?.boolean != null,
@@ -333,7 +333,7 @@ export function opener(deps: OpenDeps): OpenSession {
       opening.add(sessionId);
       let configuration: ReturnType<typeof configState>;
       try {
-        configuration = configState(entry.config, runtime.policy);
+        configuration = configState(entry.config, runtime.selectedPolicy);
         if (visible && original.onReady)
           await waitForBoundary(Promise.resolve(original.onReady(sessionId, signal)), signal);
         signal.throwIfAborted();
@@ -344,7 +344,7 @@ export function opener(deps: OpenDeps): OpenSession {
       }
       entry.commands = pendingCommands ?? entry.commands;
       config.prime(entry, configuration);
-      logUnlisted(entry.config, runtime.policy, {
+      logUnlisted(entry.config, runtime.selectedPolicy, {
         ...trace,
         sessionId,
         revision: runtime.snapshot.durable.revision,

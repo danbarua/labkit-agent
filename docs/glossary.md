@@ -71,8 +71,8 @@ selecting a value commits it to the session's configuration store immediately, a
 it records a "configuration applied" fact at the next boundary between turns. A turn already in
 progress keeps the settings it started with. Users choose providers and models by name. Adapter
 profile versions (such as `anthropic-messages@4`) are internal and are never offered as choices.
-Code today: journaled as `policy` records and changed by policy patches; a change during a turn is
-refused as `busy`, and there is no configuration store.
+Code today: `updatePolicy(patch)` selects (the store is the persistence port's `getConfig`/`putConfig`)
+and the "configuration applied" fact is a `policy` record holding the resulting settings.
 
 **Model catalog.** The list of providers and models the environment can use, together with each
 model's thinking choices and output limit. It is built from the committed models.dev snapshot, plus a

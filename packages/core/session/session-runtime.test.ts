@@ -197,6 +197,8 @@ test("rejected input append starts no external work; lost receipt dispatches exa
         putBlob: base.putBlob.bind(base),
         getBlob: base.getBlob.bind(base),
         load: base.load,
+        getConfig: base.getConfig.bind(base),
+        putConfig: base.putConfig.bind(base),
         append: (request, signal) =>
           request.expectedRevision > 0
             ? Promise.resolve({ kind: "rejected", message: "offline" })

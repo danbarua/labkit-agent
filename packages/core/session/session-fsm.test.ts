@@ -1,6 +1,7 @@
 import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { CompletionSchema } from "../agent/types.ts";
+import { PolicySchema } from "../policy/policy.ts";
 import { AppendIdSchema, RevisionSchema } from "./persistence.ts";
 import { decideSession, type SessionEvent, type SessionState } from "./session-fsm.ts";
 import { createSession } from "./session-runtime.ts";
@@ -240,7 +241,7 @@ test("invalid internal event drained from a queue fails and settles remaining qu
   ).toEqual(["bad", "next"]);
 });
 
-test("idle boundaries with accepted queued inputs keep policy and system updates busy", async () => {
+test("idle boundary with accepted queued inputs keeps system updates busy", async () => {
   const before = await initial();
   const state: SessionState = {
     status: "ready",
@@ -250,16 +251,123 @@ test("idle boundaries with accepted queued inputs keep policy and system updates
       pendingInputs: [{ inputId: before.durable.conversation.turnId, text: "accepted" }],
     },
   };
-  const inputs = [
-    { kind: "policy" as const, patch: { steps: 0 } },
-    { kind: "system" as const, inputs: ["replacement"], version: before.durable.systemVersion },
-  ];
-  for (const input of inputs) {
-    const decision = decideSession(state, {
-      type: "submit",
-      submission: { id: "change", appendId: AppendIdSchema.parse("change"), input },
-    });
-    expect(decision.state).toBe(state);
-    expect(decision.commands).toEqual([{ type: "reply", id: "change", result: { kind: "busy" } }]);
-  }
+  const decision = decideSession(state, {
+    type: "submit",
+    submission: {
+      id: "change",
+      appendId: AppendIdSchema.parse("change"),
+      input: { kind: "system", inputs: ["replacement"], version: before.durable.systemVersion },
+    },
+  });
+  expect(decision.state).toBe(state);
+  expect(decision.commands).toEqual([{ type: "reply", id: "change", result: { kind: "busy" } }]);
+});
+
+test("a selection is held from the moment it arrives, stored, then applied at the idle boundary before a queued input dequeues", async () => {
+  const before = await initial();
+  const running = decideSession(before, submission(before));
+  const selected = decideSession(running.state, {
+    type: "select",
+    id: "pick",
+    patch: { steps: 7 },
+  });
+  const policy = PolicySchema.parse({
+    ...before.durable.policy!,
+    steps: 7,
+    version: before.durable.policy!.version + 1,
+  });
+  expect(selected.commands).toEqual([{ type: "selected", id: "pick", policy, persist: true }]);
+  expect(selected.state.selection).toMatchObject({ id: "pick", stored: false });
+  const stored = decideSession(selected.state, { type: "stored", id: "pick", policy });
+  expect(stored.commands).toEqual([
+    { type: "reply", id: "pick", result: { kind: "selected", id: "pick", policy } },
+  ]);
+  const boundary: SessionState = {
+    status: "ready",
+    queue: [],
+    selection: stored.state.selection,
+    durable: {
+      ...before.durable,
+      pendingInputs: [{ inputId: before.durable.conversation.turnId, text: "queued" }],
+    },
+  };
+  const drained = decideSession(boundary, { type: "drain" });
+  if (drained.state.status !== "committing") throw new Error("Expected the selection to stage");
+  expect(drained.state.selection).toBeUndefined();
+  expect(drained.state.pending.submission.input).toEqual({ kind: "policy", policy });
+  expect(drained.state.pending.next.pendingInputs).toHaveLength(1);
+  expect(drained.commands.map((command) => command.type)).toEqual(["append"]);
+});
+
+test("input sent right after a selection waits at the idle boundary until the selection is stored and applied", async () => {
+  const before = await initial();
+  const selected = decideSession(before, { type: "select", id: "pick", patch: { steps: 7 } });
+  const next = submission(before, "next");
+  if (next.type !== "submit") throw new Error("Expected submit");
+  const waiting = decideSession(selected.state, next);
+  expect(waiting.state.queue).toEqual([next.submission]);
+  const held = decideSession(waiting.state, { type: "drain" });
+  expect(held).toEqual({ state: waiting.state, commands: [] });
+  const policy = PolicySchema.parse({
+    ...before.durable.policy!,
+    steps: 7,
+    version: before.durable.policy!.version + 1,
+  });
+  const stored = decideSession(held.state, { type: "stored", id: "pick", policy });
+  if (stored.state.status !== "committing") throw new Error("Expected the selection to stage");
+  expect(stored.state.pending.submission.input).toEqual({ kind: "policy", policy });
+  expect(stored.state.queue).toEqual([next.submission]);
+});
+
+test("a selection matching the configuration in force records nothing", async () => {
+  const before = await initial();
+  const selected = decideSession(before, { type: "select", id: "same", patch: {} });
+  const stored = decideSession(selected.state, {
+    type: "stored",
+    id: "same",
+    policy: before.durable.policy!,
+  });
+  expect(stored.state.status).toBe("ready");
+  expect(stored.state.selection).toBeUndefined();
+  expect(stored.commands).toEqual([
+    { type: "reply", id: "same", result: { kind: "ignored" } },
+    { type: "unchanged", id: "same", policy: before.durable.policy, revokesGrants: false },
+    { type: "drain" },
+  ]);
+});
+
+test("a tool scope changed and changed back during a turn still revokes grants at the boundary", async () => {
+  const before = await initial();
+  const running = decideSession(before, submission(before));
+  const off = decideSession(running.state, {
+    type: "select",
+    id: "off",
+    patch: { tools: { a: [] } },
+  });
+  const back = decideSession(off.state, {
+    type: "select",
+    id: "back",
+    patch: { tools: { a: before.durable.policy!.tools.a! } },
+  });
+  expect(back.state.selection).toMatchObject({ id: "back", revokesGrants: true });
+  const boundary: SessionState = {
+    status: "ready",
+    queue: [],
+    selection: { ...back.state.selection!, stored: true },
+    durable: before.durable,
+  };
+  const drained = decideSession(boundary, { type: "drain" });
+  expect(drained.commands).toContainEqual({
+    type: "unchanged",
+    id: "back",
+    policy: before.durable.policy,
+    revokesGrants: true,
+  });
+});
+
+test("a closed session answers a selection without storing it", async () => {
+  const before = await initial();
+  const closed = decideSession(before, { type: "close" });
+  const selected = decideSession(closed.state, { type: "select", id: "late", patch: { steps: 7 } });
+  expect(selected.commands).toEqual([{ type: "reply", id: "late", result: { kind: "closed" } }]);
 });

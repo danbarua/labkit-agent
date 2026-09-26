@@ -1,12 +1,7 @@
 import type { ConversationCommand } from "../../agent/agent-conversation.ts";
 import { ActorIdSchema } from "../../agent/types.ts";
 import { freeze } from "../../fsm/fsm.ts";
-import {
-  builtinResolvers,
-  patchPolicy,
-  PolicyPatchSchema,
-  type PolicyResolvers,
-} from "../../policy/policy.ts";
+import { builtinResolvers, type PolicyResolvers } from "../../policy/policy.ts";
 import { RevisionSchema, type AppendId } from "../persistence.ts";
 import { JournalRecordSchema, type JournalBody, type Seed, type SessionInput } from "../types.ts";
 import { encodeRecord } from "./codec.ts";
@@ -72,11 +67,7 @@ export function stage(
     }
   };
   if (input.kind === "policy") {
-    apply({
-      kind: "policy",
-      patch: PolicyPatchSchema.parse(input.patch),
-      policy: patchPolicy(next.policy!, input.patch, next.configuration, resolvers),
-    });
+    apply({ kind: "policy", policy: input.policy });
   } else if (
     input.kind === "event" &&
     input.event.type === "user" &&
@@ -103,11 +94,9 @@ export function stage(
         kind: "event",
         event: { type: "abort" },
         systemVersion: next.systemVersion,
-        policyVersion: next.policy!.version,
       });
   } else if (input.kind === "event") {
-    const { usage, ...event } = input;
-    const body = next.policy ? { ...event, policyVersion: next.policy.version } : event;
+    const { usage, ...body } = input;
     apply(body);
     // The step's output is the fact; the usage it reported is an effect staged after it in the same
     // append (after the terminal record when the step ended the turn). The conversation fold never

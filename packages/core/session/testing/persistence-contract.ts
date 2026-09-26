@@ -1,6 +1,7 @@
 import { describe, expect, test } from "@logtape/testing-bun/autoload";
 
 import { SessionIdSchema } from "../../agent/types.ts";
+import { PolicySchema } from "../../policy/policy.ts";
 import {
   AppendIdSchema,
   BlobIdSchema,
@@ -176,6 +177,33 @@ export function persistenceContract(
       const second = await reader().load(sessionId, signal());
       expect(first).toEqual(second);
       expect(second.kind === "loaded" && second.batches[0]!.records).toEqual(["original"]);
+    });
+    test("the configuration store keeps the latest selection per session, outside the journal", async () => {
+      const { writer, reader } = factory();
+      const selected = PolicySchema.parse({
+        id: "default@1",
+        version: 3,
+        steps: 4,
+        admission: "reject-during-tools",
+        bargeIn: true,
+        toolFailure: "fail-turn",
+        project: "history@1",
+        handoff: "handoff-slim@1",
+        tools: { a: ["echo"] },
+      });
+      const other = SessionIdSchema.parse("00000000-0000-4000-8000-000000000002");
+      expect(await reader().getConfig(sessionId, signal())).toBeUndefined();
+      await writer.putConfig(sessionId, selected, signal());
+      expect(await reader().getConfig(sessionId, signal())).toEqual(selected);
+      expect(await reader().getConfig(other, signal())).toBeUndefined();
+      expect(await reader().load(sessionId, signal())).toEqual({ kind: "not_found" });
+      const latest = PolicySchema.parse({ ...selected, version: 4, steps: 8, tools: { a: [] } });
+      await writer.putConfig(sessionId, latest, signal());
+      expect(await reader().getConfig(sessionId, signal())).toEqual(latest);
+      const cancelled = new AbortController();
+      cancelled.abort();
+      await expect(writer.putConfig(sessionId, selected, cancelled.signal)).rejects.toThrow();
+      expect(await reader().getConfig(sessionId, signal())).toEqual(latest);
     });
   });
 }

@@ -83,7 +83,11 @@ best effort and does not gate a command or certify a commit.
 ## Event contract
 
 - session: admission receipts, observed state, terminal settlement, stop, restore,
-  recovery, and uncertain-append reconciliation.
+  recovery, uncertain-append reconciliation, and configuration: `configuration.selected` (stored;
+  says whether a running turn defers it) and `configuration.applied` (the committed record, with
+  the same `selectionId`) at Info, `configuration.unchanged` at Info (a selection equal to the
+  policy in force; `revokesGrants` says whether approvals were revoked anyway),
+  `configuration.rejected` at Warning, `configuration.store_failed` at Error.
 - host: command dispatch, operation start/settlement, cancellation requests, and
   tool-result release after persistence.
 - persistence: append/load attempts, classified outcomes, revision and append identity.

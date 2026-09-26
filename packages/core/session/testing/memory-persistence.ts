@@ -8,6 +8,7 @@ import {
 } from "../../agent/content.ts";
 import { SessionIdSchema } from "../../agent/types.ts";
 import { freeze } from "../../fsm/fsm.ts";
+import type { Policy } from "../../policy/policy.ts";
 import {
   AppendRequestSchema,
   INITIAL_REVISION,
@@ -20,6 +21,7 @@ import {
 export function createMemoryBacking() {
   return Object.assign(new Map<string, readonly CommittedBatch[]>(), {
     blobs: new Map<string, Map<string, { meta: BlobMeta; bytes: Uint8Array }>>(),
+    config: new Map<string, Policy>(),
   });
 }
 export function createMemoryPersistence(backing = createMemoryBacking()): SessionPersistence {
@@ -90,6 +92,16 @@ export function createMemoryPersistence(backing = createMemoryBacking()): Sessio
         kind: "committed",
         receipt: { sessionId: request.sessionId, appendId: request.appendId, revision: next },
       };
+    },
+    async getConfig(rawSessionId, signal) {
+      signal.throwIfAborted();
+      const sessionId = SessionIdSchema.parse(rawSessionId);
+      return backing.config.get(sessionId);
+    },
+    async putConfig(rawSessionId, policy, signal) {
+      signal.throwIfAborted();
+      const sessionId = SessionIdSchema.parse(rawSessionId);
+      backing.config.set(sessionId, structuredClone(policy));
     },
   };
 }

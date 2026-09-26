@@ -170,8 +170,6 @@ session never requires today's models, tools or settings to match those of the p
 
 The correction work tracks these divergences:
 
-- A policy record stores the policy its patch produced next to the patch, and load applies the stored
-  policy as written.
 - Token usage (with its HTTP provenance) is the only recorded effect: core stages it as an `effect`
   record in the step's append whenever the completion reports it; the environment cannot yet choose
   which effects to record, and cost and stop details are not recorded.
@@ -179,7 +177,6 @@ The correction work tracks these divergences:
   projection and again when input arrives. Capability is per provider profile and yes/no only.
 - Tool results are text only, so binary MCP results are refused.
 - A refused permission fails the turn.
-- Configuration changes during a turn are refused as `busy`; there is no configuration store.
 - Effects are logged with `diagnostic()` at scattered sites; provider capture exists but no launcher
   binds it.
 - Consumers derive history separately. `journalMarkdown` and `journalJSONL`

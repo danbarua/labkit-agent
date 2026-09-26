@@ -4,7 +4,7 @@ import type { ActorId, SessionId, TurnData } from "../../agent/types.ts";
 import { Actor } from "../../fsm/fsm.ts";
 import { createHost } from "../../host/host.ts";
 import { diagnostic } from "../../logging/index.ts";
-import { validatePolicy } from "../../policy/policy.ts";
+import { validatePolicy, type Policy, type PolicyPatch } from "../../policy/policy.ts";
 import { AppendIdSchema, type AppendId } from "../persistence.ts";
 import {
   decideSession,
@@ -17,6 +17,7 @@ import { completionUsage, seedConversation, wireEvent, type JournalState } from 
 import type { SessionRuntime, TerminalResult } from "../session-runtime.ts";
 import type { Seed, SessionInput } from "../types.ts";
 import type { ConfiguredSession } from "./configure.ts";
+import { adopt } from "./env-events.ts";
 import { createFacade } from "./facade.ts";
 import { registryDifferences, type Adoption } from "./registry-adoption.ts";
 import { executeSessionCommand } from "./session-commands.ts";
@@ -50,6 +51,11 @@ export type SessionInstance = {
   >;
   /** Storage operations and blob copies that closing the session cancels. */
   readonly storage: Set<{ cancel(): Promise<unknown> }>;
+  /**
+   * Tail of the configuration-store writes in progress, so selections reach the store in the order
+   * the session actor registered them.
+   */
+  storing: Promise<unknown>;
   readonly send: (event: SessionEvent) => Promise<SessionState>;
   readonly submit: (
     input: SessionInput,
@@ -120,6 +126,7 @@ export function openInstance(
     storage: new Set(),
     dispatchBoundary: initial,
     observed: { transition: "", usage: initial.lastCompletionUsage?.operationId },
+    storing: Promise.resolve(),
     send: (event) => send(ctx, event),
     promptInput: (turn) => promptInput(ctx, turn),
     post: (turnId, event) => post(ctx, turnId, event),
@@ -155,7 +162,15 @@ export function openInstance(
   const pend = (plan: Adoption) => {
     ctx.adoption.plan = plan;
   };
-  return { runtime, submit: ctx.submit, pend };
+  /** Restore-only: applies a selection stored before the session last closed. */
+  const reselect = (policy: Policy) => {
+    const id = ctx.configured.id();
+    const { promise, resolve } = Promise.withResolvers<CommandReceipt>();
+    ctx.receipts.set(id, resolve);
+    void ctx.send({ type: "reselect", id, policy });
+    return promise;
+  };
+  return { runtime, submit: ctx.submit, pend, adopt: () => adopt(ctx), reselect };
 }
 
 function promptInput(ctx: SessionInstance, turn: TurnData): PromptInput {
@@ -241,6 +256,44 @@ function post(ctx: SessionInstance, turnId: ActorId, event: TurnEvent) {
     event: wireEvent(conversation),
     systemVersion: ctx.actor.snapshot.durable.systemVersion,
     ...(usage ? { usage } : {}),
+  });
+}
+
+/**
+ * Selects a configuration change (D6). The session actor registers the selection at once, so any
+ * input sent afterwards waits for it at an idle boundary; it applies `patch` to the configuration
+ * the next turn runs under, validates it against the live registry, stores it in the persistence
+ * port's configuration store and applies it at the next boundary between turns. Never `busy`.
+ */
+export function selectConfiguration(
+  ctx: SessionInstance,
+  patch: PolicyPatch,
+): Promise<CommandReceipt> {
+  const id = ctx.configured.id();
+  const { promise, resolve } = Promise.withResolvers<CommandReceipt>();
+  ctx.receipts.set(id, resolve);
+  void ctx.send({ type: "select", id, patch });
+  return promise.then((receipt) => {
+    if (receipt.kind !== "failed" || receipt.error.classification !== "admission") return receipt;
+    const { details } = receipt.error;
+    // Staging at the boundary names its append; a rejected patch never reached the store.
+    const staged =
+      typeof details === "object" &&
+      details !== null &&
+      !Array.isArray(details) &&
+      details.appendId !== undefined;
+    diagnostic("session", "warning", "configuration.rejected", {
+      sessionId: ctx.sessionId,
+      selectionId: id,
+      turnId: ctx.actor.snapshot.durable.conversation.turnId,
+      fields: Object.keys(patch),
+      reason: receipt.message,
+      error: receipt.error,
+      consequence: staged
+        ? "The stored selection no longer validates at the boundary; the configuration in force is unchanged"
+        : "Nothing stored; the selected configuration is unchanged",
+    });
+    return receipt;
   });
 }
 

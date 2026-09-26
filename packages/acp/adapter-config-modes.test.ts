@@ -2,12 +2,10 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createSession, defineTool, type SessionPersistence } from "@labkit-agent/core";
+import { createSession, defineTool } from "@labkit-agent/core";
 import { anthropicMessagesV3, openaiChat, openaiResponsesV3 } from "@labkit-agent/core/providers";
 import { createMemoryPersistence } from "@labkit-agent/core/testing";
-import { SessionIdSchema } from "@labkit-agent/core/types";
-import { getLogger } from "@logtape/logtape";
-import { expect, spyOn, test } from "@logtape/testing-bun/autoload";
+import { expect, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
 
 import { deferred, until } from "../core/agent/test-support.ts";
@@ -44,30 +42,7 @@ function booleanConfiguration() {
   return { ...base, options };
 }
 
-/** Holds each policy journal append until the test calls its release, in arrival order. */
-function heldPolicyAppends() {
-  const base = configurable();
-  const held: (() => void)[] = [];
-  const persistence: SessionPersistence = {
-    ...base.persistence,
-    append: async (request, signal) => {
-      if (request.records.some((raw) => JSON.parse(raw).body.kind === "policy"))
-        await new Promise<void>((release) => held.push(release));
-      return base.persistence.append(request, signal);
-    },
-  };
-  const options: AcpOptions = {
-    ...base.options,
-    forkSession: true,
-    sessionOptions: async (context) => ({
-      ...(await base.options.sessionOptions(context)),
-      persistence,
-    }),
-  };
-  return { ...base, options, held };
-}
-
-test("config updates wait for the journal receipt, notify complete state, and restore with modes", async () => {
+test("an idle config change answers once applied, shows the selection at once, runs the next prompt with it, and restores with modes", async () => {
   const models: string[] = [];
   const base = configurable((model) => {
     models.push(model);
@@ -116,7 +91,16 @@ test("config updates wait for the journal receipt, notify complete state, and re
       value: "m2",
     });
     await until(() => entered);
-    expect(h.updates()).toHaveLength(0);
+    await until(() => h.updates().length > 0);
+    expect(
+      h
+        .updates()
+        .map(({ update }) =>
+          update.sessionUpdate === "config_option_update"
+            ? update.configOptions[0]?.currentValue
+            : update.sessionUpdate,
+        ),
+    ).toEqual(["m2"]);
     const turn = await h.start("session/prompt", prompt(id));
     await Bun.sleep(5);
     expect(models).toEqual([]);
@@ -159,195 +143,112 @@ test("config updates wait for the journal receipt, notify complete state, and re
   }
 });
 
-test("configuration requested mid-turn waits for settlement and does not admit overlapping prompts", async () => {
-  const pending = deferred<unknown>();
-  const models: string[] = [];
-  const { options } = configurable((model) => {
-    models.push(model);
-    return models.length === 1 ? pending.promise : answer;
-  });
-  const h = harness(options);
-  try {
-    await h.initialize();
-    const id = await h.newSession();
-    const first = await h.start("session/prompt", prompt(id));
-    await until(() => models.length === 1);
-    const setting = await h.start("session/set_config_option", {
-      sessionId: id,
-      configId: "model",
-      value: "m2",
-    });
-    expect((await h.request("session/prompt", prompt(id))).error?.code).toBe(-32000);
-    expect(h.messages.some((m) => m.id === setting && !m.method)).toBe(false);
-    pending.resolve(answer);
-    expect((await h.response(first)).result.stopReason).toBe("end_turn");
-    expect((await h.response(setting)).result.configOptions[0].currentValue).toBe("m2");
-    expect((await h.request("session/prompt", prompt(id))).result.stopReason).toBe("end_turn");
-    expect(models).toEqual(["m", "m2"]);
-  } finally {
-    pending.resolve(answer);
-    await h.close();
-  }
-});
-
-test("closing an active session rejects queued config without journaling the change", async () => {
-  let started = false;
-  const pending = deferred<unknown>();
-  const { options, persistence } = configurable(() => {
-    started = true;
-    return pending.promise;
-  });
-  const h = harness(options);
-  try {
-    await h.initialize();
-    const id = await h.newSession();
-    await h.start("session/prompt", prompt(id));
-    await until(() => started);
-    const setting = await h.start("session/set_config_option", {
-      sessionId: id,
-      configId: "model",
-      value: "m2",
-    });
-    expect((await h.request("session/close", { sessionId: id })).result).toEqual({});
-    expect((await h.response(setting)).error?.code).toBe(-32000);
-    const { SessionIdSchema } = await import("@labkit-agent/core/types");
-    const loaded = await persistence.load(SessionIdSchema.parse(id), new AbortController().signal);
-    expect(
-      loaded.kind === "loaded" &&
-        loaded.batches
-          .flatMap((batch) => batch.records)
-          .some((raw) => JSON.parse(raw).body.kind === "policy"),
-    ).toBe(false);
-  } finally {
-    pending.resolve(answer);
-    await h.close();
-  }
-});
-
-test("cancelling a queued configuration request never applies it after the turn", async () => {
-  const pending = deferred<unknown>();
-  let started = false;
-  const { options, persistence } = configurable(() => {
-    started = true;
-    return pending.promise;
-  });
-  const h = harness(options);
-  try {
-    await h.initialize();
-    const id = await h.newSession();
-    const turn = await h.start("session/prompt", prompt(id));
-    await until(() => started);
-    const setting = await h.start("session/set_config_option", {
-      sessionId: id,
-      configId: "model",
-      value: "m2",
-    });
-    await h.send({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: setting } });
-    expect((await h.response(setting)).error).toBeDefined();
-    pending.resolve(answer);
-    await h.response(turn);
-    const { SessionIdSchema } = await import("@labkit-agent/core/types");
-    const loaded = await persistence.load(SessionIdSchema.parse(id), new AbortController().signal);
-    expect(
-      loaded.kind === "loaded" &&
-        loaded.batches
-          .flatMap((batch) => batch.records)
-          .some((raw) => JSON.parse(raw).body.kind === "policy"),
-    ).toBe(false);
-    expect(h.updates().some((n) => n.update.sessionUpdate === "config_option_update")).toBe(false);
-  } finally {
-    pending.resolve(answer);
-    await h.close();
-  }
-});
-
-test("cancelling a prompt that waits on a configuration change rejects it before the change commits", async () => {
-  const emitted = spyOn(getLogger(["labkit", "acp"]), "emit");
-  const { options, held, requests } = heldPolicyAppends();
-  const h = harness(options);
-  try {
-    await h.initialize();
-    const id = await h.newSession();
-    const setting = await h.start("session/set_config_option", {
-      sessionId: id,
-      configId: "model",
-      value: "m2",
-    });
-    await until(() => held.length === 1);
-    const turn = await h.start("session/prompt", prompt(id));
-    // Cancel only once the prompt handler is waiting on the configuration boundary.
-    await until(() =>
-      emitted.mock.calls.some(
-        ([record]) =>
-          record.properties.event === "acp.prompt.received" &&
-          record.properties.rpcRequestId === String(turn),
-      ),
+test("set_config_option during a running prompt selects at once; the running request keeps its model and the next prompt runs with the selection", async () => {
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "labkit-acp-select-mid-turn-")));
+  const directory = `.session-artifacts/acp-config-select/${crypto.randomUUID()}`;
+  const requests: { host: string; model: unknown }[] = [];
+  const held = deferred<void>();
+  const scripted = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input instanceof Request ? input.url : input));
+    if (url.pathname.endsWith("/models")) throw new Error("connect ECONNREFUSED 127.0.0.1:8000");
+    requests.push({ host: url.host, model: JSON.parse(String(init?.body)).model });
+    if (requests.length === 1) await held.promise;
+    return streamResponse(
+      streamVector(url.host.includes("anthropic") ? anthropicMessagesV3 : openaiResponsesV3),
     );
-    await h.send({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: turn } });
-    expect(await h.response(turn)).toMatchObject({ error: { code: -32800 } });
-    held[0]!();
-    expect((await h.response(setting)).result.configOptions[0].currentValue).toBe("m2");
-    expect((await h.request("session/prompt", prompt(id))).result.stopReason).toBe("end_turn");
-    expect(requests.map((request) => request.model)).toEqual(["m2"]);
-  } finally {
-    for (const release of held) release();
-    await h.close();
-    emitted.mockRestore();
-  }
-});
-
-test("cancelled configuration and fork requests queued behind a pending change reject without waiting for it", async () => {
-  const emitted = spyOn(getLogger(["labkit", "acp"]), "emit");
-  const { options, held, persistence } = heldPolicyAppends();
-  const h = harness(options);
+  }) as unknown as typeof globalThis.fetch;
+  let sessionId = "";
+  let setting = 0;
+  let first = 0;
+  let second = 0;
   try {
-    await h.initialize();
-    const id = await h.newSession();
-    const model = await h.start("session/set_config_option", {
-      sessionId: id,
-      configId: "model",
-      value: "m2",
+    await withFixtureDiagnostics(directory, {}, async () => {
+      const h = harness(
+        workspaceAgent({ ANTHROPIC_API_KEY: "select-a", OPENAI_API_KEY: "select-o" }, undefined, {
+          fetch: scripted,
+        }),
+      );
+      const models = () =>
+        h
+          .updates()
+          .flatMap(({ update }) =>
+            update.sessionUpdate === "config_option_update"
+              ? update.configOptions.filter((option) => option.id === "model")
+              : [],
+          )
+          .map((option) => option.currentValue);
+      try {
+        await h.initialize();
+        sessionId = (await h.request("session/new", { cwd, mcpServers: [] })).result.sessionId;
+        const text = { sessionId, prompt: [{ type: "text", text: "Go" }] };
+        first = await h.start("session/prompt", text);
+        await until(() => requests.length === 1);
+        setting = await h.start("session/set_config_option", {
+          sessionId,
+          configId: "model",
+          value: "openai/gpt-5.4",
+        });
+        const selected = await h.response(setting);
+        expect(h.messages.some((message) => message.id === first && !message.method)).toBe(false);
+        expect(
+          selected.result.configOptions.find((option: { id: string }) => option.id === "model")
+            .currentValue,
+        ).toBe("openai/gpt-5.4");
+        expect(models()).toEqual(["openai/gpt-5.4"]);
+        held.resolve();
+        expect((await h.response(first)).result).toEqual({ stopReason: "end_turn" });
+        second = await h.start("session/prompt", text);
+        expect((await h.response(second)).result).toEqual({ stopReason: "end_turn" });
+        expect(requests).toEqual([
+          { host: "api.anthropic.com", model: "claude-sonnet-4-6" },
+          { host: "api.openai.com", model: "gpt-5.4" },
+        ]);
+        // No projection sent while the turn ran reverts the client's selection.
+        expect(models()).toEqual(["openai/gpt-5.4"]);
+      } finally {
+        held.resolve();
+        await h.close();
+      }
     });
-    await until(() => held.length === 1);
-    const fork = await h.start("session/fork", { sessionId: id, cwd: "/tmp" });
-    const mode = await h.start("session/set_config_option", {
-      sessionId: id,
-      configId: "mode",
-      value: "chat",
-    });
-    const records = () => emitted.mock.calls.map(([record]) => record.properties);
-    // Cancel only once both handlers are queued; fork was dispatched before the mode change.
-    await until(() =>
-      records().some(
-        (record) => record.event === "acp.config.queued" && record.rpcRequestId === String(mode),
-      ),
-    );
-    for (const requestId of [fork, mode])
-      await h.send({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId } });
-    expect(await h.response(fork)).toMatchObject({ error: { code: -32800 } });
-    expect(await h.response(mode)).toMatchObject({ error: { code: -32800 } });
-    expect(records()).toContainEqual(
+    const logs = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const event = (name: string) => logs.filter((line) => line.event === name);
+    expect(event("acp.config.queued")).toEqual([]);
+    expect(event("acp.config.selected")).toEqual([
       expect.objectContaining({
-        event: "acp.config.cancelled",
-        rpcRequestId: String(mode),
-        outcome: "cancelled",
+        level: "info",
+        connectionId: expect.any(String),
+        sessionId,
+        rpcRequestId: String(setting),
+        method: "session/set_config_option",
+        configId: "model",
+        value: "openai/gpt-5.4",
+        outcome: "selected",
+        selectionId: expect.any(String),
+        revision: expect.any(Number),
+        durationMs: expect.any(Number),
       }),
-    );
-    expect(held).toHaveLength(1);
-    held[0]!();
-    const settled: { currentValue: unknown }[] = (await h.response(model)).result.configOptions;
-    expect(settled.map((option) => option.currentValue)).toEqual(["m2", "tools"]);
-    const loaded = await persistence.load(SessionIdSchema.parse(id), new AbortController().signal);
-    expect(
-      loaded.kind === "loaded" &&
-        loaded.batches
-          .flatMap((batch) => batch.records)
-          .filter((raw) => JSON.parse(raw).body.kind === "policy").length,
-    ).toBe(1);
+    ]);
+    const settled = (id: number) =>
+      event("acp.prompt.settled").find((line) => line.rpcRequestId === String(id))?.turnId;
+    const applied = event("configuration.applied");
+    expect(applied).toEqual([
+      expect.objectContaining({
+        sessionId,
+        turnId: settled(second),
+        selectionId: event("acp.config.selected")[0]!.selectionId,
+        version: expect.any(Number),
+        revision: expect.any(Number),
+        changedFields: expect.arrayContaining(["model"]),
+      }),
+    ]);
+    expect(settled(first)).not.toBe(settled(second));
+    expect(applied[0]!.revision).toBeGreaterThan(Number(event("acp.config.selected")[0]!.revision));
   } finally {
-    for (const release of held) release();
-    await h.close();
-    emitted.mockRestore();
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
   }
 });
 
@@ -558,14 +459,26 @@ test("set_config_option switches the workspace launcher between providers; the n
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
-    expect(logs.filter((line) => line.event === "acp.config.committed")).toContainEqual(
+    const selected = logs.filter((line) => line.event === "acp.config.selected");
+    expect(selected).toContainEqual(
       expect.objectContaining({
         configId: "model",
-        configValue: "openai/gpt-5.4",
+        value: "openai/gpt-5.4",
+        outcome: "accepted",
+        method: "session/set_config_option",
         connectionId: expect.any(String),
         sessionId: expect.any(String),
+        rpcRequestId: expect.any(String),
+        appendId: expect.any(String),
+        revision: expect.any(Number),
       }),
     );
+    const switched = selected.find((line) => line.value === "openai/gpt-5.4");
+    expect(
+      logs.filter(
+        (line) => line.event === "configuration.applied" && line.appendId === switched?.appendId,
+      ),
+    ).toHaveLength(1);
   } finally {
     rmSync(directory, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
@@ -661,7 +574,6 @@ test("boolean configuration waits for its policy receipt and restores without ex
     });
     await until(() => entered);
     expect(h.messages.some((m) => m.id === set && !m.method)).toBe(false);
-    expect(h.updates().some((m) => m.update.sessionUpdate === "config_option_update")).toBe(false);
     gate.resolve();
     const result = await h.response(set);
     expect(result.result.configOptions.at(-1).currentValue).toBe(false);

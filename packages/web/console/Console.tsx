@@ -13,6 +13,7 @@ import type {
   MediaKind,
   MessageView,
   PermissionPrompt,
+  PolicyView,
   PublicReceipt,
   SessionView,
 } from "../protocol.ts";
@@ -62,12 +63,33 @@ function outcomeText(outcome: { kind: string; failure?: PublicReceipt["failure"]
     .join("\n");
 }
 
+/** Alert text for a receipt; empty when it took effect or, if selected, the Policy panel shows it. */
 function receiptText(receipt: PublicReceipt) {
+  if (receipt.kind === "accepted" || receipt.kind === "selected") return "";
   if (receipt.failure) return outcomeText({ kind: receipt.kind, failure: receipt.failure });
   if (receipt.kind === "failed") return receipt.message ?? "Rejected";
+  if (receipt.kind === "ignored") return "Ignored; nothing changed.";
+  if (receipt.kind === "closed") return "Session is closed.";
   if (receipt.kind === "busy")
-    return "Busy. Abort the turn before changing policy or sending during tools.";
+    return "Busy. System instructions change only between turns; wait for the turn or abort it.";
   return receipt.kind;
+}
+
+function policySummary(policy: PolicyView, resolved?: SessionView["resolved"]) {
+  return [
+    resolved?.profile ?? policy.provider ?? "fixture",
+    resolved?.wireModel ?? policy.model ?? "fixture",
+    policy.thinking === "budget"
+      ? `budget (${policy.thinkingBudgetTokens} tokens)`
+      : (policy.thinking ?? "off"),
+    `output cap ${policy.maxOutputTokens ?? "provider default"}`,
+    `stream ${policy.stream ? "on" : "off"}`,
+    `permissions ${policy.permissions ?? "off"}`,
+    policy.completionTimeoutMs ? `completion ${policy.completionTimeoutMs} ms` : undefined,
+    policy.toolTimeoutMs ? `tool ${policy.toolTimeoutMs} ms` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 async function readError(response: Response) {
@@ -160,8 +182,12 @@ export function Console() {
         }));
       } else if (event.kind === "receipt") {
         setAwaitingReceipt(false);
-        setNotice(event.receipt.kind === "accepted" ? "" : receiptText(event.receipt));
-      } else if (event.kind === "settled" && event.settlement.kind !== "terminal") {
+        setNotice(receiptText(event.receipt));
+      } else if (
+        event.kind === "settled" &&
+        event.settlement.kind !== "terminal" &&
+        event.settlement.kind !== "acknowledged"
+      ) {
         const settlement = event.settlement;
         setNotice(
           settlement.failure
@@ -182,6 +208,26 @@ export function Console() {
   const modelCanStream = selectedModel?.stream ?? provider?.stream ?? false;
   const modelThinking = selectedModel?.thinking ?? provider?.thinking ?? ["off"];
   const active = view !== null && view.phase !== "idle";
+  const pendingConfiguration =
+    view !== null && JSON.stringify(view.selectedPolicy) !== JSON.stringify(view.policy);
+  const shownSelection = useRef("");
+
+  useEffect(() => {
+    if (!view) return;
+    const selected = view.selectedPolicy;
+    const key = JSON.stringify(selected);
+    if (key === shownSelection.current) return;
+    shownSelection.current = key;
+    if (selected.provider) setProviderId(selected.provider);
+    if (selected.model) setModel(selected.model);
+    setThinking(selected.thinking ?? "off");
+    if (typeof selected.thinkingBudgetTokens === "number")
+      setThinkingBudgetTokens(String(selected.thinkingBudgetTokens));
+    if (selected.maxOutputTokens !== undefined)
+      setMaxOutputTokens(String(selected.maxOutputTokens));
+    setStream(selected.stream ?? false);
+  }, [view]);
+
   const messages = useMemo(() => {
     if (!view) return [];
     const settled = view.log.flatMap((turn, turnIndex) => [
@@ -286,7 +332,7 @@ export function Console() {
       const body = (await response.json()) as { receipt?: PublicReceipt; error?: string };
       if (!response.ok) throw new Error(body.error ?? "Input was rejected");
       setAwaitingReceipt(false);
-      setNotice(body.receipt && body.receipt.kind !== "accepted" ? receiptText(body.receipt) : "");
+      setNotice(body.receipt ? receiptText(body.receipt) : "");
       if (body.receipt?.kind === "accepted") {
         setText("");
         setFiles([]);
@@ -307,7 +353,7 @@ export function Console() {
     });
     const body = (await response.json()) as { receipt?: PublicReceipt; error?: string };
     if (!response.ok) setNotice(body.error ?? "Abort failed");
-    else if (body.receipt && body.receipt.kind !== "accepted") setNotice(receiptText(body.receipt));
+    else if (body.receipt) setNotice(receiptText(body.receipt));
   }
 
   async function applyPolicy(event: FormEvent) {
@@ -344,8 +390,10 @@ export function Console() {
       body: JSON.stringify({ type: "policy", patch }),
     });
     const body = (await response.json()) as { receipt?: PublicReceipt; error?: string };
-    if (!response.ok) setNotice(body.error ?? "Policy was rejected");
-    else if (body.receipt && body.receipt.kind !== "accepted") setNotice(receiptText(body.receipt));
+    if (!response.ok) setNotice(body.error ?? "Configuration was rejected");
+    else if (body.receipt?.kind === "ignored")
+      setNotice("Configuration unchanged; it is already selected.");
+    else if (body.receipt) setNotice(receiptText(body.receipt));
   }
 
   async function answerPermission(optionId: "allow-once" | "allow-session" | "reject-once") {
@@ -565,19 +613,16 @@ export function Console() {
             >
               <h2 className="text-[11px] font-semibold tracking-[0.18em] uppercase">Policy</h2>
               <p className="font-mono text-xs text-muted-foreground">
-                {view.resolved?.profile ?? view.policy.provider ?? "fixture"} ·{" "}
-                {view.resolved?.wireModel ?? view.policy.model ?? "fixture"} ·{" "}
-                {view.policy.thinking ?? "off"}
-                {view.policy.thinking === "budget"
-                  ? ` (${view.policy.thinkingBudgetTokens} tokens)`
-                  : ""}{" "}
-                · output cap {view.policy.maxOutputTokens ?? "provider default"} · stream{" "}
-                {view.policy.stream ? "on" : "off"} · permissions {view.policy.permissions ?? "off"}
-                {view.policy.completionTimeoutMs
-                  ? ` · completion ${view.policy.completionTimeoutMs} ms`
-                  : ""}
-                {view.policy.toolTimeoutMs ? ` · tool ${view.policy.toolTimeoutMs} ms` : ""}
+                {pendingConfiguration
+                  ? policySummary(view.selectedPolicy)
+                  : policySummary(view.policy, view.resolved)}
               </p>
+              {pendingConfiguration ? (
+                <p className="rounded-md border border-amber/40 bg-amber/10 px-2 py-1 text-xs text-ink">
+                  Applies after this turn. The running turn keeps{" "}
+                  <span className="font-mono">{policySummary(view.policy, view.resolved)}</span>
+                </p>
+              ) : null}
               {view.sessionError ? (
                 <p className="text-sm text-ink">
                   {outcomeText({ kind: "failed", failure: view.sessionError })}
@@ -585,8 +630,8 @@ export function Console() {
               ) : null}
               <PolicyFields
                 host={host}
-                providerId={providerId || view.policy.provider || ""}
-                model={model || view.policy.model || ""}
+                providerId={providerId || view.selectedPolicy.provider || ""}
+                model={model || view.selectedPolicy.model || ""}
                 thinking={thinking}
                 thinkingBudgetTokens={thinkingBudgetTokens}
                 maxOutputTokens={maxOutputTokens}
@@ -604,8 +649,8 @@ export function Console() {
                   className="h-9 rounded-md border border-border bg-paper px-2"
                   inputMode="numeric"
                   placeholder={
-                    view.policy.completionTimeoutMs
-                      ? String(view.policy.completionTimeoutMs)
+                    view.selectedPolicy.completionTimeoutMs
+                      ? String(view.selectedPolicy.completionTimeoutMs)
                       : "none"
                   }
                   value={completionTimeoutMs}
@@ -618,14 +663,16 @@ export function Console() {
                   className="h-9 rounded-md border border-border bg-paper px-2"
                   inputMode="numeric"
                   placeholder={
-                    view.policy.toolTimeoutMs ? String(view.policy.toolTimeoutMs) : "none"
+                    view.selectedPolicy.toolTimeoutMs
+                      ? String(view.selectedPolicy.toolTimeoutMs)
+                      : "none"
                   }
                   value={toolTimeoutMs}
                   onChange={(event) => setToolTimeoutMs(event.target.value)}
                 />
               </label>
               <Button type="submit" variant="outline" className="w-fit">
-                Apply at idle
+                {active ? "Apply after this turn" : "Apply"}
               </Button>
             </form>
             <section className="rounded-lg border border-border bg-white p-4">

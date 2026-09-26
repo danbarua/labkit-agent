@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { afterAll, expect, test } from "bun:test";
 
+import { PolicySchema } from "@labkit-agent/core/policy";
 import {
   AppendIdSchema,
   BlobMetaSchema,
@@ -157,6 +158,19 @@ test("session deletion atomically removes journal/blob data and permanently reje
     { media: "text/plain" },
     signal(),
   );
+  const selected = PolicySchema.parse({
+    id: "default@1",
+    version: 1,
+    steps: 4,
+    admission: "reject-during-tools",
+    bargeIn: true,
+    toolFailure: "fail-turn",
+    project: "history@1",
+    handoff: "handoff-slim@1",
+    tools: { a: [] },
+  });
+  await store.putConfig(sessionId, selected, signal());
+  await store.putConfig(child, selected, signal());
   const cancelled = new AbortController();
   cancelled.abort();
   await expect(store.deleteSession(sessionId, cancelled.signal)).rejects.toThrow();
@@ -169,12 +183,15 @@ test("session deletion atomically removes journal/blob data and permanently reje
   await expect(
     stale.putBlob(sessionId, new Uint8Array([1]), { media: "text/plain" }, signal()),
   ).rejects.toThrow("deleted");
+  expect(await stale.getConfig(sessionId, signal())).toBeUndefined();
+  await expect(stale.putConfig(sessionId, selected, signal())).rejects.toThrow("deleted");
+  expect(await store.getConfig(child, signal())).toEqual(selected);
   expect((await workspacePersistence(cwd).append(request, signal())).kind).toBe("rejected");
   expect((await store.load(child, signal())).kind).toBe("loaded");
   expect(await store.getBlob(child, blob.id, signal())).toHaveProperty("bytes");
   const db = new Database(join(cwd, ".labkit/sessions/store.sqlite"), { readonly: true });
   try {
-    for (const table of ["batches", "blobs", "session_info"])
+    for (const table of ["batches", "blobs", "session_info", "session_config"])
       expect(
         db.query(`SELECT COUNT(*) AS count FROM ${table} WHERE session=?`).get(sessionId),
       ).toEqual({ count: 0 });

@@ -326,6 +326,17 @@ function projectionInput(
   return { ...input, handoff: [...packet, ...input.turn.messages.slice(view.at)] };
 }
 
+/** Settings of `next` that differ from `previous`, ignoring `version`; tool scopes compare per agent. */
+export function changedPolicyFields(previous: Policy, next: Policy) {
+  return PolicyObjectSchema.keyof().options.filter((field) =>
+    field === "tools"
+      ? [...new Set([...Object.keys(previous.tools), ...Object.keys(next.tools)])].some(
+          (agent) => JSON.stringify(previous.tools[agent]) !== JSON.stringify(next.tools[agent]),
+        )
+      : field !== "version" && previous[field] !== next[field],
+  );
+}
+
 export function projectPolicy(
   input: PromptInput,
   systemInputs: readonly string[],
