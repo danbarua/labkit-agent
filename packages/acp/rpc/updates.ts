@@ -21,7 +21,6 @@ export type DisplayBindings = Pick<SessionBindings, "observe" | "toolUpdate" | "
 
 /** Projects runtime state and display events to `session/update` notifications. */
 export type SessionUpdates = Readonly<{
-  text(client: AgentContext, id: string, value: string, messageId: string, thought?: boolean): void;
   observe(
     entry: Omit<Session, "runtime"> & { runtime?: SessionRuntime },
     client: AgentContext,
@@ -336,7 +335,6 @@ export function sessionUpdates(
   };
 
   return {
-    text,
     refreshInfo,
     observe,
     replay,

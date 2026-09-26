@@ -1,5 +1,6 @@
 import {
   agent,
+  methods,
   type AgentConnection,
   type ListSessionsRequest,
   type ListSessionsResponse,
@@ -24,6 +25,7 @@ import { adapterCore } from "./rpc/core.ts";
 import { registerMcpBridge } from "./rpc/mcp.ts";
 import { registerPrompt } from "./rpc/prompt.ts";
 import { registerSessionLifecycle, sessionRegistry } from "./rpc/sessions.ts";
+import { watchUnknownMethods } from "./rpc/unknown-methods.ts";
 import { sessionUpdates } from "./rpc/updates.ts";
 import type { AcpConfigBinding } from "./session-config.ts";
 import type { AcpUsageBinding } from "./session-usage.ts";
@@ -115,31 +117,35 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     listSessions: !!options.listSessions,
     additionalDirectories: !!options.additionalDirectories,
   };
-  registerUnadvertised(app, core, advertised, gate.logoutSupported);
-  registerConnection(app, {
-    core,
-    gate,
-    agentInfo,
-    advertised,
-    promptCapabilities: options.promptCapabilities,
-    revokeSessions: registry.revokeAll,
-  });
-  registerMcpBridge(app, { gate, bridge: mcpBridge });
-  registerSessionLifecycle(app, {
-    core,
-    gate,
-    registry,
-    updates,
-    config,
-    mcpBridge,
-    sessionOptions: options.sessionOptions,
-    additionalDirectories: advertised.additionalDirectories,
-    deleteSession: options.deleteSession,
-    listSessions: options.listSessions,
-  });
-  registerConfiguration(app, { core, gate, registry, updates });
-  registerPrompt(app, { core, gate, registry, updates });
-  connection = app.connect(stream);
+  const known = new Set<string>([
+    ...registerUnadvertised(app, core, advertised, gate.logoutSupported),
+    ...registerConnection(app, {
+      core,
+      gate,
+      agentInfo,
+      advertised,
+      promptCapabilities: options.promptCapabilities,
+      revokeSessions: registry.revokeAll,
+    }),
+    ...registerMcpBridge(app, { gate, bridge: mcpBridge }),
+    ...registerSessionLifecycle(app, {
+      core,
+      gate,
+      registry,
+      updates,
+      config,
+      mcpBridge,
+      sessionOptions: options.sessionOptions,
+      additionalDirectories: advertised.additionalDirectories,
+      deleteSession: options.deleteSession,
+      listSessions: options.listSessions,
+    }),
+    ...registerConfiguration(app, { core, gate, registry, updates }),
+    ...registerPrompt(app, { core, gate, registry, updates }),
+    // The SDK handles request cancellation itself.
+    methods.protocol.cancelRequest,
+  ]);
+  connection = app.connect(watchUnknownMethods(stream, known, connectionId));
   diagnostic("acp", "info", "acp.connection.opened", { connectionId });
   const closed = connection.closed.then(async () => {
     diagnostic("acp", "info", "acp.connection.closing", { connectionId, count: registry.size() });
