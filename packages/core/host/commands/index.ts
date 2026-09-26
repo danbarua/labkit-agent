@@ -5,6 +5,7 @@ import type { ExecutionContext } from "../host.ts";
 import { prepareHandoff } from "./handoff.ts";
 import { completeModel, prepareModel } from "./model.ts";
 import { requestPermission } from "./permission.ts";
+import { runTools } from "./tools.ts";
 
 /**
  * A host command with a specific type.
@@ -25,11 +26,24 @@ export type HostCommandHandler<K extends TurnCommand["type"]> = (
  * Table of command handlers indexed by command type.
  * Each handler is responsible for spawning the appropriate child operation.
  */
-export const hostCommands: { readonly [K in TurnCommand["type"]]: HostCommandHandler<K> } = {
+const hostCommands: { readonly [K in TurnCommand["type"]]: HostCommandHandler<K> } = {
   cancel: (host, _turnId, command) => host.cancel(command.child),
   prepare_model: prepareModel,
   complete: completeModel,
   prepare_handoff: prepareHandoff,
   request_permission: requestPermission,
-  run_tools: undefined as unknown as HostCommandHandler<"run_tools">,
+  run_tools: runTools,
 };
+
+/**
+ * Runs the handler registered for `type` on a command of that type.
+ */
+export function runHostCommand<K extends TurnCommand["type"]>(
+  host: HostContext,
+  turnId: ActorId,
+  type: K,
+  command: HostCommand<K>,
+  context: ExecutionContext,
+): void {
+  hostCommands[type](host, turnId, command, context);
+}
