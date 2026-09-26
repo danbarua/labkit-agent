@@ -1,4 +1,5 @@
 import type { AgentContext, SessionUpdate } from "@agentclientprotocol/sdk";
+import { blobUri } from "@labkit-agent/core";
 import type {
   JournalState,
   SessionBindings,
@@ -97,6 +98,24 @@ function toolUpdate(
                 reconstructed: false,
               },
             ),
+            ...(event.name && renderers.has(event.name)
+              ? []
+              : (event.parts ?? []).flatMap((part) =>
+                  part.type === "blob"
+                    ? [
+                        {
+                          type: "content" as const,
+                          content: {
+                            type: "resource_link" as const,
+                            uri: blobUri(part.ref),
+                            name: part.ref.name ?? part.ref.media,
+                            mimeType: part.ref.media,
+                            size: part.ref.bytes,
+                          },
+                        },
+                      ]
+                    : [],
+                )),
           ],
         }
       : {}),
@@ -320,11 +339,31 @@ export function sessionUpdates(
             ...(status ? { status } : {}),
             rawOutput: message.text,
             _meta: { "labkit.dev/reconstructed": true },
-            content: renderToolContent(
-              status === "completed" ? renderers.get(toolName) : undefined,
-              message.text,
-              { sessionId: id, toolCallId, toolName, reconstructed: true },
-            ),
+            content: [
+              ...renderToolContent(
+                status === "completed" ? renderers.get(toolName) : undefined,
+                message.text,
+                { sessionId: id, toolCallId, toolName, reconstructed: true },
+              ),
+              ...(renderers.has(toolName)
+                ? []
+                : (message.parts ?? []).flatMap((part) =>
+                    part.type === "blob"
+                      ? [
+                          {
+                            type: "content" as const,
+                            content: {
+                              type: "resource_link" as const,
+                              uri: blobUri(part.ref),
+                              name: part.ref.name ?? part.ref.media,
+                              mimeType: part.ref.media,
+                              size: part.ref.bytes,
+                            },
+                          },
+                        ]
+                      : [],
+                  )),
+            ],
           });
           calls.delete(message.callId);
         }

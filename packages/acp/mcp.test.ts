@@ -2,6 +2,7 @@ import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { ToolOutput } from "@labkit-agent/core/host";
 import { withConfig, type LogRecord } from "@logtape/logtape";
 import { expect, test } from "@logtape/testing-bun/autoload";
 
@@ -69,11 +70,10 @@ test("MCP stdio initializes, paginates, namespaces tools, validates before call,
       structuredContent: { tokenPresent: true, providerKeyPresent: false },
     });
     await expect(tool.run({ text: "error" }, signal())).rejects.toThrow("fixture tool error");
-    const binary = (await tool.run({ text: "binary" }, signal())) as {
-      text: string;
-      parts: readonly unknown[];
-    };
+    const binary = (await tool.run({ text: "binary" }, signal())) as ToolOutput;
+    expect(binary.text).toContain('"type":"resource_link"');
     expect(binary.text).toContain('"mimeType":"image/png"');
+    expect(binary.text).toMatch(/"uri":"blob:\/\/[a-f0-9]{64}\.png"/);
     expect(binary.text).not.toContain("AA==");
     expect(binary.parts).toContainEqual({
       type: "blob",

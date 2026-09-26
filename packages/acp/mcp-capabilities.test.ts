@@ -570,6 +570,23 @@ test("D4: a media-capable Anthropic request carries an MCP-returned image in too
         },
       ],
     });
+    const update = toolUpdates(h, "call-1").at(-1);
+    if (update?.sessionUpdate !== "tool_call_update")
+      throw new Error("Expected a tool_call_update");
+    expect(update.status).toBe("completed");
+    const links = (update.content ?? []).filter(
+      (item) => item.type === "content" && item.content.type === "resource_link",
+    );
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({
+      type: "content",
+      content: {
+        type: "resource_link",
+        uri: expect.stringMatching(/^blob:\/\/[a-f0-9]{64}\.png$/),
+        mimeType: "image/png",
+        size: 1,
+      },
+    });
   } finally {
     await h.close();
     await server.close();

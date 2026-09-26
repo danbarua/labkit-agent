@@ -1,7 +1,7 @@
 import { pathToFileURL } from "node:url";
 
 import type { McpServer } from "@agentclientprotocol/sdk";
-import { MAX_BLOB_BYTES, MediaKindSchema } from "@labkit-agent/core";
+import { blobUri, hashBlob, MAX_BLOB_BYTES, MediaKindSchema } from "@labkit-agent/core";
 import type { Tool, ToolOutput, ToolOutputPart } from "@labkit-agent/core/host";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
@@ -354,11 +354,17 @@ export function mcpConnections(
                         .join("\n")
                         .slice(0, 4096)}`,
                     );
+                  const isTextMedia = (mime: string | undefined) =>
+                    mime === "text/plain" ||
+                    mime === "text/markdown" ||
+                    (mime?.startsWith("text/") ?? false);
                   const hasBinary = result.content.some(
                     (block) =>
                       block.type === "image" ||
                       block.type === "audio" ||
-                      (block.type === "resource" && "blob" in block.resource),
+                      (block.type === "resource" &&
+                        "blob" in block.resource &&
+                        !isTextMedia(block.resource.mimeType)),
                   );
                   if (!hasBinary) {
                     const output = {
@@ -377,27 +383,16 @@ export function mcpConnections(
                     });
                     return output;
                   }
-                  // Binary content: keep the base64 payload out of the text envelope (it moves to
-                  // a stored blob part instead) so the model reads a stable pointer, not raw bytes.
-                  const envelope = {
-                    content: result.content.map((block) =>
-                      block.type === "image" || block.type === "audio"
-                        ? { type: block.type, mimeType: block.mimeType }
-                        : block.type === "resource" && "blob" in block.resource
-                          ? {
-                              type: "resource",
-                              resource: { uri: block.resource.uri, mimeType: block.resource.mimeType },
-                            }
-                          : block,
-                    ),
-                    ...(result.structuredContent
-                      ? { structuredContent: result.structuredContent }
-                      : {}),
-                  };
-                  const text = JSON.stringify(envelope);
-                  if (Buffer.byteLength(text) > MAX_BYTES)
-                    throw new Error("MCP tool result exceeds 256 KiB; narrow the request");
-                  const decodeBlob = (mime: string | undefined, encoded: string, name?: string) => {
+                  // Binary content: a stored blob, referenced from the text envelope by its
+                  // blob:// URI (D4), so a target that reads only text can still follow the
+                  // pointer; a textual resource sent through `blob` instead of `text` is decoded
+                  // as UTF-8 and inlined like any other text, never stored as a blob.
+                  const blobParts: ToolOutputPart[] = [];
+                  const resourceLink = (
+                    mime: string | undefined,
+                    encoded: string,
+                    name?: string,
+                  ) => {
                     const media = MediaKindSchema.safeParse(mime);
                     if (!media.success)
                       throw new Error(`Unsupported MCP result media: ${mime ?? "unknown"}`);
@@ -406,32 +401,68 @@ export function mcpConnections(
                       throw new Error("MCP embedded content must be canonical base64");
                     if (bytes.byteLength > MAX_BLOB_BYTES)
                       throw new Error("MCP embedded resource exceeds 8 MiB");
-                    const part: ToolOutputPart = {
+                    const ref = { id: hashBlob(bytes), media: media.data, bytes: bytes.byteLength };
+                    blobParts.push({
                       type: "blob",
                       bytes,
                       media: media.data,
                       ...(name ? { name } : {}),
+                    });
+                    return {
+                      type: "resource_link" as const,
+                      uri: blobUri(ref),
+                      name: name ?? media.data,
+                      mimeType: media.data,
+                      size: bytes.byteLength,
                     };
-                    return part;
                   };
-                  const parts: ToolOutputPart[] = [
-                    { type: "text", text },
-                    ...result.content.flatMap((block): ToolOutputPart[] => {
+                  const envelope = {
+                    content: result.content.map((block) => {
                       if (block.type === "image" || block.type === "audio")
-                        return [decodeBlob(block.mimeType, block.data)];
-                      if (block.type === "resource" && "blob" in block.resource)
-                        return [
-                          decodeBlob(block.resource.mimeType, block.resource.blob, block.resource.uri),
-                        ];
-                      return [];
+                        return resourceLink(block.mimeType, block.data);
+                      if (block.type === "resource" && "blob" in block.resource) {
+                        if (isTextMedia(block.resource.mimeType)) {
+                          let inlineText: string;
+                          try {
+                            inlineText = new TextDecoder("utf-8", { fatal: true }).decode(
+                              Buffer.from(block.resource.blob, "base64"),
+                            );
+                          } catch {
+                            throw new Error(
+                              `MCP resource declares media ${block.resource.mimeType} but is not valid UTF-8`,
+                            );
+                          }
+                          return {
+                            type: "resource",
+                            resource: {
+                              uri: block.resource.uri,
+                              mimeType: block.resource.mimeType,
+                              text: inlineText,
+                            },
+                          };
+                        }
+                        return resourceLink(
+                          block.resource.mimeType,
+                          block.resource.blob,
+                          block.resource.uri,
+                        );
+                      }
+                      return block;
                     }),
-                  ];
+                    ...(result.structuredContent
+                      ? { structuredContent: result.structuredContent }
+                      : {}),
+                  };
+                  const text = JSON.stringify(envelope);
+                  if (Buffer.byteLength(text) > MAX_BYTES)
+                    throw new Error("MCP tool result exceeds 256 KiB; narrow the request");
+                  const parts: ToolOutputPart[] = [{ type: "text", text }, ...blobParts];
                   diagnostic("acp", "debug", "mcp.call.completed", {
                     ...fields,
                     durationMs: performance.now() - callStarted,
                     bytes: Buffer.byteLength(text),
                     count: result.content.length,
-                    binaryParts: parts.length - 1,
+                    binaryParts: blobParts.length,
                   });
                   return { text, parts } satisfies ToolOutput;
                 } catch (error) {

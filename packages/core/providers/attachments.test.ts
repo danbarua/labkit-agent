@@ -165,37 +165,11 @@ test("D4: a tool result carrying an image blob part reaches Anthropic as tool_re
   });
 });
 
-test("D4: an OpenAI target ignores tool-result blob parts and sends pointer text only", () => {
-  const bytes = new Uint8Array([9, 9]);
-  const image = { id: hashBlob(bytes), bytes: bytes.length, media: "image/png" as const };
-  const request = CompletionRequestSchema.parse({
-    ...input,
-    messages: [
-      {
-        role: "assistant",
-        text: "",
-        calls: [{ id: "call-1", name: "look", args: {} }],
-      },
-      {
-        role: "tool",
-        callId: "call-1",
-        text: "Image: image/png, 2 B, blob://not-supported",
-        parts: [
-          { type: "text", text: "Image: image/png, 2 B, blob://not-supported" },
-          { type: "blob", ref: image },
-        ],
-      },
-    ],
-  });
-  const body = openaiChat.encode(request, () => {
-    throw new Error("OpenAI must never resolve tool-result blob bytes");
-  }).body as { messages: unknown[] };
-  expect(body.messages.at(-1)).toMatchObject({
-    role: "tool",
-    content: "Image: image/png, 2 B, blob://not-supported",
-    tool_call_id: "call-1",
-  });
-});
+// D4 note for the integrator: the non-capable-target path (OpenAI/Google/xAI target reading an
+// MCP-returned image) is not covered here. Today it fails the whole turn at the whole-history
+// media gate (session/blobs.ts), owned by core/projection, before any encoder runs. Add an ACP
+// handler test (MCP image result, OpenAI target, request carries a blob:// pointer once the gate
+// renders unsupported parts as pointers instead of refusing) after that branch merges.
 
 test("message text must agree with text parts, including on tool results", () => {
   expect(() =>

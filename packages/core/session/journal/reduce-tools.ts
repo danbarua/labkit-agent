@@ -36,6 +36,7 @@ function reduceRecovery(
       role: "tool",
       callId: result.callId,
       text: result.text,
+      ...(result.parts ? { parts: result.parts } : {}),
     })),
   ]);
   const recovered = decideConversation(

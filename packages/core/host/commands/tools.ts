@@ -142,20 +142,20 @@ export function runTools(
             parseOutput: async (value): Promise<ToolRunResult> => {
               const rich = ToolOutputSchema.safeParse(value);
               if (rich.success) {
-                if (rich.data.parts.some((part) => part.type === "blob") && !host.storeBlob)
-                  throw new Error("Tool returned blob parts but no blob store is configured");
+                const storeBlob = host.storeBlob;
                 const parts: ContentPart[] = await Promise.all(
-                  rich.data.parts.map(async (part) =>
-                    part.type === "text"
-                      ? part
-                      : {
-                          type: "blob" as const,
-                          ref: await host.storeBlob!(part.bytes, {
-                            media: part.media,
-                            ...(part.name ? { name: part.name } : {}),
-                          }),
-                        },
-                  ),
+                  rich.data.parts.map(async (part) => {
+                    if (part.type === "text") return part;
+                    if (!storeBlob)
+                      throw new Error("Tool returned blob parts but no blob store is configured");
+                    return {
+                      type: "blob" as const,
+                      ref: await storeBlob(part.bytes, {
+                        media: part.media,
+                        ...(part.name ? { name: part.name } : {}),
+                      }),
+                    };
+                  }),
                 );
                 return { text: rich.data.text, ...(parts.length ? { parts } : {}) };
               }

@@ -62,6 +62,35 @@ export type BlobRef = z.infer<typeof BlobRefSchema>;
 export const BlobMetaSchema = BlobRefSchema;
 /** Stored metadata of a blob. Same shape as {@link BlobRef}. */
 export type BlobMeta = BlobRef;
+
+/** File extension for each {@link MediaKind}, used to build a {@link blobUri}. */
+const BLOB_EXTENSION: Record<MediaKind, string> = {
+  "text/plain": "txt",
+  "text/markdown": "md",
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "application/pdf": "pdf",
+  "audio/wav": "wav",
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/aiff": "aiff",
+  "audio/aac": "aac",
+  "audio/ogg": "ogg",
+  "audio/flac": "flac",
+  "audio/m4a": "m4a",
+  "audio/l16": "l16",
+  "audio/opus": "opus",
+  "audio/alaw": "alaw",
+  "audio/mulaw": "mulaw",
+  "audio/webm": "webm",
+};
+/**
+ * The blob's reference URI: `blob://<sha256>.<ext>` (D4). The harness resolves it against
+ * whatever store holds the bytes; a model that reads it with a tool receives the content.
+ */
+export function blobUri(ref: Pick<BlobRef, "id" | "media">): string {
+  return `blob://${ref.id}.${BLOB_EXTENSION[ref.media]}`;
+}
 /**
  * Metadata a caller supplies when storing new blob bytes: the media type and an optional name.
  * The id and size are derived from the bytes.
