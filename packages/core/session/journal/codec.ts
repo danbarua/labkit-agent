@@ -1,5 +1,6 @@
 import type { ConversationEvent } from "../../agent/agent-conversation.ts";
 import { freeze } from "../../fsm/fsm.ts";
+import type { CompletionUsage } from "../../providers/usage.ts";
 import {
   BodySchema,
   JournalRecordSchema,
@@ -9,9 +10,9 @@ import {
 } from "../types.ts";
 
 /**
- * Converts a conversation event into its journaled form ({@link WireEvent}). A captured prompt
- * response remains unchanged; a prepared model (tool definitions, inference result) is filtered to
- * only the fields that the runtime's next turn needs.
+ * Converts a conversation event into its journaled form ({@link WireEvent}). A settled step's
+ * usage is stripped here; {@link completionUsage} reads it separately for the caller to stage as a
+ * sibling `effect` record.
  */
 export function wireEvent(event: ConversationEvent): WireEvent {
   if (event.type === "dispatch_failed") {
@@ -22,45 +23,18 @@ export function wireEvent(event: ConversationEvent): WireEvent {
       event: { type: "failed", child: event.command.command.child, error: event.error },
     });
   }
-  if (
-    event.type === "child" &&
-    event.event.type === "prepared" &&
-    event.event.result.kind === "succeeded"
-  ) {
-    const {
-      model,
-      messages,
-      tools,
-      temperature,
-      provider,
-      thinking,
-      thinkingBudgetTokens,
-      stream,
-      maxOutputTokens,
-      successors,
-      continuations,
-    } = event.event.result.value;
-    return WireEventSchema.parse({
-      ...event,
-      event: {
-        ...event.event,
-        result: {
-          kind: "succeeded",
-          value: {
-            model,
-            messages,
-            tools,
-            temperature,
-            ...(continuations ? { continuations } : {}),
-            ...(provider
-              ? { provider, thinking, thinkingBudgetTokens, stream, maxOutputTokens, successors }
-              : {}),
-          },
-        },
-      },
-    });
+  if (event.type === "child" && event.event.type === "model_settled") {
+    const { usage: _usage, ...settled } = event.event;
+    return WireEventSchema.parse({ ...event, event: settled });
   }
   return WireEventSchema.parse(event);
+}
+
+/** The usage a settled step reported, when it admitted a completion; undefined otherwise. */
+export function completionUsage(event: ConversationEvent): CompletionUsage | undefined {
+  return event.type === "child" && event.event.type === "model_settled"
+    ? event.event.usage
+    : undefined;
 }
 
 /**

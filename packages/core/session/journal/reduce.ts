@@ -1,5 +1,5 @@
 import { reduceConfiguration, reducePolicy, reduceSystem } from "./reduce-boundary.ts";
-import { reduceEvent } from "./reduce-event.ts";
+import { reduceEffect, reduceEvent } from "./reduce-event.ts";
 import { reduceDequeued, reduceInputCancelled, reduceQueued } from "./reduce-queue.ts";
 import { reduceRecovery, reduceTool } from "./reduce-tools.ts";
 import { accepts, missingTarget } from "./shared.ts";
@@ -13,6 +13,7 @@ const reducers: { readonly [K in ReducibleBody["kind"]]: Reducer<K> } = {
   input_cancelled: reduceInputCancelled,
   dequeued: reduceDequeued,
   tool: reduceTool,
+  effect: reduceEffect,
   recovery: reduceRecovery,
   event: reduceEvent,
 };

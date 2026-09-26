@@ -2,14 +2,20 @@ import type { ConversationCommand, decideConversation } from "../../agent/agent-
 import type { BlobRef, ContentPart } from "../../agent/content.ts";
 import type { AgentMessage, TurnData, TurnRecord } from "../../agent/types.ts";
 import { effectiveToolResult } from "../../policy/policy.ts";
-import type { SessionInput } from "../types.ts";
+import type { JournalBody, SessionInput } from "../types.ts";
 import type { JournalState } from "./state.ts";
+
+/**
+ * `SessionInput` plus the `effect` records `stage` synthesizes internally: callers never submit
+ * an `effect` directly, but it still folds through `reduce`, `missingTarget` and `accepts`.
+ */
+type Applicable = SessionInput | Extract<JournalBody, { kind: "effect" }>;
 
 /**
  * Why a record cannot apply: it names a turn, operation, batch or tool call that does not exist in
  * the folded state. Load checks only this; staging (`accepts`) adds the commit-time rules.
  */
-export function missingTarget(state: JournalState, input: SessionInput): string | undefined {
+export function missingTarget(state: JournalState, input: Applicable): string | undefined {
   const c = state.conversation;
   if (input.kind === "event" && input.event.type === "child") {
     const { turnId, event } = input.event;
@@ -39,7 +45,7 @@ export function missingTarget(state: JournalState, input: SessionInput): string 
  * the batch counting as failed under the policy's `toolFailure`. `false` marks a stale or
  * uncorrelated input: `decideSession` answers `ignored` and {@link stage} throws.
  */
-export function accepts(state: JournalState, input: SessionInput): boolean {
+export function accepts(state: JournalState, input: Applicable): boolean {
   if (missingTarget(state, input)) return false;
   if (input.kind !== "tool") return true;
   // New results arrive only while the batch runs, once per call, and none after a failure.
@@ -72,10 +78,6 @@ export function replaceLastMessage(
   const attachTurn = (turn: TurnData): TurnData => ({
     ...turn,
     messages: attachMessages(turn.messages),
-    view:
-      turn.view.kind === "handoff"
-        ? { ...turn.view, messages: attachMessages(turn.view.messages) }
-        : turn.view,
   });
   const attachLog = (log: readonly TurnRecord[]) =>
     log.map((record) => ({ ...record, messages: attachMessages(record.messages) }));

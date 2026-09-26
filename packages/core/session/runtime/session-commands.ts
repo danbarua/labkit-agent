@@ -118,19 +118,22 @@ function releaseCommitted(ctx: SessionInstance, command: Command<"dispatch">) {
   ctx.afterCommit.get(command.submission.id)?.();
   ctx.afterCommit.delete(command.submission.id);
   if (terminal?.kind === "terminal") {
+    // The terminal record now holds only the outcome and agent; the fold's own log entry (which
+    // this same append just settled) is where the full record — including messages — lives.
+    const record = command.durable.conversation.log.at(-1)!;
     const input = command.submission.input;
     const trigger =
       input.kind === "event" && input.event.type === "child" ? input.event.event : undefined;
     diagnostic(
       "session",
-      terminal.record.outcome.kind === "failed" ? "warning" : "info",
+      record.outcome.kind === "failed" ? "warning" : "info",
       "turn.settled",
       {
         sessionId,
         turnId: terminal.turnId,
         operation: "agent_turn",
-        agentId: terminal.record.agent,
-        message: `Agent turn ${terminal.record.outcome.kind}${terminal.record.outcome.kind === "failed" ? `: ${terminal.record.outcome.error.message}` : ""}`,
+        agentId: record.agent,
+        message: `Agent turn ${record.outcome.kind}${record.outcome.kind === "failed" ? `: ${record.outcome.error.message}` : ""}`,
         ...(trigger
           ? {
               trigger: trigger.type,
@@ -138,24 +141,24 @@ function releaseCommitted(ctx: SessionInstance, command: Command<"dispatch">) {
               childOperation: trigger.child.kind,
             }
           : { trigger: input.kind === "event" ? input.event.type : input.kind }),
-        outcome: terminal.record.outcome.kind,
+        outcome: record.outcome.kind,
         revision: command.durable.revision,
         appendId: command.submission.appendId,
         requestId: command.submission.id,
         stepLimit: command.durable.conversation.allowance,
-        ...(terminal.record.outcome.kind === "failed"
+        ...(record.outcome.kind === "failed"
           ? {
-              reason: terminal.record.outcome.error.message,
-              error: diagnosticError(terminal.record.outcome.error),
+              reason: record.outcome.error.message,
+              error: diagnosticError(record.outcome.error),
             }
           : {}),
-        ...(terminal.record.outcome.kind === "exhausted"
+        ...(record.outcome.kind === "exhausted"
           ? { reason: "Turn step allowance exhausted; user continuation required" }
           : {}),
       },
     );
     for (const settle of ctx.waiters.get(terminal.turnId) ?? [])
-      settle({ kind: "terminal", turnId: terminal.turnId, record: terminal.record });
+      settle({ kind: "terminal", turnId: terminal.turnId, record });
     ctx.waiters.delete(terminal.turnId);
   }
   for (const effect of command.commands) {

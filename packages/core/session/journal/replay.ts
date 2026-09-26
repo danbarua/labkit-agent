@@ -187,16 +187,18 @@ export function replay(batches: readonly CommittedBatch[]): JournalState {
             `Turn ${ended.turnId} ended at ${ended.at.entryId}, but the next record is ${body.kind === "terminal" ? `the terminal record of turn ${body.turnId}` : body.kind}`,
             at,
           );
-        // The stored terminal record is the turn's log entry, whatever the fold derived.
-        const c = state.conversation;
-        state = {
-          ...state,
-          conversation: {
-            ...c,
-            log: [...c.log.slice(0, -1), body.record],
-            turn: c.turn.status === "idle" ? { ...c.turn, agent: body.record.agent } : c.turn,
-          },
-        };
+        // The fold already derived this turn's log entry from its own facts; the terminal record
+        // is checked for agreement, not taken as an override.
+        const settled = state.conversation.log.at(-1)!;
+        if (
+          body.agent !== settled.agent ||
+          JSON.stringify(body.outcome) !== JSON.stringify(settled.outcome)
+        )
+          throw new JournalIntegrityError(
+            "record_applicable",
+            `Terminal record of turn ${body.turnId} does not match the outcome the fold derived`,
+            at,
+          );
         ended = undefined;
       } else if (body.kind === "terminal") {
         throw new JournalIntegrityError(

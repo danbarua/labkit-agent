@@ -2,8 +2,7 @@ import type { TurnCommand } from "../../agent/agent-fsm.ts";
 import type { ActorId } from "../../agent/types.ts";
 import type { HostContext } from "../context.ts";
 import type { ExecutionContext } from "../host.ts";
-import { prepareHandoff } from "./handoff.ts";
-import { completeModel, prepareModel } from "./model.ts";
+import { completeModel } from "./model.ts";
 import { requestPermission } from "./permission.ts";
 import { runTools } from "./tools.ts";
 
@@ -28,9 +27,7 @@ export type HostCommandHandler<K extends TurnCommand["type"]> = (
  */
 const hostCommands: { readonly [K in TurnCommand["type"]]: HostCommandHandler<K> } = {
   cancel: (host, _turnId, command) => host.cancel(command.child),
-  prepare_model: prepareModel,
   complete: completeModel,
-  prepare_handoff: prepareHandoff,
   request_permission: requestPermission,
   run_tools: runTools,
 };

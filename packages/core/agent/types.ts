@@ -368,12 +368,12 @@ export type TurnData = Readonly<{
   messages: readonly AgentMessage[];
   /**
    * What the default prompt projection sends to the model. `history`: session context, finished
-   * turns and this turn's messages. `handoff`: only the handoff packet prepared for the successor
-   * agent, plus the messages added after it.
+   * turns and this turn's messages. `handoff`: the handoff resolver's packet computed from the
+   * messages up to `at`, plus this turn's messages from `at` on.
    */
   view:
     | Readonly<{ kind: "history" }>
-    | Readonly<{ kind: "handoff"; messages: readonly AgentMessage[] }>;
+    | Readonly<{ kind: "handoff"; from: AgentId; at: number }>;
   /**
    * Steps the turn has left. One is used when a step's preparation succeeds, before its LLM
    * call; at zero the next step is not prepared and the turn ends `exhausted`.
@@ -381,19 +381,9 @@ export type TurnData = Readonly<{
   steps: Steps;
 }>;
 
-/**
- * Returns `turn` with `message` added to its messages, and also to the handoff packet when the
- * turn's view is `handoff`, so the successor agent sees it in its next step.
- */
+/** Returns `turn` with `message` added to its messages. */
 export function appendMessage(turn: TurnData, message: AgentMessage): TurnData {
-  return {
-    ...turn,
-    messages: [...turn.messages, message],
-    view:
-      turn.view.kind === "handoff"
-        ? { kind: "handoff", messages: [...turn.view.messages, message] }
-        : turn.view,
-  };
+  return { ...turn, messages: [...turn.messages, message] };
 }
 
 /**

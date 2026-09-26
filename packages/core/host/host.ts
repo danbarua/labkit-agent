@@ -112,11 +112,6 @@ export type StreamUpdateSink = (notification: HostStreamNotification) => unknown
  * later changes do not affect operations already dispatched.
  */
 export type ExecutionContext = Readonly<{
-  /**
-   * `ask`: every tool batch goes through a permission request before it runs. `off` or omitted:
-   * tools run without one.
-   */
-  permissions?: "off" | "ask";
   /** Configuration revision; only labels permission logs. */
   policyVersion?: number;
   /**
@@ -129,7 +124,7 @@ export type ExecutionContext = Readonly<{
    * classification `timeout`.
    */
   toolTimeoutMs?: number;
-  /** The turn's prompt input. Required for `prepare_model` and `prepare_handoff`. */
+  /** The turn's prompt input. Required for `complete`. */
   prompt?: PromptInput;
   /**
    * Loads the blobs a request references. Preparation calls it to check that attachments load. The
@@ -171,24 +166,18 @@ export type ExecutionContext = Readonly<{
   >;
   /**
    * Prompt projection: builds the step's messages from the turn's prompt input at the step
-   * boundary. The result is validated as chat messages.
+   * boundary, run inline by `complete` before its LLM call. The result is validated as chat
+   * messages. A handoff's own prompt input names the predecessor via `turn.view`; a target-aware
+   * projection renders it into the handoff packet plus the messages added since.
    */
   projectPrompt: (input: PromptInput, signal: AbortSignal) => unknown | Promise<unknown>;
-  /**
-   * Builds the messages carried to the successor agent at a handoff. Omitted: the last user message
-   * and the last message.
-   */
-  projectHandoff?: (
-    input: PromptInput & { from: string; to: string },
-    signal: AbortSignal,
-  ) => unknown | Promise<unknown>;
 }>;
 
 /**
  * Creates the host that runs a turn's child operations (child: an operation the turn spawned, not a
- * child session): prompt preparation, completions, handoff preparation, permission requests and
- * tool batches. An execution adapter, not another state machine or persistence gate. Outcomes
- * return through `sinks`; none is delivered after `close`.
+ * child session): completions (prompt projection and the LLM call, as one operation), permission
+ * requests and tool batches. An execution adapter, not another state machine or persistence gate.
+ * Outcomes return through `sinks`; none is delivered after `close`.
  *
  * @param bindings - Registries and ports, validated and copied by {@link copyRegistries}.
  *   `sessionId` labels notifications and logs.
@@ -199,7 +188,7 @@ export function createHost(
   sinks: {
     /**
      * Receives each child operation's outcome as a {@link TurnEvent} for the named turn:
-     * `prepared`, `model_settled`, `handoff_prepared`, `permission_settled` or `batch_settled`.
+     * `model_settled`, `permission_settled` or `batch_settled`.
      */
     turn: (turnId: ActorId, event: TurnEvent) => void;
     /**
@@ -248,9 +237,8 @@ export function createHost(
      * `cancel`, cancels an active one. Returns once the operation is spawned; its outcome arrives
      * later through `sinks.turn`.
      *
-     * @throws When the host is closed; when `prepare_model` or `prepare_handoff` has no
-     *   `context.prompt`; when `run_tools` names a permission request that did not approve this
-     *   batch.
+     * @throws When the host is closed; when `complete` has no `context.prompt`; when `run_tools`
+     *   names a permission request that did not approve this batch.
      */
     dispatch,
     /**

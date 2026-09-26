@@ -27,7 +27,14 @@ export type PromptInput = Readonly<{
   }>;
 }>;
 
-function completedExchanges(
+/**
+ * Validates that `messages` holds only complete, correlated tool exchanges (every call answered,
+ * once, by the call that follows it), repairing a trailing interrupted exchange when `interrupted`.
+ * Exported so a target-aware or handoff projection can validate a slice of history the same way.
+ * @throws Error naming `source` when a result is orphaned, duplicated, or a non-trailing call is
+ * left unanswered.
+ */
+export function completedExchanges(
   messages: readonly AgentMessage[],
   source: string,
   interrupted = false,
@@ -92,17 +99,47 @@ export const parseSessionContext = (raw: unknown): SessionContext =>
   SessionContextSchema.parse(raw);
 
 /**
- * The default prompt projection: builds the chat messages for the next step.
- *
- * The agent's `systemPrompt`, when set, comes first as a `system` message. Then, with a `history`
- * view: session context, every finished turn and the current turn's messages. With a `handoff`
- * view: only the handoff packet. Stored history is not changed.
+ * Renders domain messages ({@link AgentMessage}) as provider-agnostic chat messages
+ * ({@link ChatMessage}): tool results become `tool` messages keyed by call ID, an assistant
+ * message with calls carries `tool_calls`, and any `parts` or completion `owner` pass through.
+ * Exported so a handoff or target-aware projection can render a slice of history the same way.
+ */
+export function agentMessagesToChat(messages: readonly AgentMessage[]): ChatMessage[] {
+  return messages.map((message) => {
+    if (message.role === "tool")
+      return { role: "tool", content: message.text, tool_call_id: message.callId };
+    if (message.role === "assistant" && message.calls)
+      return {
+        role: "assistant",
+        content: message.text,
+        ...(message.parts ? { parts: message.parts } : {}),
+        ...(message.owner ? { owner: message.owner } : {}),
+        tool_calls: message.calls.map((call) => ({
+          id: call.id,
+          type: "function",
+          function: { name: call.name, arguments: JSON.stringify(call.args) },
+        })),
+      };
+    return {
+      role: message.role,
+      content: message.text,
+      ...(message.parts ? { parts: message.parts } : {}),
+      ...(message.role === "assistant" && message.owner ? { owner: message.owner } : {}),
+    };
+  });
+}
+
+/**
+ * The default prompt projection: builds the chat messages for the next step from session context,
+ * every finished turn and the current turn's messages. Stored history is not changed. A handoff
+ * turn's packet is substituted by {@link projectPolicy}, before a project pack ever sees it, using
+ * the policy's handoff resolver; this projection only renders ordinary history.
  *
  * Tool exchanges must be complete. The one exception is the last exchange of a finished turn that
  * did not complete: calls without results are dropped from the request.
  *
- * @throws When any source (including one the view does not send) has an orphan, duplicate or
- * unmatched tool result, or a tool call without a result outside that exception.
+ * @throws When any source has an orphan, duplicate or unmatched tool result, or a tool call
+ * without a result outside that exception.
  */
 export function projectConversationPrompt({
   context = [],
@@ -119,33 +156,8 @@ export function projectConversationPrompt({
     ),
   );
   const current = completedExchanges(turn.messages, "current turn");
-  const messages =
-    turn.view.kind === "handoff"
-      ? completedExchanges(turn.view.messages, "handoff packet")
-      : [...base, ...history, ...current];
   return [
     ...(agent.systemPrompt ? [{ role: "system" as const, content: agent.systemPrompt }] : []),
-    ...messages.map((message): ChatMessage => {
-      if (message.role === "tool")
-        return { role: "tool", content: message.text, tool_call_id: message.callId };
-      if (message.role === "assistant" && message.calls)
-        return {
-          role: "assistant",
-          content: message.text,
-          ...(message.parts ? { parts: message.parts } : {}),
-          ...(message.owner ? { owner: message.owner } : {}),
-          tool_calls: message.calls.map((call) => ({
-            id: call.id,
-            type: "function",
-            function: { name: call.name, arguments: JSON.stringify(call.args) },
-          })),
-        };
-      return {
-        role: message.role,
-        content: message.text,
-        ...(message.parts ? { parts: message.parts } : {}),
-        ...(message.role === "assistant" && message.owner ? { owner: message.owner } : {}),
-      };
-    }),
+    ...agentMessagesToChat([...base, ...history, ...current]),
   ];
 }

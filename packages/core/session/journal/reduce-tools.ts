@@ -42,10 +42,7 @@ function reduceRecovery(
     {
       ...c,
       pending: [],
-      turn:
-        c.turn.status === "preparing_model"
-          ? { ...c.turn, turn: { ...c.turn.turn, messages } }
-          : { ...c.turn, turn: { ...c.turn.turn, messages } },
+      turn: { ...c.turn, turn: { ...c.turn.turn, messages } },
     },
     {
       type: "child",

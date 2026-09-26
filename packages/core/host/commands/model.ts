@@ -3,7 +3,7 @@ import { z } from "zod";
 import { admittedCompletionSchema } from "../../agent/agent-fsm.ts";
 import type { TurnCommand } from "../../agent/agent-fsm.ts";
 import { PreparedModelSchema } from "../../agent/agent.ts";
-import type { ActorId } from "../../agent/types.ts";
+import { CompletionSchema, type ActorId } from "../../agent/types.ts";
 import { diagnostic } from "../../logging/index.ts";
 import {
   ContinuationSchema,
@@ -16,28 +16,45 @@ import type { ExecutionContext, HostStreamNotification } from "../host.ts";
 import { notify } from "../notifications.ts";
 
 /**
- * Prepares the next step's prompt and model configuration.
+ * Projects the step's prompt and makes its LLM call as one host operation: preparation failures
+ * (an unreadable attachment, a projection error) and completion failures both settle as
+ * `model_settled`, so the turn machine never sees the prompt that produced a request, only its
+ * output.
  */
-export function prepareModel(
+export function completeModel(
   host: HostContext,
   turnId: ActorId,
-  command: Extract<TurnCommand, { type: "prepare_model" }>,
+  command: Extract<TurnCommand, { type: "complete" }>,
   context: ExecutionContext,
 ): void {
   const prompt = context.prompt;
-  if (!prompt) throw new Error("Host prepare_model requires prompt context");
+  if (!prompt) throw new Error("Host complete requires prompt context");
   const agent = prompt.agent;
+  if (host.closed) return;
+  const identity = {
+    ...(host.sessionId ? { sessionId: host.sessionId } : {}),
+    turnId,
+    completionId: command.child.id,
+    generation: command.turn.generation,
+  };
+  let status = "pending";
+  let stream = false;
+  const notifyStream = (fields: Omit<HostStreamNotification, keyof typeof identity>) => {
+    if (!host.closed && stream) notify(host.streamUpdate, { ...identity, ...fields });
+  };
+
   host.spawn(
     command.child,
     {
       failureContext: {
         operation: {
           id: command.child.id,
-          kind: command.child.kind,
+          kind: "completion",
           sessionId: host.sessionId,
           turnId,
         },
       },
+      timeoutMs: context.completionTimeoutMs,
       input: null,
       parseInput: z.null().parse,
       run: async (_, signal) => {
@@ -64,74 +81,25 @@ export function prepareModel(
           })),
         });
         await context.loadBlobs?.(prepared, signal);
-        return prepared;
-      },
-      parseOutput: (raw) => {
-        const prepared = PreparedModelSchema.parse(raw);
         const continuations = matchingContinuations(
           prepared.messages,
           context.continuations ?? [],
           prepared.provider,
         );
-        return PreparedModelSchema.parse({
+        const request = PreparedModelSchema.parse({
           ...prepared,
           ...(continuations.length ? { continuations } : {}),
         });
-      },
-    },
-    (result) => host.post(turnId, { type: "prepared", child: command.child, result }),
-  );
-}
-
-/**
- * Completes the step's LLM call with the prepared request.
- */
-export function completeModel(
-  host: HostContext,
-  turnId: ActorId,
-  command: Extract<TurnCommand, { type: "complete" }>,
-  context: ExecutionContext,
-): void {
-  const identity = {
-    ...(host.sessionId ? { sessionId: host.sessionId } : {}),
-    turnId,
-    completionId: command.child.id,
-    generation: command.turn.generation,
-  };
-  let status = "pending";
-
-  const notifyStream = (fields: Omit<HostStreamNotification, keyof typeof identity>) => {
-    if (!host.closed && command.request.stream)
-      notify(host.streamUpdate, { ...identity, ...fields });
-  };
-
-  notifyStream({ sessionUpdate: "completion", status: "pending" });
-  if (host.closed) return;
-
-  const admitted = admittedCompletionSchema(
-    new Set(
-      command.request.successors ??
-        host.agents.get(command.turn.agent)!.successors ??
-        host.agents.keys(),
-    ),
-    new Set(context.allowedTools ?? host.agents.get(command.turn.agent)!.tools),
-  );
-
-  host.spawn(
-    command.child,
-    {
-      input: command.request,
-      timeoutMs: context.completionTimeoutMs,
-      failureContext: {
-        operation: {
-          id: command.child.id,
-          kind: "completion",
-          sessionId: host.sessionId,
-          turnId,
-        },
-      },
-      parseInput: PreparedModelSchema.parseAsync,
-      run: async (request, signal) => {
+        stream = !!request.stream;
+        notifyStream({ sessionUpdate: "completion", status: "pending" });
+        const admitted = admittedCompletionSchema(
+          new Set(
+            request.successors ??
+              host.agents.get(command.turn.agent)!.successors ??
+              host.agents.keys(),
+          ),
+          new Set(context.allowedTools ?? host.agents.get(command.turn.agent)!.tools),
+        );
         const blobs = await context.loadBlobs?.(request, signal, true);
         signal.throwIfAborted();
         diagnostic("provider", "info", "completion.system_prompt", {
@@ -177,7 +145,7 @@ export function completeModel(
             ? undefined
             : await (context.storeContinuation ?? ((entry) => ContinuationSchema.parse(entry)))(
                 {
-                  provider: z.string().parse(command.request.provider),
+                  provider: z.string().parse(request.provider),
                   owner: { turnId, generation: command.turn.generation },
                   payload: output.continuationPayload,
                 },
@@ -193,27 +161,36 @@ export function completeModel(
             usage: output.usage,
             message: "Completion response usage validated; awaiting runtime settlement",
           });
-        return { completion, continuation, usage: output.usage };
+        return {
+          completion,
+          continuation,
+          usage: output.usage,
+          provider: request.provider,
+          model: request.model,
+        };
       },
       parseOutput: z.strictObject({
-        completion: admitted,
+        completion: CompletionSchema.brand<"AdmittedCompletion">(),
         continuation: ContinuationSchema.optional(),
         usage: CompletionUsageSchema.optional(),
+        provider: z.string().min(1).optional(),
+        model: z.string().min(1),
       }).parseAsync,
     },
     (result) =>
       host.post(turnId, {
         type: "model_settled",
         child: command.child,
-        ...(result.kind === "succeeded" && result.value.usage ? { usage: result.value.usage } : {}),
         result:
           result.kind === "succeeded"
             ? { kind: "succeeded", value: result.value.completion }
             : result,
-        ...(result.kind === "succeeded" &&
-        result.value.completion.kind === "tools" &&
-        context.permissions === "ask"
-          ? { permissionRequired: true as const }
+        ...(result.kind === "succeeded" ? { model: result.value.model } : {}),
+        ...(result.kind === "succeeded" && result.value.provider
+          ? { provider: result.value.provider }
+          : {}),
+        ...(result.kind === "succeeded" && result.value.usage
+          ? { usage: result.value.usage }
           : {}),
         ...(result.kind === "succeeded" && result.value.continuation
           ? { continuation: result.value.continuation }

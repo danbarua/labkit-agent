@@ -7,9 +7,9 @@ import type { Fold, JournalState, ReducibleBody, Reduction } from "./state.ts";
 
 /**
  * Reduces an event record: processes a domain event (user input, completion, tool batch,
- * permission decision, system notice, or child operation result), updates conversation
- * state, and collects usage and continuation data if applicable. Stage validates system
- * and policy versions, barge-in policy, and continuation consistency.
+ * permission decision, system notice, or child operation result), updates conversation state, and
+ * collects continuation data if applicable. Stage validates system and policy versions, barge-in
+ * policy, and continuation consistency.
  */
 function reduceEvent(
   state: JournalState,
@@ -33,8 +33,6 @@ function reduceEvent(
     input.event.type === "child" && input.event.event.type === "model_settled"
       ? input.event.event
       : undefined;
-  if (fold.mode === "stage" && settled?.usage && settled.result.kind !== "succeeded")
-    throw new Error("Completion usage requires an admitted completion");
   const envelope = settled?.continuation;
   if (envelope) {
     ContinuationSchema.parse(envelope);
@@ -69,15 +67,6 @@ function reduceEvent(
     state: {
       ...state,
       conversation: decision.state,
-      ...(settled?.usage && decision.state !== state.conversation && input.event.type === "child"
-        ? {
-            lastCompletionUsage: {
-              turnId: input.event.turnId,
-              operationId: settled.child.id,
-              usage: settled.usage,
-            },
-          }
-        : {}),
       ...(envelope ? { continuations: [...(state.continuations ?? []), envelope] } : {}),
       partial:
         (input.event.type === "child" && input.event.event.type === "batch_settled") ||
@@ -89,4 +78,27 @@ function reduceEvent(
   };
 }
 
-export { reduceEvent };
+/**
+ * Reduces a usage effect record: records it as the latest completion accounting. Effect records
+ * are checked for integrity only (their target exists, per `missingTarget`); the conversation fold
+ * never reads them and they never gate load or new work.
+ */
+function reduceEffect(
+  state: JournalState,
+  input: Extract<ReducibleBody, { kind: "effect" }>,
+  _fold: Fold,
+): Reduction {
+  return {
+    state: {
+      ...state,
+      lastCompletionUsage: {
+        turnId: input.turnId,
+        operationId: input.operationId,
+        usage: input.usage,
+      },
+    },
+    commands: [],
+  };
+}
+
+export { reduceEvent, reduceEffect };
