@@ -146,7 +146,8 @@ vite.config.ts.timestamp-*
 .session-artifacts/
 
 # Local Coding Agent config, plans, etc
-.omp/
+.omp/*
+!.omp/skills
 
 # Jetbrains crap
 .junie/
