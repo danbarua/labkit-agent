@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { EffectEmitter } from "../effects/index.ts";
 import { Actor, freeze } from "../fsm/fsm.ts";
 import { createHost, type StreamUpdateSink, type ToolUpdateSink } from "../host/host.ts";
 import {
@@ -71,6 +72,8 @@ export type RuntimeOptions = {
   apiKey?: string;
   /** Fetch used by the default completion adapter. */
   fetch?: typeof fetch;
+  /** Subscriber for this runtime's effect events; combined with the default diagnostics subscriber. */
+  effects?: EffectEmitter;
   /** Adapters return untrusted data; the completion actor parses and admits it. */
   complete?: (request: ChatCompletionRequest) => unknown | Promise<unknown>;
   /** Prompt projection for each step; defaults to {@link projectConversationPrompt}. */
@@ -138,6 +141,7 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
   const toolUpdate = options.toolUpdate;
   const streamUpdate = options.streamUpdate;
   const requestPermission = options.requestPermission;
+  const effects = options.effects;
   const complete =
     options.complete ??
     ((request: ChatCompletionRequest) => createChatCompletion(request, fetcher));
@@ -204,6 +208,7 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
         sessionId: initial.sessionId,
         requestPermission,
         complete: (request, signal) => complete({ ...request, baseUrl, apiKey, signal }),
+        effects,
       },
       {
         turn: post,

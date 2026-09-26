@@ -181,7 +181,7 @@ test("persisted CLI trace joins ACP, permission, tool and provider failure acros
     expect(trace.length).toBeGreaterThan(10);
     const instructions = trace.filter((record) => record.event === "completion.system_prompt");
     expect(instructions).toHaveLength(3);
-    expect(instructions[0].level).toBe("info");
+    expect(instructions[0].level).toBe("debug");
     expect(instructions[0].systemMessages[0].content).toContain(`rooted at ${root}`);
     expect(instructions[0].systemMessages[0].content).toContain("Do not claim to have read a file");
     expect(instructions[0].childId).toBeDefined();

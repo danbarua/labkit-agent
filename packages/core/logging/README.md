@@ -9,6 +9,11 @@ diagnostics are silent. Logging belongs to the environment because several sessi
 sink: closing one session must not dispose the others' evidence. The logging helpers are portable;
 the core package as a whole has a Bun runtime contract.
 
+Every log record below is produced by the default subscriber of an [effect
+event](../effects/README.md), not by a second, independent emission path. `ExecutionBindings.effects`
+and `TransportBinding.effects` add subscribers alongside that default; they never replace it, so
+binding one for usage accounting, auditing or a hook never silences these logs.
+
 ## Investigate a stopped turn
 
 Start with the public terminal failure's operation identity and cause. Find that session/turn/child

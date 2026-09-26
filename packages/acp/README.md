@@ -276,6 +276,18 @@ awaits its runtime gate. `child.failed` and provider events retain the actual ca
 should produce no warnings. Full HTTP bodies require the separate
 [provider capture binding](../core/environment/README.md#retained-provider-traffic).
 
+Set `LABKIT_HTTP_TRACE_DIR` to an absolute directory (relative paths, including `.`, are rejected)
+to have the workspace launcher retain full request/response bodies for every provider call, in
+addition to the metadata-only diagnostics above. The launcher opens one
+[bounded trace](../core/environment/provider-capture.ts) under that directory on its first session
+and reuses it for every session this process opens; on the next process start, and again whenever
+the current run rotates, it prunes older run directories, keeping the newest 20 (the same
+retention count as the launcher's own logs) and never one a still-live process owns. A run
+directory holds `manifest.jsonl`: one JSON line appended per request/response event, credentials
+redacted, never rewritten. The run rotates to a fresh directory after 2000 calls or once its
+manifest would exceed 64 MiB. Without the variable set, no trace directory is created and no body
+is written.
+
 ```sh
 LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/acp
 bunx tsc --noEmit

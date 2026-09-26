@@ -1,5 +1,6 @@
 import type { AgentDefinition, Tool } from "../agent/agent-runtime.ts";
 import type { ActorId, Failure, TurnRecord } from "../agent/types.ts";
+import type { EffectEmitter } from "../effects/index.ts";
 import type { StreamUpdateSink, ToolUpdateSink } from "../host/host.ts";
 import type { CompletionPort, PermissionPort } from "../host/ports.ts";
 import type { Policy, PolicyPatch, PolicyResolvers } from "../policy/policy.ts";
@@ -91,6 +92,12 @@ export type SessionBindings = Readonly<{
   streamUpdate?: StreamUpdateSink;
   /** Asks the user to approve tool calls. Required for `permissions: "ask"`. */
   requestPermission?: PermissionPort;
+  /**
+   * Subscriber for this session's effect events (child lifecycle, command dispatch, tool
+   * admission, permission decisions, completion usage). Always combined with the default
+   * diagnostics subscriber, never replacing it; omit to run with logging only.
+   */
+  effects?: EffectEmitter;
 }>;
 
 /** Everything {@link createSession} and {@link restoreSession} need to open a session. */

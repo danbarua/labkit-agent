@@ -6,7 +6,6 @@ import type { ProjectedPrompt, PromptInput } from "../agent/prompt.ts";
 import type { ToolRunResult } from "../agent/tool-batch.ts";
 import type { ActorId, Result, ToolCall } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
-import { diagnostic } from "../logging/index.ts";
 import { effectiveToolResult, type Policy } from "../policy/policy.ts";
 import type { Continuation, StreamDelta } from "../providers/types.ts";
 import { runHostCommand } from "./commands/index.ts";
@@ -219,7 +218,8 @@ export function createHost(
       allowedTools: context.allowedTools?.slice(),
     });
     const { turnId, command } = effect;
-    diagnostic("host", "debug", "command.dispatched", {
+    ctx.emit({
+      type: "command.dispatched",
       sessionId: bindings.sessionId,
       turnId,
       childId: command.child.id,
@@ -259,7 +259,8 @@ export function createHost(
       reason: string,
       correlation: { policyVersion: number; appendId?: string; selectionId?: string },
     ) {
-      diagnostic("host", "info", "permission.grants_cleared", {
+      ctx.emit({
+        type: "permission.grants_cleared",
         sessionId: bindings.sessionId,
         reason,
         ...correlation,
@@ -279,7 +280,8 @@ export function createHost(
       const pending = ctx.pendingTools.get(key);
       if (!pending || pending.outcome !== outcome) return;
       ctx.pendingTools.delete(key);
-      diagnostic("host", "debug", "tool.released", {
+      ctx.emit({
+        type: "tool.released",
         sessionId: bindings.sessionId,
         turnId: outcome.turnId,
         batchId: outcome.batchId,
@@ -300,7 +302,8 @@ export function createHost(
      * not wait for operations to stop.
      */
     close() {
-      diagnostic("host", "debug", "host.closed", {
+      ctx.emit({
+        type: "host.closed",
         sessionId: bindings.sessionId,
         activeChildren: ctx.children.size,
         pendingToolReceipts: ctx.pendingTools.size,

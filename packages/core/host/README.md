@@ -47,7 +47,7 @@ before accepting it. The public request/response types and the
 [executable exchange](../session/examples/completion-binding.ts) show tool arguments and messages.
 Use [provider bindings](../providers/README.md) for supported HTTP dialects. Before invoking the
 completion port, the host logs its full ordered system messages as `completion.system_prompt`
-at INFO. This shows the instructions actually supplied to that operation, including committed
+at DEBUG. This shows the instructions actually supplied to that operation, including committed
 shared-instruction changes; restoration alone does not emit a fictitious completion.
 
 Use the supplied blob resolver for attachments and continuations; it is scoped to that operation.
@@ -143,6 +143,21 @@ and batch/call IDs. Inspect real success and failure paths with:
 ```sh
 LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/host packages/core/session/consumer-contract.test.ts
 ```
+
+## Effects
+
+`ExecutionBindings.effects` is an [`EffectEmitter`](../effects/README.md) for this host's effect
+events: child lifecycle (`child.started`/`child.settled`/`child.failed`/`child.timed_out`/
+`child.cancellation_requested`), `command.dispatched`, tool admission (`tool.admitted`,
+`tool.locations_resolved`/`_failed`, `tool.awaiting_release`, `tool.released`,
+`tool.status_changed`, `tool.input_rejected`), permission decisions (`permission.waiting`,
+`permission.reused`, `permission.decided`, `permission.refused`, `permission.granted`,
+`permission.grants_cleared`), and completion accounting (`completion.system_prompt`,
+`completion.usage.received`). Supplying `effects` never replaces the default diagnostics
+subscriber; both run. `TransportBinding.effects` on a [provider binding](../providers/README.md)
+carries the matching provider-side events (`provider.http.*`, `provider.stream.*`,
+`provider.completion.*`, `provider.usage.invalid`). Emission happens only at these operation
+boundaries, never inside a pure decision.
 
 ## Module map
 

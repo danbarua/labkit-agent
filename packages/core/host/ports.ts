@@ -10,6 +10,7 @@ import {
   type MediaKind,
 } from "../agent/content.ts";
 import { AgentIdSchema, ToolNameSchema, type CompletionSchema } from "../agent/types.ts";
+import type { EffectEmitter } from "../effects/index.ts";
 import { freeze } from "../fsm/fsm.ts";
 import type { StreamDeltaSink } from "../providers/types.ts";
 import type { CompletionUsage } from "../providers/usage.ts";
@@ -325,6 +326,12 @@ export type ExecutionBindings = Readonly<{
    * without it fails the call.
    */
   storeBlob?: (bytes: Uint8Array, meta: { media: MediaKind; name?: string }) => Promise<BlobRef>;
+  /**
+   * Subscriber for this host's effect events (child lifecycle, command dispatch, tool admission,
+   * permission decisions). Always combined with the default diagnostics subscriber, never
+   * replacing it; omit to run with logging only.
+   */
+  effects?: EffectEmitter;
 }>;
 /**
  * A {@link CompletionPort} that posts OpenAI chat-completions requests to `baseUrl`.

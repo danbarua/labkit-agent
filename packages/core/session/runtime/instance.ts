@@ -142,6 +142,7 @@ export function openInstance(
         complete: configured.completePort,
         storeBlob: (bytes, meta) =>
           configured.port.putBlob(sessionId, bytes, meta, new AbortController().signal),
+        effects: configured.effects,
       },
       {
         turn: (turnId, event) => ctx.post(turnId, event),

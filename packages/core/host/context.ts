@@ -3,8 +3,9 @@ import { createOperationActor } from "../agent/operation-actor.ts";
 import type { Operation, OperationState } from "../agent/operation-actor.ts";
 import type { BatchCommand, BatchEvent, BatchState } from "../agent/tool-batch.ts";
 import type { ActorId, AgentId, ChildRef, Failure, Result } from "../agent/types.ts";
+import { diagnosticsSubscriber, fanoutEffects, type EffectEmitter } from "../effects/index.ts";
 import type { Actor } from "../fsm/fsm.ts";
-import { diagnostic, diagnosticError } from "../logging/index.ts";
+import { diagnosticError } from "../logging/index.ts";
 import type { Policy } from "../policy/policy.ts";
 import type {
   HostToolNotification,
@@ -88,6 +89,8 @@ export type HostContext = {
     observe?: (state: OperationState<O>) => unknown,
   ) => void;
   readonly cancel: (child: ChildRef, reason?: Failure) => void;
+  /** Emits this host's effect events; see {@link EffectEmitter}. */
+  readonly emit: EffectEmitter;
 };
 
 /**
@@ -113,6 +116,7 @@ export function createHostContext(
     }
   >();
   const requestPermission = bindings.requestPermission;
+  const emit = fanoutEffects(diagnosticsSubscriber(), bindings.effects);
   const remembered = new Map<string, string>();
 
   const grants = new Map<
@@ -132,6 +136,7 @@ export function createHostContext(
     closed: false,
     sessionId: bindings.sessionId,
     complete: bindings.complete,
+    emit,
     requestPermission,
     storeBlob: bindings.storeBlob,
     agents,
@@ -182,16 +187,24 @@ export function createHostContext(
         try {
           return await run();
         } catch (error) {
-          diagnostic(
-            child.kind === "completion" ? "provider" : "host",
-            signal?.aborted ? "info" : "warning",
-            signal?.aborted ? "child.cancelled" : "child.failed",
-            {
-              sessionId: bindings.sessionId,
-              childId: child.id,
-              phase,
-              error: diagnosticError(error),
-            },
+          emit(
+            signal?.aborted
+              ? {
+                  type: "child.cancelled",
+                  sessionId: bindings.sessionId,
+                  childId: child.id,
+                  operation: child.kind,
+                  phase,
+                  error: diagnosticError(error),
+                }
+              : {
+                  type: "child.failed",
+                  sessionId: bindings.sessionId,
+                  childId: child.id,
+                  operation: child.kind,
+                  phase,
+                  error: diagnosticError(error),
+                },
           );
           throw error;
         }
@@ -208,24 +221,21 @@ export function createHostContext(
         (result) => {
           if (timer !== undefined) clearTimeout(timer);
           children.delete(child.id);
-          diagnostic(
-            child.kind === "completion" ? "provider" : "host",
-            result.kind === "failed" ? "warning" : "debug",
-            "child.settled",
-            {
-              sessionId: bindings.sessionId,
-              childId: child.id,
-              operation: child.kind,
-              outcome: result.kind,
-              durationMs: Math.round(performance.now() - startedAt),
-              ...(result.kind === "failed" ? { error: diagnosticError(result.error) } : {}),
-            },
-          );
+          emit({
+            type: "child.settled",
+            sessionId: bindings.sessionId,
+            childId: child.id,
+            operation: child.kind,
+            outcome: result.kind,
+            durationMs: Math.round(performance.now() - startedAt),
+            ...(result.kind === "failed" ? { error: diagnosticError(result.error) } : {}),
+          });
           if (!ctx.closed) settled(result);
         },
         observe,
       );
-      diagnostic(child.kind === "completion" ? "provider" : "host", "debug", "child.started", {
+      emit({
+        type: "child.started",
         sessionId: bindings.sessionId,
         childId: child.id,
         operation: child.kind,
@@ -246,8 +256,9 @@ export function createHostContext(
               ...operation.failureContext?.operation,
             },
           };
-          diagnostic("host", "warning", "child.timed_out", {
-            ...reason,
+          emit({
+            type: "child.timed_out",
+            reason,
             sessionId: bindings.sessionId,
             childId: child.id,
           });
@@ -258,7 +269,8 @@ export function createHostContext(
     },
     cancel: (child: ChildRef, reason?: Failure) => {
       ctx.revoke(child.id, reason?.message ?? "Tool permission request cancelled");
-      diagnostic("host", "debug", "child.cancellation_requested", {
+      emit({
+        type: "child.cancellation_requested",
         sessionId: bindings.sessionId,
         childId: child.id,
         operation: child.kind,

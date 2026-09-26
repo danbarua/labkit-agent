@@ -4,7 +4,7 @@ import type { TurnCommand } from "../../agent/agent-fsm.ts";
 import { PermissionDecisionsSchema, type PermissionDecisions } from "../../agent/permissions.ts";
 import { failure, ref, type ActorId, type Failure } from "../../agent/types.ts";
 import { freeze } from "../../fsm/fsm.ts";
-import { diagnostic, diagnosticError } from "../../logging/index.ts";
+import { diagnosticError } from "../../logging/index.ts";
 import type { HostContext } from "../context.ts";
 import type { ExecutionContext, HostToolNotification } from "../host.ts";
 import { PermissionResponseSchema, ToolLocationSchema, type ToolLocation } from "../ports.ts";
@@ -82,7 +82,8 @@ export function requestPermission(
                   .array(ToolLocationSchema)
                   .parse(tool.locations(structuredClone(input)));
               } catch (error) {
-                diagnostic("host", "warning", "tool.locations_failed", {
+                host.emit({
+                  type: "tool.locations_failed",
                   ...identity,
                   toolName: call.name,
                   error: diagnosticError(error),
@@ -110,17 +111,14 @@ export function requestPermission(
                 grantId: rememberedGrant,
               };
               decisions.push({ callId: call.id, decision: "allow_once", approval });
-              diagnostic("host", "info", "permission.reused", {
+              host.emit({
+                type: "permission.reused",
                 ...permissionContext,
                 ...approval,
-                reason: "User previously approved this tool for all arguments in this live session",
               });
               continue;
             }
-            diagnostic("host", "info", "permission.waiting", {
-              ...permissionContext,
-              reason: "Tool execution requires user approval; batch execution is blocked",
-            });
+            host.emit({ type: "permission.waiting", ...permissionContext });
             phase = "await_permission";
             const response = PermissionResponseSchema.parse(
               await host.requestPermission(
@@ -158,7 +156,8 @@ export function requestPermission(
                     response.outcome.optionId === "allow-session"
                   ? "allow_once"
                   : "reject_once";
-            diagnostic("host", "info", "permission.decided", {
+            host.emit({
+              type: "permission.decided",
               ...permissionContext,
               decision,
               durationMs: Math.round(performance.now() - permissionStartedAt),
@@ -173,14 +172,9 @@ export function requestPermission(
                   permissionChildId: command.child.id,
                 },
               });
-              diagnostic("host", "warning", "permission.refused", {
+              host.emit({
+                type: "permission.refused",
                 ...permissionContext,
-                operation: "tool_execution",
-                outcome: "blocked",
-                decision,
-                reasonCode: "permission_refused",
-                reason:
-                  "User refused permission for a model-requested tool; the model receives a permission-refused result for this call and the turn continues",
                 toolKind: tool.kind ?? "other",
                 rawInput: call.args,
                 durationMs: Math.round(performance.now() - permissionStartedAt),
@@ -215,15 +209,14 @@ export function requestPermission(
             if (!invalidInput || context.toolFailure !== "return-error-and-continue") throw detail;
             grant.invalidInputs.set(call.id, detail);
             decisions.push({ callId: call.id, decision: "invalid_input", error: detail });
-            diagnostic("host", "warning", "tool.input_rejected", {
+            host.emit({
+              type: "tool.input_rejected",
               sessionId: host.sessionId,
               turnId,
               toolCallId: detail.operation?.id,
               toolName: call.name,
               callId: call.id,
               error: detail,
-              consequence:
-                "Tool will not execute or request approval; validation error will be committed as a tool result for the model to correct",
             });
           }
         }

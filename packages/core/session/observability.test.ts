@@ -2,6 +2,7 @@ import { getLogger } from "@logtape/logtape";
 import { expect, spyOn, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
 
+import type { EffectEvent } from "../effects/index.ts";
 import { defineTool } from "../host/ports.ts";
 import { createSession, restoreSession } from "./session-runtime.ts";
 import {
@@ -321,7 +322,7 @@ test("session logs expose full system instructions actually supplied before and 
     );
     expect(instructions).toHaveLength(2);
     expect(instructions[0]).toMatchObject({
-      level: "info",
+      level: "debug",
       fields: {
         sessionId: session.snapshot.durable.conversation.sessionId,
         agentId: "reviewer",
@@ -361,5 +362,61 @@ test("session logs expose full system instructions actually supplied before and 
   } finally {
     await session.close();
     capture.close();
+  }
+});
+
+test("a session-level effects subscriber receives completion usage and a tool event with correlation IDs", async () => {
+  const events: EffectEvent[] = [];
+  let calls = 0;
+  const session = await createSession({
+    persistence: createMemoryPersistence(),
+    configuration: {
+      agent: "a",
+      agents: new Map([["a", { model: "m", tools: ["echo"] }]]),
+      steps: 3,
+    },
+    bindings: {
+      id: deterministicIds(),
+      effects: (event) => events.push(event),
+      complete: () => {
+        calls++;
+        if (calls === 1)
+          return {
+            completion: {
+              kind: "tools",
+              text: "work",
+              calls: [{ id: "c", name: "echo", args: { text: "ok" } }],
+            },
+            usage: { status: "reported", inputTokens: 5, outputTokens: 2, native: {} },
+          };
+        return { completion: { kind: "answer", text: "done" } };
+      },
+      tools: new Map([
+        ["echo", defineTool({ input: z.object({ text: z.string() }), run: ({ text }) => text })],
+      ]),
+    },
+  });
+  try {
+    await session.input("go").settled;
+    const sessionId = session.snapshot.durable.conversation.sessionId;
+
+    const usageEvent = events.find((event) => event.type === "completion.usage.received");
+    if (usageEvent?.type !== "completion.usage.received") throw new Error("Expected usage event");
+    expect(usageEvent.sessionId).toBe(sessionId);
+    expect(usageEvent.turnId).toBeString();
+    expect(usageEvent.childId).toBeString();
+    expect(usageEvent.usage.status).toBe("reported");
+    if (usageEvent.usage.status !== "reported") throw new Error("Expected reported usage");
+    expect(usageEvent.usage.inputTokens).toBe(5);
+    expect(usageEvent.usage.outputTokens).toBe(2);
+
+    const toolEvent = events.find((event) => event.type === "tool.admitted");
+    if (toolEvent?.type !== "tool.admitted") throw new Error("Expected tool.admitted event");
+    expect(toolEvent.sessionId).toBe(sessionId);
+    expect(toolEvent.turnId).toBeString();
+    expect(toolEvent.callId).toBe("c");
+    expect(toolEvent.toolName).toBe("echo");
+  } finally {
+    await session.close();
   }
 });

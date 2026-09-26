@@ -11,7 +11,7 @@ import {
 } from "../../agent/tool-batch.ts";
 import { failure, type ActorId } from "../../agent/types.ts";
 import { Actor } from "../../fsm/fsm.ts";
-import { diagnostic, diagnosticError } from "../../logging/index.ts";
+import { diagnosticError } from "../../logging/index.ts";
 import type { HostContext } from "../context.ts";
 import type { ExecutionContext, HostToolOutcome } from "../host.ts";
 import { ToolLocationSchema, ToolOutputSchema } from "../ports.ts";
@@ -44,16 +44,14 @@ export function runTools(
     throw new Error("Missing tool permission grant");
   for (const [toolName, grantId] of grant?.remembered ?? []) {
     host.remembered.set(toolName, grantId);
-    diagnostic("host", "info", "permission.granted", {
+    host.emit({
+      type: "permission.granted",
       sessionId: host.sessionId,
       turnId,
       childId: command.child.id,
       toolName,
       grantId,
-      scope: "live-session-tool",
       policyVersion: context.policyVersion,
-      reason:
-        "User approved this tool for all arguments until this session closes, tool scope changes, or permissions are explicitly reset",
     });
   }
   if (command.permission) host.grants.delete(command.permission.id);
@@ -71,7 +69,8 @@ export function runTools(
           name: batchCommand.call.name,
         };
         const refused = grant?.refused.get(batchCommand.call.id);
-        diagnostic("host", "debug", "tool.admitted", {
+        host.emit({
+          type: "tool.admitted",
           ...identity,
           toolName: batchCommand.call.name,
           kind: tool.kind ?? "other",
@@ -84,12 +83,11 @@ export function runTools(
                 : "not_required",
         });
         if (refused) {
-          diagnostic("host", "info", "tool.refused", {
+          host.emit({
+            type: "tool.refused",
             ...identity,
             toolName: batchCommand.call.name,
-            permissionChildId: command.permission?.id,
-            reason:
-              "Not run: user refused permission (see permission.refused); the model receives a permission-refused result",
+            ...(command.permission ? { permissionChildId: command.permission.id } : {}),
           });
           if (!host.closed)
             host.notifyTool({
@@ -166,7 +164,8 @@ export function runTools(
                   const locations = z
                     .array(ToolLocationSchema)
                     .parse(tool.locations(structuredClone(input)));
-                  diagnostic("host", "debug", "tool.locations_resolved", {
+                  host.emit({
+                    type: "tool.locations_resolved",
                     ...identity,
                     toolName: batchCommand.call.name,
                     locations,
@@ -177,7 +176,8 @@ export function runTools(
                     locations,
                   });
                 } catch (error) {
-                  diagnostic("host", "warning", "tool.locations_failed", {
+                  host.emit({
+                    type: "tool.locations_failed",
                     sessionId: host.sessionId,
                     childId: batchCommand.child.id,
                     toolName: batchCommand.call.name,
@@ -230,12 +230,11 @@ export function runTools(
               batch,
               toolFailure: context.toolFailure,
             });
-            diagnostic("host", "debug", "tool.awaiting_release", {
+            host.emit({
+              type: "tool.awaiting_release",
               ...identity,
               toolName: batchCommand.call.name,
               outcome: result.kind,
-              reason:
-                "Result reported; awaiting caller release (session journal receipt when durable)",
             });
             host.reportTool(outcome);
           },
@@ -249,18 +248,15 @@ export function runTools(
                     ? "in_progress"
                     : "pending";
             if (next === status) return;
-            diagnostic(
-              "host",
-              state.status === "failed" ? "warning" : "debug",
-              "tool.status_changed",
-              {
-                ...identity,
-                toolName: batchCommand.call.name,
-                previousStatus: status,
-                status: next,
-                ...(state.status === "failed" ? { error: diagnosticError(state.error) } : {}),
-              },
-            );
+            host.emit({
+              type: "tool.status_changed",
+              ...identity,
+              toolName: batchCommand.call.name,
+              previousStatus: status,
+              status: next,
+              rawStatus: state.status,
+              ...(state.status === "failed" ? { error: diagnosticError(state.error) } : {}),
+            });
             status = next;
             host.notifyTool({
               ...identity,

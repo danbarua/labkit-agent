@@ -26,7 +26,7 @@ session does not close caller-owned persistence or global logging.
 Use full capture when you need to inspect exactly what reached a provider, especially malformed
 JSON or a truncated stream. The journal records admitted runtime data; it cannot substitute for a
 raw response that failed admission. Diagnostic logs retain causes, identities, and the full ordered system messages in
-`completion.system_prompt` at INFO. Complete user/file bodies and provider responses require capture.
+`completion.system_prompt` at DEBUG. Complete user/file bodies and provider responses require capture.
 
 ```ts
 import { createProviderCapture } from "@labkit-agent/core/environment/provider-capture";
@@ -51,8 +51,28 @@ Bind the same capture to model transports used inside tools and pass their `Tool
 correlation. This distinguishes a growing coordinator history from independent extraction calls.
 Scripted completion-port invocations are labeled separately: they do not establish HTTP evidence.
 
-This Bun disk sink retains full content until the application removes it. Choose quotas and retention
-for that workload; no implicit pruning is supplied. A capture write failure fails the operation
-instead of claiming evidence was retained. This is intentionally stronger than best-effort diagnostic
-logging. Configure [bounded lifecycle logs](../logging/README.md) separately; those remain necessary
-when capture is disabled.
+`createProviderCapture` retains full content until the application removes it; choose quotas and
+retention for a one-off diagnostic run. A capture write failure fails the operation instead of
+claiming evidence was retained. This is intentionally stronger than best-effort diagnostic
+logging. Configure [bounded lifecycle logs](../logging/README.md) separately; those remain
+necessary when capture is disabled.
+
+### A long-running launcher's side-car trace
+
+`openHttpTrace(root, options?)` is for a process that opens many sessions over its lifetime, such
+as the ACP workspace launcher or the web server. `root` must be an absolute path (it is also
+`resolve()`d; a relative path, including `.`, throws) — never trust an environment variable's
+value as a directory to prune blindly. It prunes recognized capture run directories under `root`
+beyond the newest `options.keep` (default 20, mirroring the ACP launcher's own log retention),
+skipping any run whose name embeds a still-alive process ID, then starts one fresh run: a
+directory holding `manifest.jsonl`, one JSON line appended per request/response event, never
+rewritten, so recording a call costs one append rather than a rewrite of every call recorded so
+far. Bind its `capture` to every provider's `transport.capture` for that process; every session
+opened from it shares the current run until it rotates to a fresh directory after
+`options.maxCalls` calls (default 2000) or once its manifest would exceed `options.maxBytes`
+(default 64 MiB), pruning old runs again at each rotation. Only directories `pruneProviderCaptures`
+recognizes as capture runs (a run-shaped name, a directory, holding `manifest.json` or
+`manifest.jsonl`) are ever candidates for removal; anything else under `root` is left untouched.
+Call `pruneProviderCaptures(root, keep)` directly to reclaim space without opening a new run. See
+the [ACP launcher wiring](../../acp/README.md#find-an-operational-failure) for the
+`LABKIT_HTTP_TRACE_DIR` environment variable that gates this in the shipped launcher.

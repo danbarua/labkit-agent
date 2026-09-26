@@ -218,6 +218,12 @@ consumer runs retain diagnostics and full traffic under `.session-artifacts/cons
 `.session-artifacts/peer-review/<run-id>`. WARNING/ERROR records explain failures; routine success
 emits no warning. Capture storage is caller-owned and separate from bounded diagnostic logging.
 
+Those event families are [effects](../effects/README.md), emitted from `httpTransport` and
+`bindProviders(...).complete`, not logged directly. `TransportBinding.effects` subscribes to this
+binding's provider-side events (metadata only, never request/response bodies); it is always
+combined with the default diagnostics subscriber above, never replacing it. Bind
+`TransportBinding.capture` separately for full bodies.
+
 ## Attachments
 
 `session.model.capabilities.media` is three-valued per media kind (D3): `supported` (a bound

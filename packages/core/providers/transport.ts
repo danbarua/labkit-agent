@@ -8,8 +8,9 @@ import {
   type MediaSupport,
 } from "../agent/content.ts";
 import { CompletionSchema } from "../agent/types.ts";
+import { diagnosticsSubscriber, fanoutEffects, type EffectEmitter } from "../effects/index.ts";
 import { freeze } from "../fsm/fsm.ts";
-import { diagnostic, diagnosticError, redactDiagnostics } from "../logging/index.ts";
+import { diagnosticError, redactDiagnostics } from "../logging/index.ts";
 import { HANDOFF_TOOL } from "./shared.ts";
 import { assembleStream } from "./stream.ts";
 import {
@@ -46,6 +47,16 @@ export type ProviderCapture = (
   }>,
 ) => void | Promise<void>;
 
+/**
+ * Independent, frozen copy of a value about to be handed to an effect subscriber. Some payloads
+ * (for example `bindProviders(...).complete`'s `trace`) are still-mutable local state at the time
+ * they are first emitted; without this, a subscriber that freezes what it receives, or simply
+ * inspects it later, would see a different, or throw on, a value the runtime goes on to mutate.
+ */
+function snapshot<T>(value: T): T {
+  return freeze(structuredClone(value));
+}
+
 /** Numeric usage and terminal reasons only; never copy generated content. */
 function responseEvidence(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object") return {};
@@ -74,6 +85,8 @@ export type TransportBinding = Readonly<{
   capture?: ProviderCapture;
   /** Supply unique IDs for retained HTTP evidence; defaults to crypto.randomUUID. */
   requestId?: () => string;
+  /** Subscriber for this provider's HTTP/stream effect events; always logged, additionally routed here. */
+  effects?: EffectEmitter;
 }>;
 
 export function httpTransport(binding: TransportBinding, legacyChatErrors = false) {
@@ -87,6 +100,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
   const headers = { ...binding.headers };
   const fetcher = binding.fetch ?? fetch;
   const captureSink = binding.capture;
+  const emit = fanoutEffects(diagnosticsSubscriber(), binding.effects);
   const requestId = binding.requestId ?? (() => crypto.randomUUID());
   // Remove actual configured credentials even when a provider echoes them in prose.
   const secrets = Object.entries(headers)
@@ -141,7 +155,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
       });
       signal.throwIfAborted();
       phase = "fetch";
-      diagnostic("provider", "debug", "provider.http.started", trace);
+      emit({ type: "provider.http.started", trace });
       const response = await fetcher(base + request.path + query, {
         method: request.method,
         ...(legacyChatErrors ? {} : { redirect: "error" as const }),
@@ -160,13 +174,13 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
         durationMs: Math.round(performance.now() - started),
       };
       responseMetadata = evidence;
-      diagnostic("provider", "debug", "provider.http.received", evidence);
+      emit({ type: "provider.http.received", evidence });
       signal.throwIfAborted();
       if (!response.ok) {
         phase = "http_error";
         const errorBody = redact(await response.text());
         responseBody = errorBody;
-        diagnostic("provider", "warning", "provider.http.rejected", { ...evidence, errorBody });
+        emit({ type: "provider.http.rejected", evidence, errorBody });
         throw Object.assign(
           new Error(
             `${legacyChatErrors ? "OpenAI-compatible API request failed" : "Completion HTTP failure"} (${response.status})${providerRequestId ? ` [request ${providerRequestId}]` : ""}: ${errorBody}`,
@@ -183,6 +197,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
           streaming.sink,
           evidence,
           secrets,
+          emit,
           async (chunk) => {
             responseBody += chunk;
             await capture("http_response", {
@@ -200,8 +215,9 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
           ...responseEvidence(body),
           outcome: "received",
         });
-        diagnostic("provider", "debug", "provider.http.completed", {
-          ...evidence,
+        emit({
+          type: "provider.http.completed",
+          evidence,
           durationMs: Math.round(performance.now() - started),
         });
         return { status: response.status, headers: response.headers, body };
@@ -221,8 +237,9 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
         ...responseEvidence(body),
       });
       signal.throwIfAborted();
-      diagnostic("provider", "debug", "provider.http.completed", {
-        ...evidence,
+      emit({
+        type: "provider.http.completed",
+        evidence,
         durationMs: Math.round(performance.now() - started),
       });
       return { status: response.status, headers: response.headers, body };
@@ -234,16 +251,22 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
         phase,
         error: safeError,
       });
-      diagnostic(
-        "provider",
-        signal.aborted ? "info" : "warning",
-        signal.aborted ? "provider.http.cancelled" : "provider.http.failed",
-        {
-          ...trace,
-          phase,
-          durationMs: Math.round(performance.now() - started),
-          error: safeError,
-        },
+      emit(
+        signal.aborted
+          ? {
+              type: "provider.http.cancelled",
+              trace,
+              phase,
+              durationMs: Math.round(performance.now() - started),
+              error: safeError,
+            }
+          : {
+              type: "provider.http.failed",
+              trace,
+              phase,
+              durationMs: Math.round(performance.now() - started),
+              error: safeError,
+            },
       );
       throw Object.assign(
         new Error(String(safeError.message ?? "Provider request failed"), { cause: safeError }),
@@ -372,6 +395,7 @@ export function bindProviders(bindings: ProviderBindings) {
           http: httpTransport(binding.transport),
           requestId: binding.transport.requestId ?? (() => crypto.randomUUID()),
           capture,
+          emit: fanoutEffects(diagnosticsSubscriber(), binding.transport.effects),
           secrets,
           models: binding.models
             ? new Map(
@@ -476,7 +500,8 @@ export function bindProviders(bindings: ProviderBindings) {
       };
       let phase = "validate";
       let terminalEvidence: Record<string, unknown> = {};
-      diagnostic("provider", "debug", "provider.completion.started", trace);
+      const emit = bound.get(request.provider ?? "")?.emit ?? diagnosticsSubscriber();
+      emit({ type: "provider.completion.started", trace: snapshot(trace) });
       try {
         if (!request.provider) throw new Error("Prepared request has no provider");
         ProviderSettingsSchema.parse({
@@ -549,12 +574,11 @@ export function bindProviders(bindings: ProviderBindings) {
                 ),
               );
         if (usage?.status === "invalid")
-          diagnostic("provider", "warning", "provider.usage.invalid", {
-            ...trace,
-            ...terminalEvidence,
+          emit({
+            type: "provider.usage.invalid",
+            trace: snapshot(trace),
+            terminalEvidence: snapshot(terminalEvidence),
             error: usage.error,
-            message:
-              "Provider returned invalid token accounting; completion remains usable, accounting is retained without normalized counts",
           });
         if (result.kind === "handoff" && !input.successors.includes(result.agent))
           throw new Error("Unpermitted handoff target");
@@ -574,10 +598,11 @@ export function bindProviders(bindings: ProviderBindings) {
           phase,
           outcome: "completed",
         });
-        diagnostic("provider", "info", "provider.completion.completed", {
-          ...trace,
+        emit({
+          type: "provider.completion.completed",
+          trace: snapshot(trace),
+          terminalEvidence: snapshot(terminalEvidence),
           durationMs: Math.round(performance.now() - started),
-          ...terminalEvidence,
           completionKind: result.kind,
           continuation: decoded.continuationPayload !== undefined,
         });
@@ -592,17 +617,24 @@ export function bindProviders(bindings: ProviderBindings) {
           outcome: signal.aborted ? "cancelled" : "failed",
           error: safeError,
         });
-        diagnostic(
-          "provider",
-          signal.aborted ? "info" : "warning",
-          signal.aborted ? "provider.completion.cancelled" : "provider.completion.failed",
-          {
-            ...trace,
-            ...terminalEvidence,
-            phase,
-            durationMs: Math.round(performance.now() - started),
-            error: diagnosticError(error),
-          },
+        emit(
+          signal.aborted
+            ? {
+                type: "provider.completion.cancelled",
+                trace: snapshot(trace),
+                terminalEvidence: snapshot(terminalEvidence),
+                phase,
+                durationMs: Math.round(performance.now() - started),
+                error: diagnosticError(error),
+              }
+            : {
+                type: "provider.completion.failed",
+                trace: snapshot(trace),
+                terminalEvidence: snapshot(terminalEvidence),
+                phase,
+                durationMs: Math.round(performance.now() - started),
+                error: diagnosticError(error),
+              },
         );
         throw Object.assign(
           new Error(String(safeError.message ?? "Completion failed"), { cause: safeError }),

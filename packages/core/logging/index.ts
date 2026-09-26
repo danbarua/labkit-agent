@@ -15,6 +15,9 @@ export {
 
 export type DiagnosticFields = Readonly<Record<string, unknown>>;
 
+/** A caught error, redacted and flattened by {@link diagnosticError}: identity, stack, cause, code. */
+export type DiagnosticError = Readonly<Record<string, unknown>>;
+
 const secretField =
   /^(?:api[-_]?key|x[-_]api[-_]key|authorization|proxy[-_]authorization|password|client[-_]?secret|access[-_]?token|refresh[-_]?token|id[-_]?token|cookie|set-cookie)$/i;
 
