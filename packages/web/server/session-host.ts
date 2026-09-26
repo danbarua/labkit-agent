@@ -166,7 +166,6 @@ function publish(hosted: Hosted, event: ConsoleEvent) {
 }
 
 function toMessageView(view: MessageView): WebMessageView {
-  if (view.role === "tool") return { role: "tool", text: view.text, callId: view.callId };
   const attachments = view.blobs.length
     ? view.blobs.map(({ id, media, bytes, name }) => ({
         id,
@@ -175,6 +174,13 @@ function toMessageView(view: MessageView): WebMessageView {
         ...(name ? { name } : {}),
       }))
     : undefined;
+  if (view.role === "tool")
+    return {
+      role: "tool",
+      text: view.text,
+      callId: view.callId,
+      ...(attachments ? { attachments } : {}),
+    };
   return {
     role: view.role,
     text: view.text,

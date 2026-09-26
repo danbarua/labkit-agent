@@ -72,8 +72,9 @@ than 256 KiB; local reads scan with bounded memory and retain original line endi
 EOF returns empty text. A single selected line larger than the result cap is rejected explicitly.
 `read_file` also accepts a `blob://<sha256>.<ext>` path (D4): the pointer text prompt projection
 renders for a media part the target model cannot, or might not, read. A text blob (`text/plain`,
-`text/markdown`) resolves to its content; a binary blob resolves to its pointer metadata only —
-tool results cannot yet carry an image or attachment part. Requires a bound `SessionPersistence`
+`text/markdown`) resolves to its content; a binary blob resolves to a tool result carrying that blob
+as a part, which the next step's projection sends to a target that reads the medium and renders as
+pointer text for one that does not. Requires a bound `SessionPersistence`
 (`workspaceTools`'s third argument); without one, resolving a `blob://` path fails explicitly.
 The same range is forwarded to `fs/read_text_file` when the client owns reads, preserving unsaved
 editor content rather than substituting disk contents. Listings are shallow and capped at 1,000 entries and 256 KiB of entry data. Writes
@@ -564,10 +565,10 @@ by SHA-256, `blob://<sha256>.<ext>`); the text envelope replaces it with a `reso
 URI (base64 never appears in text), and `tool_call_update` also carries the link as a rendered
 content item. A provider whose bound profile has that media in its capabilities encodes the blob
 natively from the tool result's stored parts (for example Anthropic `tool_result` image/document
-content blocks, Google `functionResponse` sibling `inlineData` parts). A provider without that
-capability does not yet get a graceful pointer: the whole-history media gate (`session/blobs.ts`)
-still fails the turn before the next request is built, pending its planned replacement with
-pointer rendering. Results and input schemas are limited to 256 KiB; each server may expose at
+content blocks, Google `functionResponse` sibling `inlineData` parts). For a target that cannot, or
+might not, read that media (for example after switching to a text-only model), the next step's
+projection renders the part as pointer text (`[<media>, <size>: blob://<sha256>.<ext>]`, logged as
+`prompt.media.pointer`) and the turn continues. Results and input schemas are limited to 256 KiB; each server may expose at
 most 256 tools, with at most 32 servers per session. Initialization/list requests time out after
 15 seconds; tool calls time out after 60 seconds. Cancellation sends the MCP cancellation notification;
 remote effects already started cannot be undone. Session close/disconnect also closes the transports

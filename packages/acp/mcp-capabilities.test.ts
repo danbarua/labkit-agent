@@ -1,16 +1,24 @@
 /** End-to-end proof for advertised `mcpCapabilities` and baseline stdio MCP through real handlers. */
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { McpServer, SessionNotification } from "@agentclientprotocol/sdk";
 import type { CompletionPortRequest } from "@labkit-agent/core";
-import { anthropicMessagesV2 } from "@labkit-agent/core/providers";
+import {
+  anthropicMessagesV2,
+  anthropicMessagesV3,
+  openaiResponsesV3,
+  type StreamEvent,
+} from "@labkit-agent/core/providers";
 import { createMemoryPersistence } from "@labkit-agent/core/testing";
 import { withConfig, type LogRecord } from "@logtape/logtape";
 import { expect, test } from "@logtape/testing-bun/autoload";
+import { z } from "zod";
 
+import { streamResponse, streamVector } from "../core/providers/testing/stream-vectors.ts";
 import type { AcpOptions } from "./adapter.ts";
+import { workspaceAgent } from "./examples/vscode-workspace.ts";
 import { mcpToolName } from "./mcp.ts";
 import { harness, setup, type Message } from "./testing/harness.ts";
 import { mcpHttpFixture } from "./testing/mcp-http.ts";
@@ -590,5 +598,137 @@ test("D4: a media-capable Anthropic request carries an MCP-returned image in too
   } finally {
     await h.close();
     await server.close();
+  }
+});
+
+/** An Anthropic stream whose only content is one `tool_use` block for `name` with `input`. */
+function anthropicToolUse(name: string, input: unknown): StreamEvent[] {
+  const named = (data: { type: string; [key: string]: unknown }): StreamEvent => ({
+    event: data.type,
+    data: JSON.stringify(data),
+  });
+  return [
+    named({
+      type: "message_start",
+      message: {
+        id: "msg",
+        role: "assistant",
+        content: [],
+        stop_reason: null,
+        usage: { input_tokens: 1 },
+      },
+    }),
+    named({
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "tool_use", id: "call-1", name, input: {} },
+    }),
+    named({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "input_json_delta", partial_json: JSON.stringify(input) },
+    }),
+    named({ type: "content_block_stop", index: 0 }),
+    named({
+      type: "message_delta",
+      delta: { stop_reason: "tool_use" },
+      usage: { output_tokens: 1 },
+    }),
+    named({ type: "message_stop" }),
+  ];
+}
+
+test("D4: an MCP-returned image reaches Anthropic as a tool_result image and, after switching to openai/gpt-5.4, is sent as a blob:// pointer while the turn succeeds", async () => {
+  const server = await mcpServer("stdio");
+  const cwd = await realpath(await mkdtemp(join(tmpdir(), "labkit-mcp-pointer-")));
+  const requests: { host: string; body: unknown }[] = [];
+  const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input instanceof Request ? input.url : input));
+    if (url.pathname.endsWith("/models")) throw new Error("connect ECONNREFUSED 127.0.0.1:8000");
+    requests.push({ host: url.host, body: JSON.parse(String(init?.body)) });
+    if (!url.host.includes("anthropic")) return streamResponse(streamVector(openaiResponsesV3));
+    return streamResponse(
+      requests.length === 1
+        ? anthropicToolUse(echo, { text: "binary" })
+        : streamVector(anthropicMessagesV3),
+    );
+  }) as unknown as typeof fetch;
+  const records: LogRecord[] = [];
+  try {
+    await withConfig(
+      {
+        sinks: { memory: (record) => void records.push(record) },
+        loggers: [{ category: ["labkit"], lowestLevel: "debug", sinks: ["memory"] }],
+      },
+      async () => {
+        const h = harness(
+          workspaceAgent(
+            { ANTHROPIC_API_KEY: "pointer-anthropic", OPENAI_API_KEY: "pointer-openai" },
+            undefined,
+            { fetch: fetcher },
+          ),
+        );
+        try {
+          await h.initialize();
+          const sessionId = (await h.request("session/new", { cwd, mcpServers: [server.spec] }))
+            .result.sessionId as string;
+          const set = async (configId: string, value: string) =>
+            expect(
+              (await h.request("session/set_config_option", { sessionId, configId, value })).error,
+            ).toBeUndefined();
+          await set("model", "anthropic/claude-sonnet-5");
+          await set("permissions", "off");
+
+          expect((await h.request("session/prompt", say(sessionId, "go"))).result).toEqual({
+            stopReason: "end_turn",
+          });
+          expect(requests.map((request) => request.host)).toEqual([
+            "api.anthropic.com",
+            "api.anthropic.com",
+          ]);
+          const anthropicBody = z
+            .object({ messages: z.array(z.object({ content: z.unknown() })) })
+            .parse(requests[1]!.body);
+          const toolResult = anthropicBody.messages
+            .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+            .find((block) => z.object({ type: z.literal("tool_result") }).safeParse(block).success);
+          expect(toolResult).toMatchObject({
+            tool_use_id: "call-1",
+            content: expect.arrayContaining([
+              { type: "image", source: { type: "base64", media_type: "image/png", data: "AA==" } },
+            ]),
+          });
+
+          await set("model", "openai/gpt-5.4");
+          expect((await h.request("session/prompt", say(sessionId, "again"))).result).toEqual({
+            stopReason: "end_turn",
+          });
+          expect(requests).toHaveLength(3);
+          expect(requests[2]!.host).toBe("api.openai.com");
+          const openaiBody = JSON.stringify(requests[2]!.body);
+          expect(openaiBody).toMatch(/\[image\/png, 1 B: blob:\/\/[a-f0-9]{64}\.png\]/);
+          expect(openaiBody).not.toContain("AA==");
+          expect(openaiBody).not.toContain("input_image");
+        } finally {
+          await h.close();
+        }
+      },
+    );
+    const pointers = records.filter((record) => record.properties.event === "prompt.media.pointer");
+    expect(pointers).toHaveLength(1);
+    expect(pointers[0]!.level).toBe("debug");
+    expect(pointers[0]!.properties).toMatchObject({
+      provider: "openai",
+      model: "gpt-5.4",
+      media: "image/png",
+      bytes: 1,
+      support: "unsupported",
+      turnId: expect.any(String),
+      childId: expect.any(String),
+    });
+    expect(records.some((record) => record.level === "error")).toBe(false);
+  } finally {
+    await server.close();
+    await rm(cwd, { recursive: true, force: true });
   }
 });

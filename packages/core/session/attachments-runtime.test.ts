@@ -402,7 +402,6 @@ test("public user input requires content, accepts empty attachment lists with te
   await session.close();
 });
 
-
 test("Anthropic v2 prepares and encodes PDF as a document block", async () => {
   const { opts, bodies } = setup(anthropicMessagesV2);
   const session = await createSession(opts);

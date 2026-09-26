@@ -56,13 +56,21 @@ export function workspaceTools(
             );
             if ("kind" in loaded) throw new Error(`Blob not found: ${path}`);
             const { meta, bytes } = loaded;
-            if (meta.media !== "text/plain" && meta.media !== "text/markdown")
+            if (meta.media !== "text/plain" && meta.media !== "text/markdown") {
+              const text = `Attachment ${renderBlobPointer(meta)}`;
               return {
-                path,
-                text:
-                  `${renderBlobPointer(meta)} is binary; the current tool result format cannot ` +
-                  "return its bytes as an image or attachment part.",
+                text,
+                parts: [
+                  { type: "text", text },
+                  {
+                    type: "blob",
+                    bytes,
+                    media: meta.media,
+                    ...(meta.name ? { name: meta.name } : {}),
+                  },
+                ],
               };
+            }
             const full = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
             const lines = full.split("\n");
             const start = (line ?? 1) - 1;

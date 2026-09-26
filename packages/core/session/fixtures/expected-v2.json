@@ -183,8 +183,7 @@
                 "type": "user",
                 "text": "What does a session retain?"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -214,8 +213,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -366,8 +364,7 @@
                 "type": "user",
                 "text": "What does a session retain?"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -397,8 +394,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -751,8 +747,7 @@
                 "type": "user",
                 "text": "Summarize the design note."
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -791,8 +786,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -823,8 +817,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -868,8 +861,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -899,8 +891,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -931,6 +922,52 @@
           {
             "role": "user",
             "content": "Summarize the design note."
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "read_note",
+              "parameters": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": ["name"]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "model": "example-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Summarize the design note."
+          },
+          {
+            "role": "assistant",
+            "content": "I will read the design note.",
+            "tool_calls": [
+              {
+                "id": "read-design",
+                "type": "function",
+                "function": {
+                  "name": "read_note",
+                  "arguments": "{\"name\":\"design\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "content": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
+            "tool_call_id": "read-design"
           }
         ],
         "tools": [
@@ -1011,22 +1048,19 @@
                     }
                   }
                 ]
+              },
+              {
+                "role": "tool",
+                "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
+                "callId": "read-design"
+              },
+              {
+                "role": "assistant",
+                "text": "I could not read the design note; permission was refused."
               }
             ],
             "outcome": {
-              "kind": "failed",
-              "error": {
-                "message": "Tool permission rejected",
-                "classification": "permission_refused",
-                "operation": {
-                  "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
-                  "kind": "permission",
-                  "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-                  "toolName": "read_note",
-                  "callId": "read-design"
-                },
-                "phase": "permission"
-              }
+              "kind": "completed"
             }
           }
         }
@@ -1068,22 +1102,19 @@
                       }
                     }
                   ]
+                },
+                {
+                  "role": "tool",
+                  "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
+                  "callId": "read-design"
+                },
+                {
+                  "role": "assistant",
+                  "text": "I could not read the design note; permission was refused."
                 }
               ],
               "outcome": {
-                "kind": "failed",
-                "error": {
-                  "message": "Tool permission rejected",
-                  "classification": "permission_refused",
-                  "operation": {
-                    "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
-                    "kind": "permission",
-                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-                    "toolName": "read_note",
-                    "callId": "read-design"
-                  },
-                  "phase": "permission"
-                }
+                "kind": "completed"
               }
             }
           ],
@@ -1136,7 +1167,7 @@
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
-        "revision": 5,
+        "revision": 8,
         "records": [
           {
             "version": 2,
@@ -1213,8 +1244,7 @@
                 "type": "user",
                 "text": "Summarize the design note."
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -1253,8 +1283,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -1285,34 +1314,109 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000005/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000005",
+            "body": {
+              "kind": "tool",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "batchId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "callId": "read-design",
+              "result": {
+                "kind": "failed",
+                "error": {
+                  "message": "Permission refused by the user",
+                  "classification": "permission_refused",
+                  "operation": {
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/3/read-design",
+                    "kind": "tool",
+                    "sessionId": "00000000-0000-4000-8000-000000000001",
+                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                    "toolName": "read_note",
+                    "callId": "read-design"
+                  },
+                  "phase": "permission",
+                  "details": {
+                    "requestId": "00000000-0000-4000-8000-000000000001/turn/1/2/read-design",
+                    "permissionChildId": "00000000-0000-4000-8000-000000000001/turn/1/2"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 6,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                "event": {
+                  "type": "batch_settled",
+                  "child": {
+                    "kind": "batch",
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/3"
+                  },
+                  "outcome": {
+                    "kind": "succeeded"
+                  }
+                }
+              },
+              "systemVersion": 0
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 7,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                "event": {
+                  "type": "model_settled",
+                  "model": "example-model",
+                  "child": {
+                    "kind": "completion",
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/4"
+                  },
+                  "result": {
+                    "kind": "succeeded",
+                    "value": {
+                      "kind": "answer",
+                      "text": "I could not read the design note; permission was refused."
+                    }
+                  }
+                }
+              },
+              "systemVersion": 0
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 8,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007",
             "body": {
               "kind": "terminal",
               "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
               "agent": "reviewer",
               "outcome": {
-                "kind": "failed",
-                "error": {
-                  "message": "Tool permission rejected",
-                  "classification": "permission_refused",
-                  "operation": {
-                    "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
-                    "kind": "permission",
-                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-                    "toolName": "read_note",
-                    "callId": "read-design"
-                  },
-                  "phase": "permission"
-                }
+                "kind": "completed"
               }
             }
           }
@@ -1346,7 +1450,7 @@
           "kind": "accepted",
           "receipt": {
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000002",
             "revision": 2
           }
         }
@@ -1393,7 +1497,7 @@
           "kind": "accepted",
           "receipt": {
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000005",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000005",
             "revision": 6
           }
         }
@@ -1610,16 +1714,10 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 2,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000002/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000002",
             "body": {
               "kind": "policy",
-              "patch": {
-                "steps": 1,
-                "tools": {
-                  "a": []
-                }
-              },
               "policy": {
                 "id": "default@1",
                 "version": 1,
@@ -1648,8 +1746,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -1679,8 +1776,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -1702,13 +1798,10 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 6,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000005/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000005",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000005/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000005",
             "body": {
               "kind": "policy",
-              "patch": {
-                "steps": 0
-              },
               "policy": {
                 "id": "default@1",
                 "version": 2,
@@ -1737,8 +1830,7 @@
                 "type": "user",
                 "text": "No allowance"
               },
-              "systemVersion": 0,
-              "policyVersion": 2
+              "systemVersion": 0
             }
           },
           {
@@ -1937,16 +2029,10 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 2,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000002",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000002/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000002",
             "body": {
               "kind": "policy",
-              "patch": {
-                "steps": 1,
-                "tools": {
-                  "a": []
-                }
-              },
               "policy": {
                 "id": "default@1",
                 "version": 1,
@@ -1975,8 +2061,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -2006,8 +2091,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -2029,13 +2113,10 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 6,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000005/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000005",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000005/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000005",
             "body": {
               "kind": "policy",
-              "patch": {
-                "steps": 0
-              },
               "policy": {
                 "id": "default@1",
                 "version": 2,
@@ -2064,8 +2145,7 @@
                 "type": "user",
                 "text": "No allowance"
               },
-              "systemVersion": 0,
-              "policyVersion": 2
+              "systemVersion": 0
             }
           },
           {
@@ -2190,7 +2270,22 @@
         "op": "policy",
         "session": "root",
         "receipt": {
-          "kind": "busy"
+          "kind": "selected",
+          "id": "00000000-0000-4000-8000-000000000004",
+          "policy": {
+            "id": "queued@1",
+            "version": 1,
+            "steps": 9,
+            "admission": "queue-user",
+            "bargeIn": false,
+            "toolFailure": "fail-turn",
+            "project": "history@1",
+            "handoff": "handoff-slim@1",
+            "tools": {
+              "a": ["echo"],
+              "b": ["echo"]
+            }
+          }
         }
       },
       {
@@ -2231,7 +2326,7 @@
             "status": "idle",
             "id": "00000000-0000-4000-8000-000000000001/turn/3",
             "agent": "a",
-            "steps": 4
+            "steps": 9
           },
           "log": [
             {
@@ -2267,7 +2362,7 @@
               }
             }
           ],
-          "allowance": 4,
+          "allowance": 9,
           "sequence": 3,
           "pending": []
         },
@@ -2308,8 +2403,8 @@
         },
         "policy": {
           "id": "queued@1",
-          "version": 0,
-          "steps": 4,
+          "version": 1,
+          "steps": 9,
           "admission": "queue-user",
           "bargeIn": false,
           "toolFailure": "fail-turn",
@@ -2324,7 +2419,7 @@
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
-        "revision": 8,
+        "revision": 9,
         "records": [
           {
             "version": 2,
@@ -2409,8 +2504,7 @@
                 "type": "user",
                 "text": "First"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -2453,8 +2547,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -2476,18 +2569,42 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 6,
-            "entryId": "00000000-0000-4000-8000-000000000001/dequeue/00000000-0000-4000-8000-000000000003/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/dequeue/00000000-0000-4000-8000-000000000003",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004",
             "body": {
-              "kind": "dequeued",
-              "inputId": "00000000-0000-4000-8000-000000000003",
-              "policyVersion": 0
+              "kind": "policy",
+              "policy": {
+                "id": "queued@1",
+                "version": 1,
+                "steps": 9,
+                "admission": "queue-user",
+                "bargeIn": false,
+                "toolFailure": "fail-turn",
+                "project": "history@1",
+                "handoff": "handoff-slim@1",
+                "tools": {
+                  "a": ["echo"],
+                  "b": ["echo"]
+                }
+              }
             }
           },
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 7,
+            "entryId": "00000000-0000-4000-8000-000000000001/dequeue/00000000-0000-4000-8000-000000000003/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/dequeue/00000000-0000-4000-8000-000000000003",
+            "body": {
+              "kind": "dequeued",
+              "inputId": "00000000-0000-4000-8000-000000000003",
+              "policyVersion": 1
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 8,
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
@@ -2511,14 +2628,13 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 8,
+            "revision": 9,
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
@@ -2545,7 +2661,7 @@
             "status": "idle",
             "id": "00000000-0000-4000-8000-000000000001/turn/3",
             "agent": "a",
-            "steps": 4
+            "steps": 9
           },
           "log": [
             {
@@ -2581,7 +2697,7 @@
               }
             }
           ],
-          "allowance": 4,
+          "allowance": 9,
           "sequence": 3,
           "pending": []
         },
@@ -2622,8 +2738,8 @@
         },
         "policy": {
           "id": "queued@1",
-          "version": 0,
-          "steps": 4,
+          "version": 1,
+          "steps": 9,
           "admission": "queue-user",
           "bargeIn": false,
           "toolFailure": "fail-turn",
@@ -2638,7 +2754,7 @@
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
-        "revision": 8,
+        "revision": 9,
         "records": [
           {
             "version": 2,
@@ -2723,8 +2839,7 @@
                 "type": "user",
                 "text": "First"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -2767,8 +2882,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -2790,18 +2904,42 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 6,
-            "entryId": "00000000-0000-4000-8000-000000000001/dequeue/00000000-0000-4000-8000-000000000003/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/dequeue/00000000-0000-4000-8000-000000000003",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004",
             "body": {
-              "kind": "dequeued",
-              "inputId": "00000000-0000-4000-8000-000000000003",
-              "policyVersion": 0
+              "kind": "policy",
+              "policy": {
+                "id": "queued@1",
+                "version": 1,
+                "steps": 9,
+                "admission": "queue-user",
+                "bargeIn": false,
+                "toolFailure": "fail-turn",
+                "project": "history@1",
+                "handoff": "handoff-slim@1",
+                "tools": {
+                  "a": ["echo"],
+                  "b": ["echo"]
+                }
+              }
             }
           },
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 7,
+            "entryId": "00000000-0000-4000-8000-000000000001/dequeue/00000000-0000-4000-8000-000000000003/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/dequeue/00000000-0000-4000-8000-000000000003",
+            "body": {
+              "kind": "dequeued",
+              "inputId": "00000000-0000-4000-8000-000000000003",
+              "policyVersion": 1
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 8,
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
@@ -2825,14 +2963,13 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "revision": 8,
+            "revision": 9,
             "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/1",
             "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
             "body": {
@@ -3089,8 +3226,7 @@
                 "type": "user",
                 "text": "First"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -3293,8 +3429,7 @@
                 "type": "user",
                 "text": "First"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -3738,8 +3873,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -3785,8 +3919,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -3863,8 +3996,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -3894,8 +4026,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -4120,8 +4251,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -4167,8 +4297,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -4245,8 +4374,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -4276,8 +4404,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -4659,8 +4786,7 @@
                 "type": "user",
                 "text": "Old"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -4706,8 +4832,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -4753,8 +4878,7 @@
               "event": {
                 "type": "abort"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -4779,8 +4903,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -4846,8 +4969,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -5088,8 +5210,7 @@
                 "type": "user",
                 "text": "Old"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -5135,8 +5256,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -5182,8 +5302,7 @@
               "event": {
                 "type": "abort"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -5208,8 +5327,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -5275,8 +5393,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -5458,7 +5575,7 @@
           "kind": "accepted",
           "receipt": {
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004",
             "revision": 5
           }
         }
@@ -5691,8 +5808,7 @@
                 "type": "user",
                 "text": "Earlier"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -5722,8 +5838,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -5745,13 +5860,10 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004",
             "body": {
               "kind": "policy",
-              "patch": {
-                "project": "context-only@1"
-              },
               "policy": {
                 "id": "default@1",
                 "version": 1,
@@ -5802,8 +5914,7 @@
                   ]
                 }
               },
-              "systemVersion": 1,
-              "policyVersion": 1
+              "systemVersion": 1
             }
           }
         ]
@@ -6001,8 +6112,7 @@
                 "type": "user",
                 "text": "Continue"
               },
-              "systemVersion": 1,
-              "policyVersion": 1
+              "systemVersion": 1
             }
           },
           {
@@ -6033,8 +6143,7 @@
                   }
                 }
               },
-              "systemVersion": 1,
-              "policyVersion": 1
+              "systemVersion": 1
             }
           },
           {
@@ -6064,8 +6173,7 @@
                   }
                 }
               },
-              "systemVersion": 1,
-              "policyVersion": 1
+              "systemVersion": 1
             }
           },
           {
@@ -6278,8 +6386,7 @@
                 "type": "user",
                 "text": "Continue"
               },
-              "systemVersion": 1,
-              "policyVersion": 1
+              "systemVersion": 1
             }
           },
           {
@@ -6310,8 +6417,7 @@
                   }
                 }
               },
-              "systemVersion": 1,
-              "policyVersion": 1
+              "systemVersion": 1
             }
           },
           {
@@ -6341,8 +6447,7 @@
                   }
                 }
               },
-              "systemVersion": 1,
-              "policyVersion": 1
+              "systemVersion": 1
             }
           },
           {
@@ -6481,7 +6586,7 @@
           "kind": "accepted",
           "receipt": {
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004",
             "revision": 5
           }
         }
@@ -6714,8 +6819,7 @@
                 "type": "user",
                 "text": "Before"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -6745,8 +6849,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -6768,14 +6871,10 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004",
             "body": {
               "kind": "policy",
-              "patch": {
-                "id": "strict@1",
-                "steps": 2
-              },
               "policy": {
                 "id": "strict@1",
                 "version": 1,
@@ -6804,8 +6903,7 @@
                 "type": "user",
                 "text": "After"
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -6835,8 +6933,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -7047,8 +7144,7 @@
                 "type": "user",
                 "text": "Before"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -7078,8 +7174,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -7101,14 +7196,10 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004",
             "body": {
               "kind": "policy",
-              "patch": {
-                "id": "strict@1",
-                "steps": 2
-              },
               "policy": {
                 "id": "strict@1",
                 "version": 1,
@@ -7137,8 +7228,7 @@
                 "type": "user",
                 "text": "After"
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -7168,8 +7258,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -7439,8 +7528,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -7470,8 +7558,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -7666,8 +7753,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -7697,8 +7783,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -8467,7 +8552,7 @@
           "kind": "accepted",
           "receipt": {
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000020",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000020",
             "revision": 13
           }
         }
@@ -8756,8 +8841,7 @@
                 "type": "user",
                 "text": "Think and use tools twice"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -8813,8 +8897,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -8858,8 +8941,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -8915,8 +8997,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -8960,8 +9041,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -9008,8 +9088,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -9043,8 +9122,7 @@
                   "sessionId": "00000000-0000-4000-8000-000000000011"
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -9064,23 +9142,17 @@
                   "context": []
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 13,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000020/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000020",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000020/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000020",
             "body": {
               "kind": "policy",
-              "patch": {
-                "provider": "google-generate@1",
-                "thinking": "off",
-                "thinkingBudgetTokens": null
-              },
               "policy": {
                 "id": "default@1",
                 "version": 1,
@@ -9113,8 +9185,7 @@
                 "type": "user",
                 "text": "Switch provider"
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -9145,8 +9216,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -9447,8 +9517,7 @@
                 "type": "user",
                 "text": "Think and use tools twice"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -9504,8 +9573,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -9549,8 +9617,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -9606,8 +9673,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -9651,8 +9717,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -9699,8 +9764,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -10206,8 +10270,7 @@
                 "type": "user",
                 "text": "Continue inherited context"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -10254,8 +10317,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -10466,8 +10528,7 @@
                 "type": "user",
                 "text": "Fresh context"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -10514,8 +10575,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -11041,8 +11101,7 @@
                   }
                 ]
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -11073,8 +11132,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -11108,8 +11166,7 @@
                   "sessionId": "00000000-0000-4000-8000-000000000005"
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -11145,8 +11202,7 @@
                   ]
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           }
         ]
@@ -11351,8 +11407,7 @@
                   }
                 ]
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -11383,8 +11438,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -11648,8 +11702,7 @@
                 "type": "user",
                 "text": "Review again"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -11680,8 +11733,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -11914,8 +11966,7 @@
                 "type": "user",
                 "text": "Review replacement context"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -11946,8 +11997,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -12683,8 +12733,7 @@
                 "type": "user",
                 "text": "Think and use tools twice"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -12770,8 +12819,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -12834,8 +12882,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -12921,8 +12968,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -12985,8 +13031,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -13032,8 +13077,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -13403,8 +13447,7 @@
                 "type": "user",
                 "text": "Think and use tools twice"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -13490,8 +13533,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -13554,8 +13596,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -13641,8 +13682,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -13705,8 +13745,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -13752,8 +13791,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -14397,8 +14435,7 @@
                 "type": "user",
                 "text": "Think and use tools twice"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -14455,8 +14492,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -14500,8 +14536,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -14558,8 +14593,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -14603,8 +14637,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -14652,8 +14685,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -14953,8 +14985,7 @@
                 "type": "user",
                 "text": "Think and use tools twice"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -15011,8 +15042,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -15056,8 +15086,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -15114,8 +15143,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -15159,8 +15187,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -15208,8 +15235,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -15548,7 +15574,7 @@
           "kind": "accepted",
           "receipt": {
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004",
             "revision": 5
           }
         }
@@ -15599,7 +15625,7 @@
           "kind": "accepted",
           "receipt": {
             "sessionId": "00000000-0000-4000-8000-000000000001",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000007",
             "revision": 9
           }
         }
@@ -15872,8 +15898,7 @@
                 "type": "user",
                 "text": "First"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -15919,8 +15944,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -15942,15 +15966,10 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004",
             "body": {
               "kind": "policy",
-              "patch": {
-                "provider": "openai-responses@2",
-                "thinking": "high",
-                "thinkingBudgetTokens": null
-              },
               "policy": {
                 "id": "default@1",
                 "version": 1,
@@ -15983,8 +16002,7 @@
                 "type": "user",
                 "text": "Switch to Responses"
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -16032,8 +16050,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -16055,15 +16072,10 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 9,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000007/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000007",
             "body": {
               "kind": "policy",
-              "patch": {
-                "provider": "google-generate@2",
-                "thinking": "budget",
-                "thinkingBudgetTokens": 1024
-              },
               "policy": {
                 "id": "default@1",
                 "version": 2,
@@ -16096,8 +16108,7 @@
                 "type": "user",
                 "text": "Switch back to Google"
               },
-              "systemVersion": 0,
-              "policyVersion": 2
+              "systemVersion": 0
             }
           },
           {
@@ -16143,8 +16154,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 2
+              "systemVersion": 0
             }
           },
           {
@@ -16440,8 +16450,7 @@
                 "type": "user",
                 "text": "First"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -16487,8 +16496,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -16510,15 +16518,10 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000004",
             "body": {
               "kind": "policy",
-              "patch": {
-                "provider": "openai-responses@2",
-                "thinking": "high",
-                "thinkingBudgetTokens": null
-              },
               "policy": {
                 "id": "default@1",
                 "version": 1,
@@ -16551,8 +16554,7 @@
                 "type": "user",
                 "text": "Switch to Responses"
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -16600,8 +16602,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 1
+              "systemVersion": 0
             }
           },
           {
@@ -16623,15 +16624,10 @@
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 9,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007/0",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007",
+            "entryId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000007/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/configuration/00000000-0000-4000-8000-000000000007",
             "body": {
               "kind": "policy",
-              "patch": {
-                "provider": "google-generate@2",
-                "thinking": "budget",
-                "thinkingBudgetTokens": 1024
-              },
               "policy": {
                 "id": "default@1",
                 "version": 2,
@@ -16664,8 +16660,7 @@
                 "type": "user",
                 "text": "Switch back to Google"
               },
-              "systemVersion": 0,
-              "policyVersion": 2
+              "systemVersion": 0
             }
           },
           {
@@ -16711,8 +16706,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 2
+              "systemVersion": 0
             }
           },
           {
@@ -17173,8 +17167,7 @@
                 "type": "user",
                 "text": "Stream and use tools"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -17214,8 +17207,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -17286,8 +17278,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -17318,8 +17309,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -17585,8 +17575,7 @@
                 "type": "user",
                 "text": "Stream and use tools"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -17626,8 +17615,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -17698,8 +17686,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -17730,8 +17717,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -18221,8 +18207,7 @@
                 "type": "user",
                 "text": "Stream and use tools"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -18278,8 +18263,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -18353,8 +18337,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -18401,8 +18384,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -18718,8 +18700,7 @@
                 "type": "user",
                 "text": "Stream and use tools"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -18775,8 +18756,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -18850,8 +18830,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -18898,8 +18877,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -19442,8 +19420,7 @@
                 "type": "user",
                 "text": "Stream and use tools"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -19514,8 +19491,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -19586,8 +19562,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -19640,8 +19615,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -19972,8 +19946,7 @@
                 "type": "user",
                 "text": "Stream and use tools"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -20044,8 +20017,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -20116,8 +20088,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -20170,8 +20141,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -20699,8 +20669,7 @@
                 "type": "user",
                 "text": "Stream and use tools"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -20757,8 +20726,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -20829,8 +20797,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -20878,8 +20845,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -21189,8 +21155,7 @@
                 "type": "user",
                 "text": "Stream and use tools"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -21247,8 +21212,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -21319,8 +21283,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -21368,8 +21331,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -21792,8 +21754,7 @@
                 "type": "user",
                 "text": "Truncated"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -21847,8 +21808,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -22097,8 +22057,7 @@
                 "type": "user",
                 "text": "Truncated"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -22152,8 +22111,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -22643,8 +22601,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -22690,8 +22647,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -22726,8 +22682,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -22790,8 +22745,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -22821,8 +22775,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -23049,8 +23002,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -23096,8 +23048,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -23132,8 +23083,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -23196,8 +23146,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -23227,8 +23176,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -23263,6 +23211,69 @@
           {
             "role": "user",
             "content": "Go"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "echo",
+              "parameters": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["text"]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "model": "test-model",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Agent A"
+          },
+          {
+            "role": "user",
+            "content": "Go"
+          },
+          {
+            "role": "assistant",
+            "content": "Read files",
+            "tool_calls": [
+              {
+                "id": "one",
+                "type": "function",
+                "function": {
+                  "name": "echo",
+                  "arguments": "{\"text\":\"one\"}"
+                }
+              },
+              {
+                "id": "two",
+                "type": "function",
+                "function": {
+                  "name": "echo",
+                  "arguments": "{\"text\":\"two\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "content": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
+            "tool_call_id": "two"
+          },
+          {
+            "role": "tool",
+            "content": "one",
+            "tool_call_id": "one"
           }
         ],
         "tools": [
@@ -23397,22 +23408,24 @@
                     }
                   }
                 ]
+              },
+              {
+                "role": "tool",
+                "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
+                "callId": "two"
+              },
+              {
+                "role": "tool",
+                "text": "one",
+                "callId": "one"
+              },
+              {
+                "role": "assistant",
+                "text": "Done"
               }
             ],
             "outcome": {
-              "kind": "failed",
-              "error": {
-                "message": "Tool permission rejected",
-                "classification": "permission_refused",
-                "operation": {
-                  "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
-                  "kind": "permission",
-                  "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-                  "toolName": "echo",
-                  "callId": "two"
-                },
-                "phase": "permission"
-              }
+              "kind": "completed"
             }
           }
         }
@@ -23461,22 +23474,24 @@
                       }
                     }
                   ]
+                },
+                {
+                  "role": "tool",
+                  "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
+                  "callId": "two"
+                },
+                {
+                  "role": "tool",
+                  "text": "one",
+                  "callId": "one"
+                },
+                {
+                  "role": "assistant",
+                  "text": "Done"
                 }
               ],
               "outcome": {
-                "kind": "failed",
-                "error": {
-                  "message": "Tool permission rejected",
-                  "classification": "permission_refused",
-                  "operation": {
-                    "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
-                    "kind": "permission",
-                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-                    "toolName": "echo",
-                    "callId": "two"
-                  },
-                  "phase": "permission"
-                }
+                "kind": "completed"
               }
             }
           ],
@@ -23538,7 +23553,7 @@
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
-        "revision": 5,
+        "revision": 9,
         "records": [
           {
             "version": 2,
@@ -23624,8 +23639,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -23671,8 +23685,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -23707,34 +23720,128 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000005/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000005",
+            "body": {
+              "kind": "tool",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "batchId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "callId": "two",
+              "result": {
+                "kind": "failed",
+                "error": {
+                  "message": "Permission refused by the user",
+                  "classification": "permission_refused",
+                  "operation": {
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/3/two",
+                    "kind": "tool",
+                    "sessionId": "00000000-0000-4000-8000-000000000001",
+                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                    "toolName": "echo",
+                    "callId": "two"
+                  },
+                  "phase": "permission",
+                  "details": {
+                    "requestId": "00000000-0000-4000-8000-000000000001/turn/1/2/two",
+                    "permissionChildId": "00000000-0000-4000-8000-000000000001/turn/1/2"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 6,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
+            "body": {
+              "kind": "tool",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "batchId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "callId": "one",
+              "result": {
+                "kind": "succeeded",
+                "value": {
+                  "text": "one"
+                }
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 7,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                "event": {
+                  "type": "batch_settled",
+                  "child": {
+                    "kind": "batch",
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/3"
+                  },
+                  "outcome": {
+                    "kind": "succeeded"
+                  }
+                }
+              },
+              "systemVersion": 0
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 8,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000008/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000008",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                "event": {
+                  "type": "model_settled",
+                  "model": "test-model",
+                  "child": {
+                    "kind": "completion",
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/4"
+                  },
+                  "result": {
+                    "kind": "succeeded",
+                    "value": {
+                      "kind": "answer",
+                      "text": "Done"
+                    }
+                  }
+                }
+              },
+              "systemVersion": 0
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 9,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000008/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000008",
             "body": {
               "kind": "terminal",
               "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
               "agent": "a",
               "outcome": {
-                "kind": "failed",
-                "error": {
-                  "message": "Tool permission rejected",
-                  "classification": "permission_refused",
-                  "operation": {
-                    "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
-                    "kind": "permission",
-                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-                    "toolName": "echo",
-                    "callId": "two"
-                  },
-                  "phase": "permission"
-                }
+                "kind": "completed"
               }
             }
           }
@@ -23782,22 +23889,24 @@
                       }
                     }
                   ]
+                },
+                {
+                  "role": "tool",
+                  "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
+                  "callId": "two"
+                },
+                {
+                  "role": "tool",
+                  "text": "one",
+                  "callId": "one"
+                },
+                {
+                  "role": "assistant",
+                  "text": "Done"
                 }
               ],
               "outcome": {
-                "kind": "failed",
-                "error": {
-                  "message": "Tool permission rejected",
-                  "classification": "permission_refused",
-                  "operation": {
-                    "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
-                    "kind": "permission",
-                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-                    "toolName": "echo",
-                    "callId": "two"
-                  },
-                  "phase": "permission"
-                }
+                "kind": "completed"
               }
             }
           ],
@@ -23859,7 +23968,7 @@
         "systemInputs": [],
         "systemVersion": 0,
         "partial": [],
-        "revision": 5,
+        "revision": 9,
         "records": [
           {
             "version": 2,
@@ -23945,8 +24054,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -23992,8 +24100,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -24028,34 +24135,128 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
             "version": 2,
             "sessionId": "00000000-0000-4000-8000-000000000001",
             "revision": 5,
-            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004/1",
-            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000004",
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000005/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000005",
+            "body": {
+              "kind": "tool",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "batchId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "callId": "two",
+              "result": {
+                "kind": "failed",
+                "error": {
+                  "message": "Permission refused by the user",
+                  "classification": "permission_refused",
+                  "operation": {
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/3/two",
+                    "kind": "tool",
+                    "sessionId": "00000000-0000-4000-8000-000000000001",
+                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                    "toolName": "echo",
+                    "callId": "two"
+                  },
+                  "phase": "permission",
+                  "details": {
+                    "requestId": "00000000-0000-4000-8000-000000000001/turn/1/2/two",
+                    "permissionChildId": "00000000-0000-4000-8000-000000000001/turn/1/2"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 6,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000006",
+            "body": {
+              "kind": "tool",
+              "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+              "batchId": "00000000-0000-4000-8000-000000000001/turn/1/3",
+              "callId": "one",
+              "result": {
+                "kind": "succeeded",
+                "value": {
+                  "text": "one"
+                }
+              }
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 7,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000007",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                "event": {
+                  "type": "batch_settled",
+                  "child": {
+                    "kind": "batch",
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/3"
+                  },
+                  "outcome": {
+                    "kind": "succeeded"
+                  }
+                }
+              },
+              "systemVersion": 0
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 8,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000008/0",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000008",
+            "body": {
+              "kind": "event",
+              "event": {
+                "type": "child",
+                "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
+                "event": {
+                  "type": "model_settled",
+                  "model": "test-model",
+                  "child": {
+                    "kind": "completion",
+                    "id": "00000000-0000-4000-8000-000000000001/turn/1/4"
+                  },
+                  "result": {
+                    "kind": "succeeded",
+                    "value": {
+                      "kind": "answer",
+                      "text": "Done"
+                    }
+                  }
+                }
+              },
+              "systemVersion": 0
+            }
+          },
+          {
+            "version": 2,
+            "sessionId": "00000000-0000-4000-8000-000000000001",
+            "revision": 9,
+            "entryId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000008/1",
+            "appendId": "00000000-0000-4000-8000-000000000001/append/00000000-0000-4000-8000-000000000008",
             "body": {
               "kind": "terminal",
               "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
               "agent": "a",
               "outcome": {
-                "kind": "failed",
-                "error": {
-                  "message": "Tool permission rejected",
-                  "classification": "permission_refused",
-                  "operation": {
-                    "id": "00000000-0000-4000-8000-000000000001/turn/1/2",
-                    "kind": "permission",
-                    "turnId": "00000000-0000-4000-8000-000000000001/turn/1",
-                    "toolName": "echo",
-                    "callId": "two"
-                  },
-                  "phase": "permission"
-                }
+                "kind": "completed"
               }
             }
           }
@@ -24399,8 +24600,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -24446,8 +24646,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -24478,8 +24677,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -24815,8 +25013,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -24862,8 +25059,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           }
         ]
@@ -25075,8 +25271,7 @@
                 "type": "user",
                 "text": "Go"
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {
@@ -25122,8 +25317,7 @@
                   }
                 }
               },
-              "systemVersion": 0,
-              "policyVersion": 0
+              "systemVersion": 0
             }
           },
           {

@@ -152,7 +152,10 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
    * since are passed to `project` as `input.handoff`, so the projection option applies to every step.
    * This runtime binds no provider, so the input has no target and no part becomes a pointer.
    */
-  const projectPrompt = async (input: PromptInput, signal: AbortSignal): Promise<ProjectedPrompt> => {
+  const projectPrompt = async (
+    input: PromptInput,
+    signal: AbortSignal,
+  ): Promise<ProjectedPrompt> => {
     const view = input.turn.view;
     if (view.kind !== "handoff") return { messages: await project(input, signal), pointers: [] };
     const packet = MessagesSchema.parse(

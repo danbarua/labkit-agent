@@ -40,7 +40,7 @@ exposes it, so editor verification is listed as its own gap wherever it is still
 | G7  | Prompt lifecycle     | Evidence that a live model recovers and completes workspace work (scripted runs do not count)                                              | Not done  |
 | G8  | Content              | Audio playback in the editor; review all content variants, annotations and capability combinations                                         | Not done  |
 | G9  | Tool calls           | Native permission UI, file navigation, rich content and diffs in the editor                                                                | Not done  |
-| G10 | MCP                  | Binary MCP tool results (image, audio, blob resources) reach a capable model or render as a pointer on a target that cannot read the media | Not done  |
+| G10 | MCP                  | Binary MCP tool results (image, audio, blob resources) reach a capable model or render as a pointer on a target that cannot read the media | Done      |
 | G11 | MCP                  | Stdio open failures report the server's exit code and stderr                                                                               | Not done  |
 | G12 | Client filesystem    | Client read, edit and save paths in the native editor                                                                                      | Not done  |
 | G13 | Client filesystem    | Tool descriptions and recovery paths match the operations actually available                                                               | Not done  |
@@ -59,7 +59,7 @@ exposes it, so editor verification is listed as its own gap wherever it is still
 | G26 | Protocol errors      | Requests before `initialize` get -32600 with `data.reason: "not_initialized"`                                                              | Done      |
 | G27 | Protocol errors      | Unknown methods are logged as `acp.method.unknown`                                                                                         | Done      |
 | G28 | Audit                | This matrix expanded into checked, requirement-level schema rows                                                                           | Not done  |
-| G29 | Configuration        | `session/set_config_option` during a running prompt selects at once and applies at the next boundary between turns                        | Done      |
+| G29 | Configuration        | `session/set_config_option` during a running prompt selects at once and applies at the next boundary between turns                         | Done      |
 
 Evidence for the Done rows:
 
@@ -78,6 +78,14 @@ Evidence for the Done rows:
   model, the next prompt's request uses the new one, and no later update reverts the selection.
   Diagnostics: `acp.config.selected` with outcome `selected`, then core `configuration.applied`
   for the next prompt's turn; no `acp.config.queued`.
+- G10: `mcp-capabilities.test.ts`, "D4: an MCP-returned image reaches Anthropic as a tool_result
+  image and, after switching to openai/gpt-5.4, is sent as a blob:// pointer while the turn
+  succeeds". Through the workspace launcher's ACP handler, a stdio MCP server's image result is sent
+  to Anthropic as a `tool_result` image block; after `session/set_config_option` selects
+  `openai/gpt-5.4`, the next request carries `[image/png, 1 B: blob://<sha256>.png]` and no image
+  bytes, the prompt ends `end_turn`, and one `prompt.media.pointer` (debug, provider `openai`,
+  support `unsupported`) records the rewrite. "D4: a media-capable Anthropic request carries an
+  MCP-returned image in tool_result content" also checks the `tool_call_update` `resource_link`.
 - G23: `stdio.test.ts` (a frame split across writes, a malformed line answered with -32700 while
   the connection keeps serving, exit 0 on EOF with stdout reserved for protocol traffic);
   `disconnect-reload.test.ts` (stdin closed or SIGKILL mid-stream or mid-tool, then reload in a new
@@ -137,7 +145,7 @@ schema").
 | `mcpCapabilities.http`                      | always                                                                                 | `mcp-transport.ts` (Streamable HTTP) via `open()`                   | `mcp-capabilities.test.ts`: tools reach the model, result reaches client and next step, load reconnects, failures are tool results, open failure named                                                       | Done   |
 | `mcpCapabilities.sse`                       | always                                                                                 | `mcp-transport.ts` (SSE) via `open()`                               | `mcp-capabilities.test.ts`: same four cases; resume reconnects                                                                                                                                               | Done   |
 | `mcpCapabilities.acp` (UNSTABLE)            | always                                                                                 | `mcp-acp.ts` bridge; `mcp/message` handlers                         | `mcp-capabilities.test.ts`: same four cases through `mcp/connect`/`mcp/message`/`mcp/disconnect`                                                                                                             | Done   |
-| MCP stdio servers (baseline)                | always (no flag)                                                                       | `mcp-transport.ts` (stdio)                                          | `mcp-capabilities.test.ts`: same four cases, catalog failure, binary results stored as blob parts and rendered in `tool_call_update` (G10, partial: see below)                                               | Done   |
+| MCP stdio servers (baseline)                | always (no flag)                                                                       | `mcp-transport.ts` (stdio)                                          | `mcp-capabilities.test.ts`: same four cases, catalog failure, binary results stored as blob parts and rendered in `tool_call_update` (G10)                                                                   | Done   |
 | `sessionCapabilities.close`                 | always                                                                                 | `session/close`                                                     | `capabilities.test.ts`: launcher end to end; a later prompt gets -32602 "not open on this connection"                                                                                                        | Done   |
 | `sessionCapabilities.resume`                | `loadSession`                                                                          | `session/resume` → `open()`                                         | `capabilities.test.ts`: -32601 when unadvertised; resume without replay, next prompt carries history                                                                                                         | Done   |
 | `sessionCapabilities.fork` (UNSTABLE)       | `AcpOptions.forkSession`                                                               | `session/fork`                                                      | `capabilities.test.ts`: -32601 when unadvertised; child carries parent turns, list shows both                                                                                                                | Done   |
@@ -172,11 +180,9 @@ Binary MCP tool results (image, audio, blob resources) are stored as blobs and f
 result parts (`mcp.ts`), rendered as a `resource_link` (`blob://<sha256>.<ext>`) in
 `tool_call_update` content (`rpc/updates.ts`) and, on a media-capable provider binding, carried
 natively in the next request (Anthropic `tool_result` image/document blocks, Google
-`functionResponse` sibling `inlineData`): `mcp.test.ts`, `mcp-capabilities.test.ts` ("D4: a
-media-capable Anthropic request carries an MCP-returned image in tool_result content"),
-`attachments.test.ts`. Not done: a target whose bound provider cannot read the media still fails
-the whole turn at the pre-existing whole-history media gate (`session/blobs.ts`), which refuses
-before any pointer can render; that gate is core/projection's to remove (G10).
+`functionResponse` sibling `inlineData`). For a target that cannot, or might not, read the media,
+the step's projection renders the part as pointer text and the turn continues (G10): `mcp.test.ts`,
+`mcp-capabilities.test.ts`, `attachments.test.ts`.
 
 ## Verification gates
 
