@@ -16,7 +16,7 @@ import type { AcpOptions } from "./adapter.ts";
 import { workspaceAgent } from "./examples/vscode-workspace.ts";
 import { selectChoices } from "./session-config.ts";
 import { answer, configurable, offline, prompt } from "./testing/fixtures.ts";
-import { harness, setup } from "./testing/harness.ts";
+import { harness } from "./testing/harness.ts";
 
 function booleanConfiguration() {
   const base = configurable();

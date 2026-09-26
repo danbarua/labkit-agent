@@ -3,9 +3,7 @@ import { expect, test } from "@logtape/testing-bun/autoload";
 import { until } from "../core/agent/test-support.ts";
 import { answer, prompt, proxiedMcpPeer } from "./testing/fixtures.ts";
 import { harness, setup } from "./testing/harness.ts";
-import type { Message as HarnessMessage } from "./testing/harness.ts";
 
-type Message = HarnessMessage;
 for (const decision of ["allow_once", "reject_once", "invalid_args"] as const) {
   test(`MCP ${decision}: ACP permission gate, journaled results, reconnect and process cleanup`, async () => {
     const { mkdtemp, readFile, rm } = await import("node:fs/promises");

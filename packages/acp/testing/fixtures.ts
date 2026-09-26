@@ -5,7 +5,7 @@ import { expect } from "@logtape/testing-bun/autoload";
 import { until } from "../../core/agent/test-support.ts";
 import type { AcpOptions } from "../adapter.ts";
 import { setup, type harness } from "./harness.ts";
-import type { Message as HarnessMessage, Message } from "./harness.ts";
+import type { Message } from "./harness.ts";
 
 // Keep workspace launcher tests off any real local model server.
 export const offline = (async () => {

@@ -5,9 +5,7 @@ import { z } from "zod";
 import { deferred, until } from "../core/agent/test-support.ts";
 import { answer, prompt, proxiedMcpPeer, tools } from "./testing/fixtures.ts";
 import { harness, setup } from "./testing/harness.ts";
-import type { Message as HarnessMessage } from "./testing/harness.ts";
 
-type Message = HarnessMessage;
 for (const action of ["accept", "decline", "cancel", "invalid"] as const) {
   test(`ACP MCP form elicitation handles ${action} and keeps the existing tool operation`, async () => {
     const { mcpToolName } = await import("./mcp.ts");
