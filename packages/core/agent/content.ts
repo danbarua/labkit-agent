@@ -100,3 +100,61 @@ export type BlobResolver = (id: BlobId) => Uint8Array;
 export function hashBlob(bytes: Uint8Array): BlobId {
   return BlobIdSchema.parse(new Bun.CryptoHasher("sha256").update(bytes).digest("hex"));
 }
+
+/**
+ * How well a projection target can read one media kind: `supported` renders the content directly,
+ * `unsupported` never can, `unknown` means the target's capabilities were not confirmed for it.
+ * `unsupported` and `unknown` both render as a pointer; see {@link renderBlobPointer}.
+ */
+export const MediaSupportSchema = z.enum(["supported", "unsupported", "unknown"]);
+/** See {@link MediaSupportSchema}. */
+export type MediaSupport = z.infer<typeof MediaSupportSchema>;
+
+/** File extension a stored blob's {@link blobUri} uses, by media type. */
+const MEDIA_EXTENSION: Record<MediaKind, string> = {
+  "text/markdown": "md",
+  "text/plain": "txt",
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "application/pdf": "pdf",
+  "audio/wav": "wav",
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/aiff": "aiff",
+  "audio/aac": "aac",
+  "audio/ogg": "ogg",
+  "audio/flac": "flac",
+  "audio/m4a": "m4a",
+  "audio/l16": "l16",
+  "audio/opus": "opus",
+  "audio/alaw": "alaw",
+  "audio/mulaw": "mulaw",
+  "audio/webm": "webm",
+};
+
+/** The reference form of a stored blob: `blob://<sha256>.<ext>`. The harness resolves it. */
+export function blobUri(ref: BlobRef): string {
+  return `blob://${ref.id}.${MEDIA_EXTENSION[ref.media]}`;
+}
+
+function formatBlobBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KiB", "MiB", "GiB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${Number(value.toFixed(value < 10 ? 1 : 0))} ${units[unit]}`;
+}
+
+/**
+ * Renders a blob a projection target cannot, or might not be able to, read as pointer text the
+ * model can follow with a tool that resolves `blob://` URIs, for example
+ * `[image/png, 68 KiB: blob://9f86d0….png]`. Shared by prompt projection and tool result parts.
+ */
+export function renderBlobPointer(ref: BlobRef): string {
+  const name = ref.name ? `, ${ref.name}` : "";
+  return `[${ref.media}, ${formatBlobBytes(ref.bytes)}${name}: ${blobUri(ref)}]`;
+}

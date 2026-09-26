@@ -82,34 +82,6 @@ test("invalid embedded data rejects the whole prompt before storing any blob", a
   expect(puts).toBe(0);
 });
 
-test("provider media rejection happens before blob storage", async () => {
-  const base = createMemoryPersistence();
-  let puts = 0;
-  const persistence = {
-    ...base,
-    putBlob: (...args: Parameters<typeof base.putBlob>) => {
-      puts++;
-      return base.putBlob(...args);
-    },
-  };
-  await expect(
-    promptInput(
-      [
-        {
-          type: "resource",
-          resource: { uri: "urn:pdf", mimeType: "application/pdf", blob: "AQID" },
-        },
-      ],
-      "/tmp",
-      persistence,
-      sessionId,
-      signal,
-      ["text/plain"],
-    ),
-  ).rejects.toThrow("Provider does not support");
-  expect(puts).toBe(0);
-});
-
 test("resource links in additional roots become session blobs and removed roots stop new reads", async () => {
   const { mkdtemp, mkdir, writeFile, rm, realpath } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
@@ -128,21 +100,11 @@ test("resource links in additional roots become session blobs and removed roots 
       uri: pathToFileURL(join(extra, "DESIGN.md")).href,
     };
     const store = createMemoryPersistence();
-    const result = await promptInput(
-      [block],
-      cwd,
-      store,
-      sessionId,
-      signal,
-      ["text/markdown"],
-      [extra],
-    );
+    const result = await promptInput([block], cwd, store, sessionId, signal, [extra]);
     const ref = result.attachments![0]!;
     expect(ref.media).toBe("text/markdown");
     expect(JSON.stringify(result)).not.toContain("# attached design");
-    await expect(
-      promptInput([block], cwd, store, sessionId, signal, ["text/markdown"]),
-    ).rejects.toThrow();
+    await expect(promptInput([block], cwd, store, sessionId, signal)).rejects.toThrow();
     const blob = await store.getBlob(sessionId, ref.id, signal);
     expect("bytes" in blob && new TextDecoder().decode(blob.bytes)).toBe("# attached design");
   } finally {
@@ -249,7 +211,7 @@ test("attachment diagnostics correlate stored refs and preserve ingestion failur
   );
 });
 
-test("audio bytes are stored as refs and unsupported media is rejected before storage", async () => {
+test("audio bytes are stored as refs", async () => {
   const persistence = createMemoryPersistence();
   const data = Buffer.from([0, 1, 2, 255]).toString("base64");
   const result = await promptInput(
@@ -258,38 +220,30 @@ test("audio bytes are stored as refs and unsupported media is rejected before st
     persistence,
     sessionId,
     signal,
-    ["audio/wav"],
   );
   expect(result.attachments?.[0]).toMatchObject({ media: "audio/wav", bytes: 4 });
   const ref = result.attachments![0]!;
   const stored = await persistence.getBlob(sessionId, ref.id, signal);
   expect("bytes" in stored && [...stored.bytes]).toEqual([0, 1, 2, 255]);
+});
+
+test("invalid base64 audio data rejects the prompt before storing any blob", async () => {
+  const base = createMemoryPersistence();
   let puts = 0;
-  const rejected = {
-    ...persistence,
-    putBlob: async (...args: Parameters<typeof persistence.putBlob>) => {
+  const persistence = {
+    ...base,
+    putBlob: async (...args: Parameters<typeof base.putBlob>) => {
       puts++;
-      return persistence.putBlob(...args);
+      return base.putBlob(...args);
     },
   };
   await expect(
     promptInput(
-      [{ type: "audio", mimeType: "audio/wav", data }],
-      "/tmp",
-      rejected,
-      sessionId,
-      signal,
-      ["text/plain"],
-    ),
-  ).rejects.toThrow("does not support");
-  await expect(
-    promptInput(
       [{ type: "audio", mimeType: "audio/wav", data: "not base64" }],
       "/tmp",
-      rejected,
+      persistence,
       sessionId,
       signal,
-      ["audio/wav"],
     ),
   ).rejects.toThrow("base64");
   expect(puts).toBe(0);

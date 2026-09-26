@@ -95,12 +95,12 @@ that supplied them and is safe to log.
 
 ## Choose settings without silently changing their meaning
 
-| Setting           | What the binding must promise                              | Why rejection matters                                                 |
-| ----------------- | ---------------------------------------------------------- | --------------------------------------------------------------------- |
-| Adaptive thinking | Native adaptive capability.                                | A fixed token budget is a different user choice.                      |
-| Budget thinking   | Caller-selected token budget.                              | Send the requested budget exactly; never substitute the minimum.      |
-| Streaming         | A supported dialect and complete-response assembler.       | Visible text alone cannot establish a valid answer or tool call.      |
-| Media             | Support for the supplied media in the bound model/profile. | A stored attachment ref does not mean its contents reached the model. |
+| Setting           | What the binding must promise                                                                                   | Why rejection matters                                                               |
+| ----------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Adaptive thinking | Native adaptive capability.                                                                                     | A fixed token budget is a different user choice.                                    |
+| Budget thinking   | Caller-selected token budget.                                                                                   | Send the requested budget exactly; never substitute the minimum.                    |
+| Streaming         | A supported dialect and complete-response assembler.                                                            | Visible text alone cannot establish a valid answer or tool call.                    |
+| Media             | Not a rejection setting (D3): unsupported/unknown media is projected as a pointer, never a configuration error. | A stored attachment ref does not mean its contents reached the model as sent bytes. |
 
 Switching model and incompatible settings should be one policy patch. Unsupported combinations
 fail before HTTP, so the caller gets a configuration error instead of paying for a request the
@@ -220,17 +220,24 @@ emits no warning. Capture storage is caller-owned and separate from bounded diag
 
 ## Attachments
 
-Check `session.model.capabilities.media` before offering attachment choices. Accepted text
-attachments are sent in full. The runtime does not replace their contents with a hash placeholder.
-The selected model’s context limit still applies; a provider rejection remains an explicit failure.
+`session.model.capabilities.media` is three-valued per media kind (D3): `supported` (a bound
+profile declares it — the model handles it), `unsupported` (the profile cannot encode it), or
+`unknown` (no confirmation either way). Attachments are stored and journaled regardless of the
+current model's media capabilities; whether the current step's target can read a given kind is a
+prompt-projection decision, not a provider-layer refusal. A part the target does not support, or
+might not, is projected as pointer text (`agent/content.ts` `renderBlobPointer`,
+`[<media>, <size>: blob://<sha256>.<ext>]`) instead of being sent; a tool that resolves `blob://`
+URIs lets the model follow it. Accepted text attachments the target supports are sent in full. The
+runtime does not replace their contents with a hash placeholder. The selected model's context limit
+still applies; a provider rejection remains an explicit failure.
 
 Every profile accepts text/plain and text/markdown. Anthropic @2–@4 additionally support user PNG,
 JPEG and PDF as base64 blocks. Google profiles support user audio as native `inlineData` parts,
 including WAV, MP3/MPEG, AIFF, AAC, OGG, FLAC, M4A, L16, Opus, A-law, μ-law and WebM. The MIME type
 and bytes are preserved; no transcription or text stub is substituted. See Google's
 [audio input documentation](https://ai.google.dev/gemini-api/docs/generate-content/audio).
-The environment must bind a model that supports the declared media. Other profiles still reject
-audio before HTTP. Tool-result blobs and other unsupported media fail before HTTP.
+A target bound to a profile that does not declare a media kind gets a pointer for it instead of a
+refusal; this includes tool-result blobs once binary tool results exist.
 Attachment bytes are verified by hash/length through an operation-local resolver. UTF-8 text
 is decoded in full within the 8 MiB blob limit. No implicit
 summarization, path reading, PDF conversion or Files API is performed. Attachment refs and continuation

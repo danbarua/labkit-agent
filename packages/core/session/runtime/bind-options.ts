@@ -20,6 +20,7 @@ export function bindOptions(options: SessionOptions, restoring = false) {
     providerStreams: providers?.streams,
     permissionRequests: !!bindings.requestPermission,
     providerIds: providers ? new Set(providers.ids) : undefined,
+    describeModel: providers?.describe,
   });
   const initialPolicy = restoring
     ? undefined
@@ -40,7 +41,6 @@ export function bindOptions(options: SessionOptions, restoring = false) {
     initialPolicy,
     observe: bindings.observe,
     completePort,
-    providerMedia: providers?.mediaFor,
     describeModel: providers?.describe,
   };
 }

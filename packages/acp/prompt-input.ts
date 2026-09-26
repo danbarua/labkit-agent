@@ -81,7 +81,6 @@ export async function promptInput(
   persistence: SessionPersistence,
   sessionId: z.infer<typeof SessionIdSchema>,
   signal: AbortSignal,
-  supportedMedia?: readonly MediaKind[],
   additionalDirectories: readonly string[] = [],
 ) {
   const started = performance.now();
@@ -205,14 +204,6 @@ export async function promptInput(
     }
     if (!text.join("\n").trim())
       throw RequestError.invalidParams(undefined, "Prompt must not be empty");
-    for (const item of pending) {
-      media = item.media;
-      if (supportedMedia && !supportedMedia.includes(item.media))
-        throw RequestError.invalidParams(
-          undefined,
-          `Provider does not support attachment media: ${media}; supported media: ${supportedMedia.join(", ") || "none"}. Select a model that accepts ${media}, then send the prompt again.`,
-        );
-    }
     for (const item of pending) {
       media = item.media;
       path = "path" in item ? item.path : undefined;

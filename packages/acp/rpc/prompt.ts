@@ -83,7 +83,6 @@ export function registerPrompt(
           entry.persistence,
           entry.runtime.snapshot.durable.conversation.sessionId,
           promptSignal,
-          entry.runtime.model?.capabilities.media ?? [],
           entry.additionalDirectories,
         );
         promptSignal.throwIfAborted();

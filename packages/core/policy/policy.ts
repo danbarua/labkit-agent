@@ -8,6 +8,7 @@ import {
 } from "../agent/prompt.ts";
 import { StepsSchema, ToolNameSchema, type AgentMessage, type Result } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
+import type { ResolvedModel } from "../providers/transport.ts";
 import {
   ProviderSettingsSchema,
   validateThinking,
@@ -81,6 +82,13 @@ export type PolicyResolvers = Readonly<{
   packs?: ReadonlyMap<string, PolicyPack>;
   projections: ReadonlyMap<string, Projection>;
   handoffs: ReadonlyMap<string, HandoffProjection>;
+  /**
+   * Resolves the target-aware capabilities (D3) of a bound provider/model, mirroring
+   * `session/runtime/instance.ts`'s `promptInput()`. Transitional: only staging's re-projection of
+   * a prepared prompt needs it, and that re-projection goes away with RC1 (prepared stops being a
+   * journaled event).
+   */
+  describeModel?: (provider: string, model: string) => ResolvedModel | undefined;
 }>;
 
 const history: Projection = (input) =>
@@ -146,6 +154,7 @@ export function copyResolvers(resolvers: PolicyResolvers = builtinResolvers): Po
     providerIds: resolvers.providerIds ? new Set(resolvers.providerIds) : undefined,
     projections: new Map(resolvers.projections),
     handoffs: new Map(resolvers.handoffs),
+    describeModel: resolvers.describeModel,
     packs: new Map(
       [...(resolvers.packs ?? packs)].map(([id, pack]) => [id, freeze(structuredClone(pack))]),
     ),

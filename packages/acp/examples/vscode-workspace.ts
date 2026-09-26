@@ -301,7 +301,10 @@ export function workspaceAgent(
       const thinking = defaultThinking(initial);
       directory.remember(files.root);
       const persistence = workspacePersistence(files.root);
-      const tools = new Map([...workspaceTools(files, clientFiles), ...(mcpTools ?? [])]);
+      const tools = new Map([
+        ...workspaceTools(files, clientFiles, persistence),
+        ...(mcpTools ?? []),
+      ]);
       if (publishPlan) tools.set("update_plan", planTool(publishPlan));
       if (env.LABKIT_ACP_TERMINAL === "1" && terminal)
         tools.set("run_command", terminalTool(terminal, files.root));

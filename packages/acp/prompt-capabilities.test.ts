@@ -117,7 +117,7 @@ const cases: readonly {
   block: ContentBlock;
   accepts: CompletionProfile;
   wire: (body: unknown) => void;
-  lacking: { profile: CompletionProfile; block: ContentBlock; media: string };
+  lacking: { profile: CompletionProfile; block: ContentBlock; media: string; rawContent: string };
 }[] = [
   {
     flag: "image",
@@ -139,6 +139,7 @@ const cases: readonly {
       profile: openaiChatV2,
       block: { type: "image", mimeType: "image/png", data: IMAGE },
       media: "image/png",
+      rawContent: IMAGE,
     },
   },
   {
@@ -161,6 +162,7 @@ const cases: readonly {
       profile: anthropicMessagesV3,
       block: { type: "audio", mimeType: "audio/wav", data: AUDIO },
       media: "audio/wav",
+      rawContent: AUDIO,
     },
   },
   {
@@ -178,6 +180,7 @@ const cases: readonly {
         resource: { uri: "untitled:report.pdf", mimeType: "application/pdf", blob: PDF },
       },
       media: "application/pdf",
+      rawContent: PDF,
     },
   },
 ];
@@ -257,7 +260,7 @@ for (const { flag, block, accepts } of cases)
   });
 
 for (const { flag, lacking } of cases)
-  test(`promptCapabilities.${flag}: advertised content the current model lacks gets the per-model refusal`, async () => {
+  test(`promptCapabilities.${flag}: advertised content the current model can't read is projected as a pointer instead of refused`, async () => {
     const { h, persistence, bodies, puts } = bound(lacking.profile, all);
     try {
       await h.initialize();
@@ -267,13 +270,16 @@ for (const { flag, lacking } of cases)
         sessionId: id,
         prompt: [{ type: "text", text: "Use the attachment" }, lacking.block],
       });
-      expect(response.error?.code).toBe(-32602);
-      expect(response.error?.message).toContain(
-        `Provider does not support attachment media: ${lacking.media}; supported media: ${lacking.profile.capabilities.media.join(", ")}. Select a model that accepts ${lacking.media}`,
-      );
-      expect(await journalRecords(persistence, id)).toBe(before);
-      expect(puts()).toBe(0);
-      expect(bodies).toHaveLength(0);
+      expect(response.error).toBeUndefined();
+      expect(response.result.stopReason).toBe("end_turn");
+      // The attachment is still stored and journaled as a fact; only the projected request differs.
+      expect(await journalRecords(persistence, id)).toBeGreaterThan(before);
+      expect(puts()).toBe(1);
+      expect(bodies).toHaveLength(1);
+      const body = JSON.stringify(bodies[0]);
+      expect(body).not.toContain(lacking.rawContent);
+      expect(body).toContain(lacking.media);
+      expect(body).toContain("blob://");
     } finally {
       await h.close();
     }

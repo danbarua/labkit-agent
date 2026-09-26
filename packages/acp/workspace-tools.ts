@@ -1,27 +1,60 @@
 import { dirname } from "node:path";
 
-import { defineTool } from "@labkit-agent/core";
+import {
+  BlobIdSchema,
+  defineTool,
+  renderBlobPointer,
+  type SessionPersistence,
+} from "@labkit-agent/core";
 import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
+import { SessionIdSchema } from "@labkit-agent/core/types";
 import { z } from "zod";
 
 import type { ClientFiles } from "./client-files.ts";
 import { recordWriteEvidence, type FileBefore } from "./file-write.ts";
 import { FileReadRangeSchema, MAX_FILE_BYTES, type WorkspaceFiles } from "./workspace-files.ts";
 
-export function workspaceTools(files: WorkspaceFiles, client: ClientFiles = {}) {
+const BLOB_URI = /^blob:\/\/[a-f0-9]{64}\.[a-z0-9]+$/;
+
+export function workspaceTools(
+  files: WorkspaceFiles,
+  client: ClientFiles = {},
+  persistence?: SessionPersistence,
+) {
   const scope = ` Relative paths use ${files.root}; allowed roots: ${JSON.stringify(files.roots)}.`;
   const path = z.string().min(1).transform(files.path);
+  const readPath = z
+    .string()
+    .min(1)
+    .transform((raw) => (BLOB_URI.test(raw) ? raw : files.path(raw)));
   return new Map([
     [
       "read_file",
       defineTool({
         description:
-          "Read a UTF-8 file inside the workspace, at most 256 KiB per result. Use line (1-based) and limit (line count) to read large files in sections; for example {path, line: 1, limit: 100}. If a path is missing, use list_dir on its parent to discover actual names before another read. If that directory is also missing, list an existing ancestor or the workspace root. Do not invent file paths or create a missing file merely to read it." +
+          "Read a UTF-8 file inside the workspace, at most 256 KiB per result. Use line (1-based) and limit (line count) to read large files in sections; for example {path, line: 1, limit: 100}. If a path is missing, use list_dir on its parent to discover actual names before another read. If that directory is also missing, list an existing ancestor or the workspace root. Do not invent file paths or create a missing file merely to read it. A `blob://<sha256>.<ext>` path (from a prompt or tool result pointer) resolves the referenced attachment instead of a workspace file." +
           scope,
-        input: FileReadRangeSchema.extend({ path }),
+        input: FileReadRangeSchema.extend({ path: readPath }),
         kind: "read",
         locations: ({ path, line }) => [{ path, ...(line === undefined ? {} : { line }) }],
         run: async ({ path, line, limit }, signal, context) => {
+          if (BLOB_URI.test(path)) {
+            if (!persistence) throw new Error(`Cannot resolve ${path}: no blob storage is bound`);
+            const sessionId = context?.sessionId;
+            if (!sessionId) throw new Error(`Cannot resolve ${path}: missing session context`);
+            const id = BlobIdSchema.parse(path.slice("blob://".length).split(".")[0]);
+            const loaded = await persistence.getBlob(SessionIdSchema.parse(sessionId), id, signal);
+            if ("kind" in loaded) throw new Error(`Blob not found: ${path}`);
+            const { meta, bytes } = loaded;
+            if (meta.media === "text/plain" || meta.media === "text/markdown")
+              return { path, text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
+            return {
+              path,
+              text:
+                `${renderBlobPointer(meta)} is binary; the current tool result format cannot return ` +
+                "its bytes as an image or attachment part.",
+            };
+          }
           const range = line === undefined && limit === undefined ? undefined : { line, limit };
           try {
             return {

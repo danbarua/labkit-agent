@@ -66,8 +66,10 @@ Evidence for the Done rows:
   between providers…". Through the ACP handler it moves one session Anthropic → OpenAI →
   Anthropic and checks each next provider request (host, model, thinking or reasoning effort,
   output limit), that OpenAI offers effort levels instead of adaptive thinking, that an image
-  prompt is refused before any request while the OpenAI model is selected and reaches Anthropic
-  after switching back, and that `acp.config.committed` records the change with `connectionId`.
+  prompt still succeeds while the OpenAI model is selected but is sent as pointer text
+  (`blob://…`, not the image bytes; `prompt.media.pointer` at debug records it) and reaches
+  Anthropic as the image again after switching back, and that `acp.config.committed` records the
+  change with `connectionId`.
   `workspace-catalog.test.ts` covers the per-model choices in more depth at session level.
 - G23: `stdio.test.ts` (a frame split across writes, a malformed line answered with -32700 while
   the connection keeps serving, exit 0 on EOF with stdout reserved for protocol traffic);

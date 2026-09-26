@@ -1,4 +1,12 @@
+import { diagnostic } from "../logging/index.ts";
 import type { ChatMessage } from "./agent.ts";
+import {
+  partsText,
+  renderBlobPointer,
+  type ContentPart,
+  type MediaKind,
+  type MediaSupport,
+} from "./content.ts";
 import {
   MessagesSchema,
   ToolCallsSchema,
@@ -15,6 +23,19 @@ export type PromptInput = Readonly<{
   log: readonly TurnRecord[];
   /** The turn in progress. Its `view` decides whether history or the handoff packet is sent. */
   turn: TurnData;
+  /**
+   * The provider and model the step will call, with that model's capabilities. Omitted only for
+   * projections with no bound provider (for example the in-memory `/agent` runtime): every blob
+   * part is kept as-is, since no target capability is known. When set, a blob part the target
+   * cannot, or might not, read is rendered as pointer text (see {@link renderBlobPointer}) instead
+   * of being sent.
+   */
+  target?: Readonly<{
+    provider: string;
+    model: string;
+    /** Three-valued per media kind (D3). A plain record: crosses `structuredClone` in the host. */
+    media: Readonly<Record<MediaKind, MediaSupport>>;
+  }>;
   /**
    * The agent that will run the step. {@link projectConversationPrompt} uses only `systemPrompt`;
    * the other fields are for custom projections.
@@ -92,6 +113,37 @@ export const parseSessionContext = (raw: unknown): SessionContext =>
   SessionContextSchema.parse(raw);
 
 /**
+ * Rewrites one message's blob parts for the target's capabilities: a part the target supports is
+ * kept; a part it does not support, or might not, becomes a text pointer (see
+ * {@link renderBlobPointer}). `text` is recomputed to match. Messages without parts, and roles
+ * that never carry parts, pass through unchanged.
+ */
+function projectMessageForTarget(
+  message: AgentMessage,
+  target: NonNullable<PromptInput["target"]>,
+): AgentMessage {
+  if (!("parts" in message) || !message.parts) return message;
+  let changed = false;
+  const parts: ContentPart[] = message.parts.map((part) => {
+    if (part.type !== "blob") return part;
+    const support = target.media[part.ref.media];
+    if (support === "supported") return part;
+    changed = true;
+    diagnostic("prompt", "debug", "prompt.media.pointer", {
+      provider: target.provider,
+      model: target.model,
+      media: part.ref.media,
+      bytes: part.ref.bytes,
+      support,
+      blobId: part.ref.id,
+    });
+    return { type: "text", text: renderBlobPointer(part.ref) };
+  });
+  if (!changed) return message;
+  return { ...message, text: partsText(parts), parts };
+}
+
+/**
  * The default prompt projection: builds the chat messages for the next step.
  *
  * The agent's `systemPrompt`, when set, comes first as a `system` message. Then, with a `history`
@@ -108,6 +160,7 @@ export function projectConversationPrompt({
   context = [],
   log,
   turn,
+  target,
   agent,
 }: PromptInput): ChatMessage[] {
   const base = completedExchanges(context, "session context");
@@ -125,7 +178,8 @@ export function projectConversationPrompt({
       : [...base, ...history, ...current];
   return [
     ...(agent.systemPrompt ? [{ role: "system" as const, content: agent.systemPrompt }] : []),
-    ...messages.map((message): ChatMessage => {
+    ...messages.map((raw): ChatMessage => {
+      const message = target ? projectMessageForTarget(raw, target) : raw;
       if (message.role === "tool")
         return { role: "tool", content: message.text, tool_call_id: message.callId };
       if (message.role === "assistant" && message.calls)

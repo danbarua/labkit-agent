@@ -57,7 +57,24 @@ export function domainEvent(state: JournalState, event: WireEvent, fold: Fold): 
         )
       )
         throw new Error("Prompt provider selection mismatch");
-      const projectionInput = { context: c.context, log: c.log, turn: c.turn.turn, agent };
+      const resolved = state.policy?.provider
+        ? fold.resolvers.describeModel?.(state.policy.provider, state.policy.model ?? agent.model)
+        : undefined;
+      const projectionInput = {
+        context: c.context,
+        log: c.log,
+        turn: c.turn.turn,
+        ...(resolved
+          ? {
+              target: {
+                provider: resolved.provider,
+                model: resolved.model,
+                media: resolved.capabilities.media,
+              },
+            }
+          : {}),
+        agent,
+      };
       const expected = projectPolicy(
         projectionInput,
         state.systemInputs,

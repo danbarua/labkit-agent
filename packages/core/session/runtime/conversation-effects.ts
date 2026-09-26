@@ -72,14 +72,7 @@ function dispatchTurn(ctx: SessionInstance, effect: Effect<"turn">) {
     storeContinuation: (entry, signal) =>
       storeContinuation(ctx.configured.port, sessionId, entry, signal),
     loadBlobs: (request, signal, includeContinuations) =>
-      resolveRequestBlobs(
-        ctx.configured.port,
-        sessionId,
-        request,
-        ctx.configured.providerMedia?.(request.provider ?? "", request.model) ?? [],
-        signal,
-        includeContinuations,
-      ),
+      resolveRequestBlobs(ctx.configured.port, sessionId, request, signal, includeContinuations),
     projectPrompt: (value) =>
       projectPolicy(value, durable.systemInputs, policy, ctx.configured.resolvers),
     projectHandoff: (value) => ctx.configured.resolvers.handoffs.get(policy.handoff)!(value),
