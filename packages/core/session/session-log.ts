@@ -6,22 +6,13 @@ import {
   type ConversationState,
 } from "../agent/agent-conversation.ts";
 import { PreparedModelSchema } from "../agent/agent.ts";
-import type { BlobRef, ContentPart } from "../agent/content.ts";
 import { projectConversationPrompt } from "../agent/prompt.ts";
 import { completeResults } from "../agent/tool-batch.ts";
-import {
-  ActorIdSchema,
-  failure,
-  MessagesSchema,
-  type AgentMessage,
-  type TurnData,
-  type TurnRecord,
-} from "../agent/types.ts";
+import { ActorIdSchema, failure, MessagesSchema, type AgentMessage } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import {
   bindingPolicyFields,
   builtinResolvers,
-  effectiveToolResult,
   patchPolicy,
   PolicyPatchSchema,
   projectPolicy,
@@ -35,7 +26,15 @@ import {
   matchingContinuations,
   type Continuation,
 } from "../providers/types.ts";
-import type { CompletionUsage } from "../providers/usage.ts";
+import {
+  accepts,
+  missingTarget,
+  partialResults,
+  replaceLastMessage,
+  withUserParts,
+} from "./journal/shared.ts";
+import type { Fold, JournalState } from "./journal/state.ts";
+import { load } from "./journal/state.ts";
 import {
   INITIAL_REVISION,
   RevisionSchema,
@@ -57,71 +56,8 @@ import {
   type WireEvent,
 } from "./types.ts";
 
-/** A `tool` record's body: one tool call's raw result, committed before its tool batch settles. */
-export type ToolEntry = Extract<JournalBody, { kind: "tool" }>;
-
-/** Accounting of the latest committed completion that reported usage. */
-export type LastCompletionUsage = Readonly<{
-  /** Turn whose step produced the completion. */
-  turnId: string;
-  /** ID of the completion: a child operation of the turn, not a child session. */
-  operationId: string;
-  usage: CompletionUsage;
-}>;
-
-/**
- * Session state folded from journal records: the conversation plus everything the records set.
- * {@link replay} builds it on load; {@link stage} returns the next one for new work. A staged state
- * is a proposal until its append commits.
- */
-export type JournalState = Readonly<{
-  /** Accounting of the latest committed completion that reported usage; kept when one has none. */
-  lastCompletionUsage?: LastCompletionUsage;
-  /** Current turn, turn log, inherited context and pending branch requests. */
-  conversation: ConversationState;
-  /**
-   * Provider continuation payloads (such as thinking signatures) committed with settled steps, each
-   * owned by the assistant message of one turn and generation.
-   */
-  continuations?: readonly Continuation[];
-  /**
-   * Configuration (the user-selectable settings) in force. Policy records are staged only at an
-   * idle boundary, so a running turn keeps the policy it started with.
-   */
-  policy: Policy;
-  /**
-   * Queued inputs, oldest first, each waiting for the current turn to end. Not the in-memory
-   * submissions of `SessionState.queue`.
-   */
-  pendingInputs?: readonly Readonly<{
-    inputId: ReturnType<typeof ActorIdSchema.parse>;
-    text: string;
-    attachments?: readonly BlobRef[];
-  }>[];
-  /** The registry (tool and agent definitions); the user-selectable configuration is `policy`. */
-  configuration: Configuration;
-  /** Standing session instructions, not system notices. */
-  systemInputs: readonly string[];
-  systemVersion: ReturnType<typeof SystemVersionSchema.parse>;
-  /**
-   * `tool` records committed for the running tool batch, in commit order. Cleared when the batch
-   * settles or the turn ends.
-   */
-  partial: readonly ToolEntry[];
-  /** Revision of the last record in `records`; 0 before the creation record. */
-  revision: Revision;
-  /** Every record folded so far, in revision order. A staged state ends with uncommitted ones. */
-  records: readonly JournalRecord[];
-}>;
-
-/**
- * How records fold into state. `stage` admits new work and enforces every commit-time rule against
- * the live resolvers. `load` rebuilds state from committed records: each stored record is taken as
- * written, and only what the fold needs to apply it is checked.
- */
-type Fold = Readonly<{ mode: "stage"; resolvers: PolicyResolvers }> | Readonly<{ mode: "load" }>;
-
-const load: Fold = { mode: "load" };
+export type { ToolEntry, LastCompletionUsage, JournalState } from "./journal/state.ts";
+export { accepts, partialResults } from "./journal/shared.ts";
 
 /**
  * Builds the initial state of a new session from its seed under every commit-time rule: the turn
@@ -315,54 +251,6 @@ export function wireEvent(event: ConversationEvent): WireEvent {
   return WireEventSchema.parse(event);
 }
 
-/**
- * Why a record cannot apply: it names a turn, operation, batch or tool call that does not exist in
- * the folded state. Load checks only this; staging (`accepts`) adds the commit-time rules.
- */
-function missingTarget(state: JournalState, input: SessionInput): string | undefined {
-  const c = state.conversation;
-  if (input.kind === "event" && input.event.type === "child") {
-    const { turnId, event } = input.event;
-    if (turnId !== c.turnId) return `Event for turn ${turnId}; the current turn is ${c.turnId}`;
-    if (c.turn.status === "idle")
-      return `Event for ${event.child.kind} ${event.child.id}; turn ${turnId} is idle`;
-    if (event.child.id !== c.turn.child.id || event.child.kind !== c.turn.child.kind)
-      return `Event for ${event.child.kind} ${event.child.id}; the active operation is ${c.turn.child.kind} ${c.turn.child.id}`;
-    return undefined;
-  }
-  if (input.kind !== "tool") return undefined;
-  if (input.turnId !== c.turnId)
-    return `Tool result for turn ${input.turnId}; the current turn is ${c.turnId}`;
-  if (c.turn.status !== "executing_tools" && c.turn.status !== "cancelling_tools")
-    return `Tool result for batch ${input.batchId}; turn ${c.turnId} has no tool batch`;
-  if (input.batchId !== c.turn.child.id)
-    return `Tool result for batch ${input.batchId}; the active batch is ${c.turn.child.id}`;
-  const intents = c.turn.turn.messages.at(-1);
-  if (intents?.role !== "assistant" || !intents.calls?.some((call) => call.id === input.callId))
-    return `Tool result for call ${input.callId}; batch ${input.batchId} has no such call`;
-  return undefined;
-}
-
-/**
- * Whether `input` still applies to `state`: the turn, operation, tool batch and call it names are
- * current, and a tool result arrives while its batch runs, once per call, with no earlier result of
- * the batch counting as failed under the policy's `toolFailure`. `false` marks a stale or
- * uncorrelated input: `decideSession` answers `ignored` and {@link stage} throws.
- */
-export function accepts(state: JournalState, input: SessionInput): boolean {
-  if (missingTarget(state, input)) return false;
-  if (input.kind !== "tool") return true;
-  // New results arrive only while the batch runs, once per call, and none after a failure.
-  return (
-    state.conversation.turn.status === "executing_tools" &&
-    !state.partial.some(
-      (entry) =>
-        entry.callId === input.callId ||
-        effectiveToolResult(entry.result, state.policy).kind !== "succeeded",
-    )
-  );
-}
-
 function domainEvent(state: JournalState, event: WireEvent, fold: Fold): ConversationEvent {
   if (event.type !== "child") return event;
   const child = event.event;
@@ -523,71 +411,6 @@ function domainEvent(state: JournalState, event: WireEvent, fold: Fold): Convers
       outcome: { kind: "succeeded", results: completeResults(message.calls, results) },
     },
   };
-}
-
-function replaceLastMessage(
-  decision: ReturnType<typeof decideConversation>,
-  update: (message: AgentMessage) => AgentMessage,
-): ReturnType<typeof decideConversation> {
-  const c = decision.state;
-  const messages = c.turn.status === "idle" ? c.log.at(-1)!.messages : c.turn.turn.messages;
-  const target = messages.at(-1)!;
-  const attachMessages = (items: readonly AgentMessage[]) =>
-    items.map((message) => (message === target ? update(message) : message));
-  const attachTurn = (turn: TurnData): TurnData => ({
-    ...turn,
-    messages: attachMessages(turn.messages),
-    view:
-      turn.view.kind === "handoff"
-        ? { ...turn.view, messages: attachMessages(turn.view.messages) }
-        : turn.view,
-  });
-  const attachLog = (log: readonly TurnRecord[]) =>
-    log.map((record) => ({ ...record, messages: attachMessages(record.messages) }));
-  // Keep the decorated message in history, handoff views and pending branch commands.
-  return {
-    state: {
-      ...c,
-      log: attachLog(c.log),
-      turn:
-        c.turn.status === "idle"
-          ? c.turn
-          : ({ ...c.turn, turn: attachTurn(c.turn.turn) } as typeof c.turn),
-    },
-    commands: decision.commands.map((effect): ConversationCommand =>
-      effect.type === "reply"
-        ? {
-            ...effect,
-            result: {
-              ...effect.result,
-              state: { ...effect.result.state, log: attachLog(effect.result.state.log) },
-            },
-          }
-        : {
-            ...effect,
-            command:
-              "turn" in effect.command
-                ? { ...effect.command, turn: attachTurn(effect.command.turn) }
-                : effect.command,
-          },
-    ),
-  };
-}
-
-function withUserParts(
-  decision: ReturnType<typeof decideConversation>,
-  text: string,
-  attachments?: readonly BlobRef[],
-) {
-  if (!attachments) return decision;
-  const parts: readonly ContentPart[] = [
-    ...(text ? [{ type: "text" as const, text }] : []),
-    ...attachments.map((ref) => ({ type: "blob" as const, ref })),
-  ];
-  return replaceLastMessage(decision, (message) => {
-    if (message.role !== "user") throw new Error("Input did not produce a user message");
-    return { ...message, parts };
-  });
 }
 
 function reduce(
@@ -1030,13 +853,6 @@ export function stage(
     for (const pending of next.pendingInputs ?? [])
       apply({ kind: "input_cancelled", inputId: pending.inputId, reason: input.reason });
   return packageRecords(state, next, bodies, appendId, commands);
-}
-
-function partialResults(state: JournalState) {
-  return state.partial.flatMap((entry) => {
-    const result = effectiveToolResult(entry.result, state.policy);
-    return result.kind === "succeeded" ? [{ callId: entry.callId, text: result.value }] : [];
-  });
 }
 
 function packageRecords(
