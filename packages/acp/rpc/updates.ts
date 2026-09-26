@@ -1,26 +1,36 @@
 import type { AgentContext, SessionUpdate } from "@agentclientprotocol/sdk";
-import type { JournalState, SessionRuntime, SessionState } from "@labkit-agent/core";
+import type {
+  JournalState,
+  SessionOptions,
+  SessionRuntime,
+  SessionState,
+} from "@labkit-agent/core";
 import type { HostToolNotification } from "@labkit-agent/core/host";
 import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
-import type { Policy } from "@labkit-agent/core/policy";
 import type { AgentMessage } from "@labkit-agent/core/types";
 
+import type { AcpOptions } from "../adapter.ts";
 import { parseSessionInfo } from "../session-info.ts";
 import { renderToolContent, type AcpToolContent } from "../tool-content.ts";
+import type { ConfigProjection } from "./config.ts";
 import type { AdapterCore } from "./core.ts";
 import type { Session } from "./session.ts";
 
-export type SessionUpdates = {
+/** Runtime display callbacks that ACP projects to the client. */
+export type DisplayBindings = Pick<
+  SessionOptions["bindings"],
+  "observe" | "toolUpdate" | "streamUpdate"
+>;
+
+/** Projects runtime state and display events to `session/update` notifications. */
+export type SessionUpdates = Readonly<{
   text(client: AgentContext, id: string, value: string, messageId: string, thought?: boolean): void;
   observe(
     entry: Omit<Session, "runtime"> & { runtime?: SessionRuntime },
     client: AgentContext,
     snapshot: SessionState,
   ): void;
-  refreshInfo(
-    entry: Session | (Omit<Session, "runtime"> & { runtime?: SessionRuntime }),
-    client: AgentContext,
-  ): void;
+  refreshInfo(entry: Session, client: AgentContext): void;
   replay(
     client: AgentContext,
     id: string,
@@ -33,21 +43,17 @@ export type SessionUpdates = {
     entry: Omit<Session, "runtime"> & { runtime?: SessionRuntime },
     client: AgentContext,
     renderers: ReadonlyMap<string, AcpToolContent>,
-    subscribers: Record<string, unknown>,
-    boundSessionId: string | undefined,
-  ): {
-    observe: (snapshot: SessionState) => void;
-    toolUpdate: (event: HostToolNotification) => void;
-    streamUpdate: (event: unknown) => void;
-  };
+    subscribers: DisplayBindings,
+    boundSessionId: () => string | undefined,
+  ): DisplayBindings;
   terminalAttached(
     client: AgentContext,
-    sessions: Map<string, Session>,
     sessionIdentity: () => string,
   ): (toolCallId: string, terminalId: string) => void;
-  resetTurn(entry: Omit<Session, "runtime"> & { runtime?: SessionRuntime }): void;
-};
+  resetTurn(entry: Session): void;
+}>;
 
+/** Append validated locations to a tool title for clients that show only the title. */
 export function locatedTitle(
   title: string,
   locations?: readonly { path: string; line?: number }[],
@@ -162,23 +168,14 @@ export function toolEvidence(state: JournalState) {
   return evidence;
 }
 
+/** Builds the session/update projection for one connection. */
 export function sessionUpdates(
   core: AdapterCore,
-  signal: () => AbortSignal,
-  isClosing: () => boolean,
-  getSession: (sessionId: string) => unknown,
-  sessionInfo?: (
-    params: { sessionId: string; cwd: string },
-    signal: AbortSignal,
-  ) => unknown | Promise<unknown>,
-  configProject?: (
-    entry: Omit<Session, "runtime"> & { runtime?: SessionRuntime },
-    client: AgentContext,
-    id: string,
-    policy: Policy | undefined,
-    revision: number,
-  ) => void,
+  current: (sessionId: string) => Session | undefined,
+  sessionInfo: AcpOptions["sessionInfo"],
+  project: ConfigProjection["project"],
 ): SessionUpdates {
+  const { connectionId } = core;
   const text = (
     client: AgentContext,
     id: string,
@@ -194,24 +191,21 @@ export function sessionUpdates(
       });
   };
 
-  const refreshInfo = (
-    entry: Session | (Omit<Session, "runtime"> & { runtime?: SessionRuntime }),
-    client: AgentContext,
-  ) => {
-    if (!sessionInfo || !entry.acceptingUpdates) return;
-    const id = entry.runtime!.snapshot.durable.conversation.sessionId;
-    const revision = entry.runtime!.snapshot.durable.revision;
+  const refreshInfo = (entry: Session, client: AgentContext) => {
+    if (!sessionInfo || !entry.acceptingUpdates || core.isClosing()) return;
+    const sessionId = entry.runtime.snapshot.durable.conversation.sessionId;
+    const revision = entry.runtime.snapshot.durable.revision;
     const epoch = ++entry.infoEpoch;
     try {
-      const result = sessionInfo({ sessionId: id, cwd: entry.cwd }, signal());
+      const result = sessionInfo({ sessionId, cwd: entry.cwd }, core.signal());
       void Promise.resolve(result)
         .then((value) => {
           if (
-            isClosing() ||
-            getSession(id) !== entry ||
+            core.isClosing() ||
+            current(sessionId) !== entry ||
             !entry.acceptingUpdates ||
-            entry.infoEpoch !== epoch ||
-            entry.runtime!.snapshot.durable.revision !== revision
+            epoch !== entry.infoEpoch ||
+            entry.runtime.snapshot.durable.revision !== revision
           )
             return;
           const info = parseSessionInfo(value);
@@ -219,18 +213,20 @@ export function sessionUpdates(
           const signature = JSON.stringify(info);
           if (signature === entry.infoSignature) return;
           entry.infoSignature = signature;
-          core.send(client, id, { sessionUpdate: "session_info_update", ...info });
+          core.send(client, sessionId, { sessionUpdate: "session_info_update", ...info });
         })
         .catch((error) =>
           diagnostic("acp", "warning", "acp.session.metadata.failed", {
-            sessionId: id,
+            connectionId,
+            sessionId,
             revision,
             error: diagnosticError(error),
           }),
         );
     } catch (error) {
       diagnostic("acp", "warning", "acp.session.metadata.failed", {
-        sessionId: id,
+        connectionId,
+        sessionId,
         revision,
         error: diagnosticError(error),
       });
@@ -245,10 +241,9 @@ export function sessionUpdates(
     if (!entry.acceptingUpdates) return;
     entry.usage?.refresh();
     const id = snapshot.durable.conversation.sessionId;
+    // Pending registry adoption can reconcile the policy the next turn uses before it is journaled.
     const policy = entry.runtime ? entry.runtime.policy : snapshot.durable.policy;
-    if (configProject) {
-      configProject(entry, client, id, policy, snapshot.durable.revision);
-    }
+    project(entry, client, id, policy, snapshot.durable.revision);
     for (const record of snapshot.durable.records.slice(entry.revision)) {
       entry.revision = record.revision;
       const body = record.body;
@@ -257,12 +252,11 @@ export function sessionUpdates(
       if (event.type !== "model_settled" || event.result.kind !== "succeeded") continue;
       const finalText = event.result.value.text;
       const prefix = entry.streamed.get(event.child.id) ?? "";
+      // A decoder may normalize text. Never duplicate already displayed stream output.
       if (finalText.startsWith(prefix))
         text(client, id, finalText.slice(prefix.length), event.child.id);
       entry.streamed.delete(event.child.id);
     }
-    // Config projection delegated to configuration module
-    // TODO A4: wire deps.config.project(entry, client, id, policy, revision)
   };
 
   const replay = (
@@ -349,21 +343,17 @@ export function sessionUpdates(
     refreshInfo,
     observe,
     replay,
-
     bindings: (entry, client, renderers, subscribers, boundSessionId) => ({
       observe: (snapshot) => {
-        if (!boundSessionId || snapshot.durable.conversation.sessionId === boundSessionId)
+        const bound = boundSessionId();
+        if (!bound || snapshot.durable.conversation.sessionId === bound)
           observe(entry, client, snapshot);
-        observeSafely(
-          subscribers.observe as ((value: SessionState) => unknown) | undefined,
-          snapshot,
-          {
-            sessionId: snapshot.durable.conversation.sessionId,
-            operation: "observe",
-          },
-        );
+        observeSafely(subscribers.observe, snapshot, {
+          connectionId,
+          sessionId: snapshot.durable.conversation.sessionId,
+          operation: "observe",
+        });
       },
-
       toolUpdate: (event) => {
         if (event.sessionUpdate === "tool_call")
           entry.toolCards.set(event.toolCallId, {
@@ -385,58 +375,37 @@ export function sessionUpdates(
           entry.terminals.delete(event.toolCallId);
           entry.toolCards.delete(event.toolCallId);
         }
-        observeSafely(
-          subscribers.toolUpdate as ((value: HostToolNotification) => unknown) | undefined,
-          event,
-          {
-            sessionId: event.sessionId,
-            toolCallId: event.toolCallId,
-            operation: "toolUpdate",
-          },
-        );
+        observeSafely(subscribers.toolUpdate, event, {
+          connectionId,
+          sessionId: event.sessionId,
+          toolCallId: event.toolCallId,
+          operation: "toolUpdate",
+        });
       },
-
       streamUpdate: (event) => {
-        const streamEvent = event as {
-          sessionId?: string;
-          completionId: string;
-          text?: string;
-          thinking?: string;
-          status?: string;
-        };
-        if (entry.acceptingUpdates && streamEvent.sessionId) {
-          if (streamEvent.text) {
+        if (entry.acceptingUpdates && event.sessionId) {
+          if (event.text) {
             entry.streamed.set(
-              streamEvent.completionId,
-              (entry.streamed.get(streamEvent.completionId) ?? "") + streamEvent.text,
+              event.completionId,
+              (entry.streamed.get(event.completionId) ?? "") + event.text,
             );
-            text(client, streamEvent.sessionId, streamEvent.text, streamEvent.completionId);
+            text(client, event.sessionId, event.text, event.completionId);
           }
-          if (streamEvent.thinking)
-            text(
-              client,
-              streamEvent.sessionId,
-              streamEvent.thinking,
-              `${streamEvent.completionId}/thought`,
-              true,
-            );
-          if (streamEvent.status === "failed") entry.streamed.delete(streamEvent.completionId);
+          if (event.thinking)
+            text(client, event.sessionId, event.thinking, `${event.completionId}/thought`, true);
+          if (event.status === "failed") entry.streamed.delete(event.completionId);
         }
-        observeSafely(
-          subscribers.streamUpdate as ((value: unknown) => unknown) | undefined,
-          event,
-          {
-            sessionId: streamEvent.sessionId,
-            childId: streamEvent.completionId,
-            operation: "streamUpdate",
-          },
-        );
+        observeSafely(subscribers.streamUpdate, event, {
+          connectionId,
+          sessionId: event.sessionId,
+          childId: event.completionId,
+          operation: "streamUpdate",
+        });
       },
     }),
-
-    terminalAttached: (client, sessions, sessionIdentity) => (toolCallId, terminalId) => {
+    terminalAttached: (client, sessionIdentity) => (toolCallId, terminalId) => {
       const sessionId = sessionIdentity();
-      const active = sessions.get(sessionId);
+      const active = current(sessionId);
       if (!active?.acceptingUpdates) return;
       const ids = active.terminals.get(toolCallId) ?? [];
       if (!ids.includes(terminalId)) ids.push(terminalId);
@@ -444,10 +413,9 @@ export function sessionUpdates(
       core.send(client, sessionId, {
         sessionUpdate: "tool_call_update",
         toolCallId,
-        content: ids.map((id) => ({ type: "terminal", terminalId: id })),
+        content: ids.map((terminalId) => ({ type: "terminal", terminalId })),
       });
     },
-
     resetTurn: (entry) => {
       entry.streamed.clear();
       entry.terminals.clear();

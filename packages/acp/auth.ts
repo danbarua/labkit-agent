@@ -35,8 +35,22 @@ const MethodSchema = z.union([
     .strict(),
 ]);
 
+/** One connection's auth state: advertised methods, the access check and credential changes. */
+export type BoundAuth = Readonly<{
+  logoutSupported: boolean;
+  methods(capabilities: ClientCapabilities): AuthMethod[];
+  requireAccess(): void;
+  authenticate(
+    methodId: string,
+    signal: AbortSignal,
+    before: () => Promise<void>,
+    context?: AcpAuthContext,
+  ): Promise<void>;
+  logout(signal: AbortSignal, before: () => Promise<void>): Promise<void>;
+}>;
+
 /** Auth is a host binding, independent of journaled session policy and once-only tool approvals. */
-export function bindAuth(binding?: AcpAuth) {
+export function bindAuth(binding?: AcpAuth): BoundAuth {
   const methods: AuthMethod[] = z
     .array(MethodSchema)
     .max(32)

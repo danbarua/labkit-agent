@@ -34,10 +34,10 @@ export type Session = {
 };
 
 /**
- * Queue work until the prompt completes, maintaining the configuration boundary chain.
- * Ensures configuration changes complete before new work begins.
+ * Queue `work` after earlier configuration changes and the active prompt; the returned operation
+ * becomes the session's configuration tail. Callers race it against their own cancellation.
  */
-export async function afterPrompt<T>(
+export function afterPrompt<T>(
   entry: Session,
   cancellation: AbortSignal,
   work: () => Promise<T>,
@@ -54,14 +54,11 @@ export async function afterPrompt<T>(
   return operation;
 }
 
-/**
- * Wait for configuration to stabilize without failing on cancellation.
- * Returns when the configuration boundary has settled, even if cancelled.
- */
+/** Wait until no configuration change is queued; rejects when `signal` aborts first. */
 export async function awaitConfigurationQuiet(entry: Session, signal: AbortSignal): Promise<void> {
-  try {
-    await waitForBoundary(entry.configurationTail, signal);
-  } catch {
-    // Cancelled during configuration; configuration work may still be in progress.
-  }
+  let barrier: Promise<void>;
+  do {
+    barrier = entry.configurationTail;
+    await waitForBoundary(barrier, signal);
+  } while (barrier !== entry.configurationTail);
 }

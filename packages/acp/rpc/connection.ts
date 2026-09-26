@@ -1,143 +1,103 @@
 import {
+  PROTOCOL_VERSION,
   RequestError,
   type AgentApp,
   type ClientCapabilities,
-  type InitializeResponse,
 } from "@agentclientprotocol/sdk";
-import type { AuthMethod } from "@agentclientprotocol/sdk";
 import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
 
-import type { ClientElicitation } from "../client-elicitation.ts";
+import { bindAuth, type AcpAuth, type BoundAuth } from "../auth.ts";
+import { requestElicitation } from "../client-elicitation.ts";
 import {
   advertisedPromptCapabilities,
   type AcpPromptCapabilities,
   type AdvertisedPromptCapabilities,
 } from "../prompt-input.ts";
+import type { AdapterCore } from "./core.ts";
 
-// Type for the return value of bindAuth
-type BoundAuth = Readonly<{
-  logoutSupported: boolean;
-  methods(capabilities: ClientCapabilities): readonly AuthMethod[];
-  requireAccess(): void;
-  authenticate(
-    methodId: string,
-    signal: AbortSignal,
-    before: () => Promise<void>,
-    context?: { elicitation: ClientElicitation },
-  ): Promise<void>;
-  logout(signal: AbortSignal, before: () => Promise<void>): Promise<void>;
-}>;
-
+/** Initialize and auth checks every session handler runs, plus what initialize captured. */
 export type ConnectionGate = Readonly<{
   requireInitialized(): void;
   requireAccess(): void;
   clientCapabilities(): ClientCapabilities;
   promptCapabilities(): AdvertisedPromptCapabilities;
   logoutSupported: boolean;
-  /** @internal */
-  _setInitialized(value: boolean): void;
-  /** @internal */
-  _setInitializing(value: boolean): void;
-  /** @internal */
-  _setPromptCapabilities(value: AdvertisedPromptCapabilities): void;
-  /** @internal */
-  _setClientCapabilities(value: ClientCapabilities): void;
-  /** @internal */
-  _isInitializing(): boolean;
-  /** @internal */
-  _isInitialized(): boolean;
 }>;
 
-export function connectionGate(
-  auth: BoundAuth | undefined,
-  isClosing: () => boolean,
-): ConnectionGate {
-  let initialized = false;
-  let initializing = false;
-  let capturedPromptCapabilities: AdvertisedPromptCapabilities = {
-    image: false,
-    audio: false,
-    embeddedContext: false,
-  };
-  let capturedClientCapabilities: ClientCapabilities = {};
+/** Connection state written only by the initialize handler in this module. */
+export type GateState = {
+  readonly auth: BoundAuth;
+  initialized: boolean;
+  initializing: boolean;
+  clientCapabilities: ClientCapabilities;
+  promptCapabilities: AdvertisedPromptCapabilities;
+};
 
+/** Optional methods and capabilities; initialize and the -32601 gate read the same flags. */
+export type Advertised = Readonly<{
+  loadSession: boolean;
+  forkSession: boolean;
+  deleteSession: boolean;
+  listSessions: boolean;
+  additionalDirectories: boolean;
+}>;
+
+/** Binds auth and returns the gate other modules check, with the state initialize writes. */
+export function connectionGate(
+  binding: AcpAuth | undefined,
+  isClosing: () => boolean,
+): ConnectionGate & Readonly<{ state: GateState }> {
+  const state: GateState = {
+    auth: bindAuth(binding),
+    initialized: false,
+    initializing: false,
+    clientCapabilities: {},
+    promptCapabilities: { image: false, audio: false, embeddedContext: false },
+  };
+  const requireInitialized = () => {
+    if (!state.initialized) throw new RequestError(-32002, "Initialize the connection first");
+    if (isClosing()) throw new RequestError(-32000, "Connection closed");
+  };
   return {
-    requireInitialized() {
-      if (!initialized) throw new RequestError(-32002, "Initialize the connection first");
-      if (isClosing()) throw new RequestError(-32000, "Connection closed");
-    },
+    state,
+    requireInitialized,
     requireAccess() {
-      if (!initialized) throw new RequestError(-32002, "Initialize the connection first");
-      if (isClosing()) throw new RequestError(-32000, "Connection closed");
-      if (auth) auth.requireAccess();
+      requireInitialized();
+      state.auth.requireAccess();
     },
-    clientCapabilities() {
-      return capturedClientCapabilities;
-    },
-    promptCapabilities() {
-      return capturedPromptCapabilities;
-    },
-    logoutSupported: !!auth?.logoutSupported,
-    _setInitializing(value) {
-      initializing = value;
-    },
-    _isInitializing() {
-      return initializing;
-    },
-    _setInitialized(value) {
-      initialized = value;
-    },
-    _isInitialized() {
-      return initialized;
-    },
-    _setPromptCapabilities(value) {
-      capturedPromptCapabilities = value;
-    },
-    _setClientCapabilities(value) {
-      capturedClientCapabilities = value;
-    },
+    clientCapabilities: () => state.clientCapabilities,
+    promptCapabilities: () => state.promptCapabilities,
+    logoutSupported: state.auth.logoutSupported,
   };
 }
 
+/**
+ * Registers the handlers that claim unadvertised conditional methods. It must run before any
+ * typed registration so it answers -32601 before params, initialization, auth or session state.
+ */
 export function registerUnadvertised(
   app: AgentApp,
-  core: { connectionId: string },
-  advertised: {
-    loadSession: boolean;
-    forkSession: boolean;
-    deleteSession: boolean;
-    listSessions: boolean;
-    logout: boolean;
-  },
+  core: Pick<AdapterCore, "connectionId">,
+  advertised: Advertised,
+  logoutSupported: boolean,
 ): readonly string[] {
+  // A conditional method that initialize does not advertise is claimed by this earlier handler,
+  // which answers -32601 before params, initialization, auth or session state are checked.
   const conditional = [
-    ["session/load", "agentCapabilities.loadSession", advertised.loadSession] as const,
-    [
-      "session/resume",
-      "agentCapabilities.sessionCapabilities.resume",
-      advertised.loadSession,
-    ] as const,
-    ["session/fork", "agentCapabilities.sessionCapabilities.fork", advertised.forkSession] as const,
-    [
-      "session/delete",
-      "agentCapabilities.sessionCapabilities.delete",
-      advertised.deleteSession,
-    ] as const,
-    [
-      "session/list",
-      "agentCapabilities.sessionCapabilities.list",
-      advertised.listSessions,
-    ] as const,
-    ["logout", "agentCapabilities.auth.logout", advertised.logout] as const,
-  ];
-
+    ["session/load", "agentCapabilities.loadSession", advertised.loadSession],
+    ["session/resume", "agentCapabilities.sessionCapabilities.resume", advertised.loadSession],
+    ["session/fork", "agentCapabilities.sessionCapabilities.fork", advertised.forkSession],
+    ["session/delete", "agentCapabilities.sessionCapabilities.delete", advertised.deleteSession],
+    ["session/list", "agentCapabilities.sessionCapabilities.list", advertised.listSessions],
+    ["logout", "agentCapabilities.auth.logout", logoutSupported],
+  ] as const;
   const registered: string[] = [];
-  for (const [method, capability, isAdvertised] of conditional) {
+  for (const [method, capability, isAdvertised] of conditional)
     if (!isAdvertised) {
       app.onRequest(
         method,
         (params: unknown) => params,
-        ({ params, client }) => {
+        ({ client }) => {
           diagnostic("acp", "warning", "acp.method.not_advertised", {
             connectionId: core.connectionId,
             rpcRequestId: String(client.requestId),
@@ -153,59 +113,36 @@ export function registerUnadvertised(
       );
       registered.push(method);
     }
-  }
   return registered;
 }
 
-export interface RegisterConnectionDeps {
-  core: { connectionId: string };
-  gate: ConnectionGate;
-  agentInfo: Record<string, string>;
-  buildInitializeResponse(
-    clientCapabilities: ClientCapabilities,
-    promptCapabilities: AdvertisedPromptCapabilities,
-  ): InitializeResponse;
-  promptCapabilities:
-    | AcpPromptCapabilities
-    | (() => AcpPromptCapabilities | Promise<AcpPromptCapabilities>)
-    | undefined;
-  revokeSessions(): Promise<void>;
-  connectionId: string;
-  clientElicitation(
-    client: { requestId: unknown },
-    capabilities: ClientCapabilities,
-    signal: AbortSignal,
-    connectionSignal: AbortSignal,
-  ): { port: ClientElicitation; close(): void };
-  getConnection(): { signal: AbortSignal; close(error?: Error): void };
-  auth: BoundAuth | undefined;
-  resetAuthLifetime(): void;
-}
-
-export function registerConnection(app: AgentApp, deps: RegisterConnectionDeps): readonly string[] {
-  const {
-    gate,
-    buildInitializeResponse,
-    promptCapabilities,
-    revokeSessions,
-    connectionId,
-    clientElicitation,
-    getConnection,
-    auth,
-    resetAuthLifetime,
-  } = deps;
-
-  const registered: string[] = [];
-
+/** Registers initialize, authenticate and logout. */
+export function registerConnection(
+  app: AgentApp,
+  deps: Readonly<{
+    core: Pick<AdapterCore, "connectionId" | "signal">;
+    gate: ConnectionGate & Readonly<{ state: GateState }>;
+    agentInfo: { name: string; version: string; title?: string };
+    advertised: Advertised;
+    promptCapabilities:
+      | AcpPromptCapabilities
+      | (() => AcpPromptCapabilities | Promise<AcpPromptCapabilities>)
+      | undefined;
+    /** Ends every session opened under the previous credentials. */
+    revokeSessions: () => Promise<void>;
+  }>,
+): readonly string[] {
+  const { core, gate, advertised } = deps;
+  const { connectionId } = core;
+  const { state } = gate;
+  const { auth } = state;
   app
     .onRequest("initialize", async ({ params, client }) => {
-      if (gate._isInitialized() || gate._isInitializing()) {
+      if (state.initialized || state.initializing)
         throw RequestError.invalidRequest(undefined, "Connection already initialized");
-      }
-      gate._setInitializing(true);
+      state.initializing = true;
       try {
-        const caps = await advertisedPromptCapabilities(promptCapabilities);
-        gate._setPromptCapabilities(caps);
+        state.promptCapabilities = await advertisedPromptCapabilities(deps.promptCapabilities);
       } catch (error) {
         diagnostic("acp", "error", "acp.capabilities.failed", {
           connectionId,
@@ -220,28 +157,44 @@ export function registerConnection(app: AgentApp, deps: RegisterConnectionDeps):
           `Cannot determine which prompt content this agent accepts: ${error instanceof Error ? error.message : String(error)}. Fix the agent's model configuration, then initialize again.`,
         );
       } finally {
-        gate._setInitializing(false);
+        state.initializing = false;
       }
-      gate._setInitialized(true);
-      const capturedClientCapabilities = structuredClone(params.clientCapabilities ?? {});
-      gate._setClientCapabilities(capturedClientCapabilities);
+      state.initialized = true;
+      state.clientCapabilities = structuredClone(params.clientCapabilities ?? {});
       diagnostic("acp", "debug", "acp.capabilities.prompt", {
         connectionId,
         rpcRequestId: String(client.requestId),
         method: "initialize",
-        promptCapabilities: gate.promptCapabilities(),
+        promptCapabilities: state.promptCapabilities,
       });
-      return buildInitializeResponse(capturedClientCapabilities, gate.promptCapabilities());
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        agentInfo: deps.agentInfo,
+        authMethods: auth.methods(state.clientCapabilities),
+        agentCapabilities: {
+          loadSession: advertised.loadSession,
+          ...(auth.logoutSupported ? { auth: { logout: {} } } : {}),
+          promptCapabilities: { ...state.promptCapabilities },
+          mcpCapabilities: { http: true, sse: true, acp: true },
+          sessionCapabilities: {
+            close: {},
+            ...(advertised.loadSession ? { resume: {} } : {}),
+            ...(advertised.forkSession ? { fork: {} } : {}),
+            ...(advertised.deleteSession ? { delete: {} } : {}),
+            ...(advertised.additionalDirectories ? { additionalDirectories: {} } : {}),
+            ...(advertised.listSessions ? { list: {} } : {}),
+          },
+        },
+      };
     })
     .onRequest("authenticate", async ({ params, signal, client }) => {
       gate.requireInitialized();
-      const connection = getConnection();
-      const cancellation = AbortSignal.any([signal, connection.signal]);
-      const interaction = clientElicitation(
+      const cancellation = AbortSignal.any([signal, core.signal()]);
+      const interaction = requestElicitation(
         client,
-        gate.clientCapabilities(),
+        state.clientCapabilities,
         cancellation,
-        connection.signal,
+        core.signal(),
       );
       const started = performance.now();
       const trace = {
@@ -252,12 +205,7 @@ export function registerConnection(app: AgentApp, deps: RegisterConnectionDeps):
       };
       diagnostic("acp", "info", "acp.auth.started", trace);
       try {
-        if (!auth) throw RequestError.methodNotFound("authenticate");
-        const closeForAuth = async () => {
-          await revokeSessions();
-          resetAuthLifetime();
-        };
-        await auth.authenticate(params.methodId, cancellation, closeForAuth, {
+        await auth.authenticate(params.methodId, cancellation, deps.revokeSessions, {
           elicitation: interaction.port,
         });
         diagnostic("acp", "info", "acp.auth.completed", {
@@ -272,15 +220,13 @@ export function registerConnection(app: AgentApp, deps: RegisterConnectionDeps):
           durationMs: performance.now() - started,
           error: cause,
         });
+        // Cancellation, unknown method IDs and a missing binding keep their own codes.
         if (cancellation.aborted || (error instanceof RequestError && error.code !== -32000))
           throw error;
         throw new RequestError(
           -32000,
           `Authentication with ${params.methodId} failed: ${String(cause.message)}`,
-          {
-            methodId: params.methodId,
-            cause,
-          },
+          { methodId: params.methodId, cause },
         );
       } finally {
         interaction.close();
@@ -288,18 +234,8 @@ export function registerConnection(app: AgentApp, deps: RegisterConnectionDeps):
     })
     .onRequest("logout", async ({ signal }) => {
       gate.requireInitialized();
-      const connection = getConnection();
-      if (!auth) throw RequestError.methodNotFound("logout");
-      const closeForAuth = async () => {
-        await revokeSessions();
-        resetAuthLifetime();
-      };
-      await auth.logout(AbortSignal.any([signal, connection.signal]), closeForAuth);
+      await auth.logout(AbortSignal.any([signal, core.signal()]), deps.revokeSessions);
       return {};
     });
-
-  registered.push("initialize", "authenticate");
-  if (gate.logoutSupported) registered.push("logout");
-
-  return registered;
+  return ["initialize", "authenticate", "logout"];
 }

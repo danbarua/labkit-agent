@@ -2,7 +2,6 @@ import { isAbsolute, resolve } from "node:path";
 
 import {
   agent,
-  PROTOCOL_VERSION,
   RequestError,
   type AgentConnection,
   type AgentContext,
@@ -21,12 +20,8 @@ import {
 import type { Tool } from "@labkit-agent/core/host";
 import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
 
-import { bindAuth, type AcpAuth } from "./auth.ts";
-import {
-  clientElicitation,
-  requestElicitation,
-  type ClientElicitation,
-} from "./client-elicitation.ts";
+import type { AcpAuth } from "./auth.ts";
+import { clientElicitation, type ClientElicitation } from "./client-elicitation.ts";
 import { clientFiles, type ClientFiles } from "./client-files.ts";
 import { clientTerminal, type ClientTerminal } from "./client-terminal.ts";
 import { availableCommands, bindCommands, expandCommand, type AcpCommand } from "./commands.ts";
@@ -45,7 +40,6 @@ import { afterPrompt, awaitConfigurationQuiet, type Session } from "./rpc/sessio
 import { locatedTitle, sessionUpdates, toolEvidence } from "./rpc/updates.ts";
 import {
   bindConfig,
-  configPatch,
   configState,
   waitForBoundary,
   type AcpConfigBinding,
@@ -110,6 +104,7 @@ export type AcpOptions = Readonly<{
   promptCapabilities?:
     AcpPromptCapabilities | (() => AcpPromptCapabilities | Promise<AcpPromptCapabilities>);
 }>;
+
 /** Self-contained JSON-RPC message for a failed turn; the structured failure travels as `data`. */
 function turnFailureMessage(error: {
   message: string;
@@ -148,12 +143,14 @@ function permissionAnswerProblem(response: unknown, offered: readonly { optionId
     return `optionId ${JSON.stringify(optionId.slice(0, 80))} was not offered`;
   return undefined;
 }
-/** Raw journal tool outcomes retain failures even when policy projects them as tool text. */
+
 /** One connection owns its runtimes; persistence and credentials remain caller-owned. */
 export function connectAcp(stream: Stream, options: AcpOptions) {
   const connectionId = crypto.randomUUID();
   const sessions = new Map<string, Session>();
-  const auth = bindAuth(options.auth);
+  let closing = false;
+  const gate = connectionGate(options.auth, () => closing);
+  const auth = gate.state.auth;
   let authLifetime = new AbortController();
   const opening = new Set<string>();
   const sessionOptions = options.sessionOptions;
@@ -164,22 +161,18 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
   const resources = new Set<() => Promise<void>>();
   const borrowedParents = new Set<string>();
   const deleting = new Set<string>();
-  let closing = false;
   let connection: AgentConnection;
-  const mcpBridge = acpMcpBridge(() => connection.signal);
   const core = adapterCore({
     connectionId,
     signal: () => connection.signal,
     isClosing: () => closing,
     close: (e) => connection.close(e),
   });
-  const gate = connectionGate(auth, () => closing);
+  const mcpBridge = acpMcpBridge(core.signal);
   const requireInitialized = () => gate.requireInitialized();
   const config = configProjection(core);
   const updates = sessionUpdates(
     core,
-    () => connection.signal,
-    () => closing,
     (id) => sessions.get(id),
     options.sessionInfo,
     config.project,
@@ -335,7 +328,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
               sessionIdentity,
               params.cwd,
               connection.signal,
-              updates.terminalAttached(client, sessions, sessionIdentity),
+              updates.terminalAttached(client, sessionIdentity),
             )
           : undefined;
       const original = await sessionOptions({
@@ -449,7 +442,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         bindings: {
           ...original.bindings,
           tools,
-          ...updates.bindings(entry, client, renderers, subscribers, boundSessionId),
+          ...updates.bindings(entry, client, renderers, subscribers, () => boundSessionId),
           requestPermission: async (request, permissionSignal) => {
             await core.flushed();
             if (permissionSignal.aborted || closing) return { outcome: { outcome: "cancelled" } };
@@ -665,76 +658,6 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       if (initializedId) opening.delete(initializedId);
     }
   }
-  const setConfig = (
-    id: string,
-    configId: string,
-    value: unknown,
-    client: AgentContext,
-    signal: AbortSignal,
-    type?: string,
-  ) => {
-    const started = performance.now();
-    const trace = {
-      connectionId,
-      sessionId: id,
-      rpcRequestId: String(client.requestId),
-      method: "session/set_config_option",
-      configId,
-    };
-    const entry = lookup(id);
-    diagnostic("acp", "info", "acp.config.queued", {
-      ...trace,
-      reason: entry.busy ? "active_prompt" : "configuration_boundary",
-    });
-    const binding = entry.config.find((binding) => binding.id === configId);
-    const effective = entry.runtime.policy;
-    const offered = binding && effective && configPatch(binding, value, effective, type);
-    // An unlisted saved value is offered as a choice; re-selecting it changes nothing.
-    const keepsSaved =
-      binding?.type !== "boolean" && effective && binding?.current(effective) === value;
-    if (!binding || (!offered && !keepsSaved))
-      throw RequestError.invalidParams(undefined, "Unknown config option or value");
-    const cancellation = AbortSignal.any([signal, connection.signal]);
-    return afterPrompt(entry, cancellation, async () => {
-      if (closing || sessions.get(id) !== entry || !entry.acceptingUpdates)
-        throw new RequestError(-32000, "Session closed");
-      requireAccess();
-      const policy = entry.runtime.policy;
-      if (!policy) throw new RequestError(-32000, "Session has no journaled policy");
-      if (binding.current(policy) !== value) {
-        // Choices can depend on policy (for example the model); resolve against the policy in effect now.
-        const patch = configPatch(binding, value, policy, type);
-        if (!patch) throw RequestError.invalidParams(undefined, "Unknown config option or value");
-        const receipt = await entry.runtime.updatePolicy(structuredClone(patch));
-        if (receipt.kind !== "accepted")
-          throw new RequestError(-32000, "Configuration change was not committed", receipt);
-      }
-      diagnostic("acp", "info", "acp.config.committed", {
-        ...trace,
-        configValue: typeof value === "boolean" || typeof value === "string" ? value : undefined,
-        revision: entry.runtime.snapshot.durable.revision,
-        durationMs: performance.now() - started,
-      });
-      const state = configState(entry.config, entry.runtime.policy);
-      updates.observe(entry, client, entry.runtime.snapshot);
-      updates.refreshInfo(entry, client);
-      await core.flushed();
-      return { configOptions: state.configOptions ?? [] };
-    }).catch((error) => {
-      diagnostic(
-        "acp",
-        cancellation.aborted ? "info" : "warning",
-        cancellation.aborted ? "acp.config.cancelled" : "acp.config.failed",
-        {
-          ...trace,
-          outcome: cancellation.aborted ? "cancelled" : "failed",
-          durationMs: performance.now() - started,
-          error: diagnosticError(error),
-        },
-      );
-      throw error;
-    });
-  };
   const closeForAuth = async () => {
     authLifetime.abort();
     authLifetime = new AbortController();
@@ -756,51 +679,21 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     );
   };
   const app = agent();
-  registerConfiguration(app, { lookup, setConfig });
-  registerUnadvertised(app, core, {
+  const advertised = {
     loadSession,
     forkSession,
     deleteSession: !!options.deleteSession,
     listSessions: !!options.listSessions,
-    logout: gate.logoutSupported,
-  });
+    additionalDirectories: !!options.additionalDirectories,
+  };
+  registerUnadvertised(app, core, advertised, gate.logoutSupported);
   registerConnection(app, {
     core,
     gate,
     agentInfo,
-    buildInitializeResponse(clientCapabilities, promptCapabilities) {
-      return {
-        protocolVersion: PROTOCOL_VERSION,
-        agentInfo,
-        authMethods: auth.methods(clientCapabilities),
-        agentCapabilities: {
-          loadSession,
-          ...(auth.logoutSupported ? { auth: { logout: {} } } : {}),
-          promptCapabilities: { ...promptCapabilities },
-          mcpCapabilities: { http: true, sse: true, acp: true },
-          sessionCapabilities: {
-            close: {},
-            ...(loadSession ? { resume: {} } : {}),
-            ...(forkSession ? { fork: {} } : {}),
-            ...(options.deleteSession ? { delete: {} } : {}),
-            ...(options.additionalDirectories ? { additionalDirectories: {} } : {}),
-            ...(options.listSessions ? { list: {} } : {}),
-          },
-        },
-      };
-    },
+    advertised,
     promptCapabilities: options.promptCapabilities,
     revokeSessions: closeForAuth,
-    connectionId,
-    clientElicitation: requestElicitation,
-    getConnection() {
-      return connection;
-    },
-    auth,
-    resetAuthLifetime() {
-      authLifetime.abort();
-      authLifetime = new AbortController();
-    },
   });
   app
     .onRequest("mcp/message", McpMessageSchema, ({ params, signal }) => {
@@ -871,7 +764,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
             undefined,
             "Fork must retain the parent's MCP server bindings",
           );
-        return await afterPrompt(parent, cancellation, async () => {
+        const operation = afterPrompt(parent, cancellation, async () => {
           if (sessions.get(params.sessionId) !== parent || (!borrowed && !parent.acceptingUpdates))
             throw new RequestError(-32000, "Parent session closed");
           const child = await parent.runtime.fork();
@@ -913,6 +806,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
             });
           }
         });
+        return await waitForBoundary(operation, cancellation);
       } finally {
         if (borrowed) {
           try {
@@ -1023,7 +917,15 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         });
         throw error;
       }
-    })
+    });
+  registerConfiguration(app, {
+    core,
+    gate,
+    lookup,
+    isCurrent: (id, entry) => sessions.get(id) === entry,
+    updates,
+  });
+  app
     .onRequest("session/prompt", async ({ params, client, signal }) => {
       const started = performance.now();
       const trace = {
