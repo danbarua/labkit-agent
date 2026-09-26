@@ -137,3 +137,18 @@ and batch/call IDs. Inspect real success and failure paths with:
 ```sh
 LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/host packages/core/session/consumer-contract.test.ts
 ```
+
+## Module map
+
+| Module                   | Contents                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `host.ts`                | Public types and `createHost`: dispatch checks, the table call, public methods    |
+| `context.ts`             | `HostContext`: registries, children, grants, sinks, and the `spawn`/`cancel` core |
+| `commands/index.ts`      | The handler table keyed by turn command type, plus `cancel`                       |
+| `commands/model.ts`      | `prepare_model` and `complete`                                                    |
+| `commands/handoff.ts`    | `prepare_handoff`                                                                 |
+| `commands/permission.ts` | `request_permission`: input validation and permission grants                      |
+| `commands/tools.ts`      | `run_tools`: the tool batch actor and each tool call                              |
+| `ports.ts`               | Binding types, `defineTool`, and registry validation                              |
+| `notifications.ts`       | Best-effort delivery to display sinks                                             |
+| `testing/`               | Contract suites for completion bindings and tools                                 |
