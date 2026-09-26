@@ -320,7 +320,7 @@ test("session logs expose full system instructions actually supplied before and 
     );
     expect(instructions).toHaveLength(2);
     expect(instructions[0]).toMatchObject({
-      level: "info",
+      level: "debug",
       fields: {
         sessionId: session.snapshot.durable.conversation.sessionId,
         agentId: "reviewer",

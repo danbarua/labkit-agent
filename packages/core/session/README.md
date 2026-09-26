@@ -227,7 +227,7 @@ messages; compaction drops them. Applications should not manufacture or edit the
 Configure [environment logging](../logging/README.md) before creating sessions. Follow a terminal
 failure's session/turn/operation IDs to `child.failed` and provider records for stack and transport
 details. For exact request/response bodies, bind [provider capture](../environment/README.md#retained-provider-traffic);
-`completion.system_prompt` logs the full ordered system messages at INFO before each completion,
+`completion.system_prompt` logs the full ordered system messages at DEBUG before each completion,
 with session, turn, agent, model, and operation IDs. The readable journal includes configured agent
 prompts and the committed shared-instruction history. User/file contents and full HTTP bodies remain
 in the journal or provider capture. Core owns neither sink nor retention.
