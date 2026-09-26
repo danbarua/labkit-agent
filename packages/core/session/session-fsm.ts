@@ -213,8 +213,8 @@ function committed(
 }
 
 /**
- * The configuration the next turn runs under: a pending selection, else one being applied by the
- * append in flight. `undefined` when nothing selected differs from the committed policy.
+ * The configuration the next turn runs under when it differs from the committed policy: a pending
+ * selection, else one being applied by the append in flight; otherwise `undefined`.
  */
 export function pendingSelection(state: SessionState): Policy | undefined {
   if (state.selection) return state.selection.policy;
@@ -297,6 +297,10 @@ function applySelection(
  * A staging failure answers `failed` with classification `admission`. For inputs the session
  * generates itself (tool results, child events, dequeues, recovery, registry adoption) it also
  * fails the session, so no waiting work is released under the old state.
+ *
+ * A configuration selection (`select`) is held in `selection` and never answered `busy`. It is
+ * staged as a `policy` record whenever the session is ready and the conversation idle, before a
+ * queued input dequeues or new input is admitted; a running or starting turn answers `selected`.
  */
 export function decideSession(
   state: SessionState,
