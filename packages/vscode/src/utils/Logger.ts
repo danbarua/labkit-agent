@@ -31,11 +31,13 @@ export function registerEnvironmentSecrets(environment: Record<string, string | 
 }
 
 export function getOutputChannel(): vscode.OutputChannel {
-  return (output ??= vscode.window.createOutputChannel("Labkit ACP Client"));
+  output ??= vscode.window.createOutputChannel("Labkit ACP Client");
+  return output;
 }
 
 export function getTrafficChannel(): vscode.OutputChannel {
-  return (traffic ??= vscode.window.createOutputChannel("Labkit ACP Traffic"));
+  traffic ??= vscode.window.createOutputChannel("Labkit ACP Traffic");
+  return traffic;
 }
 
 export function logDiagnostic(

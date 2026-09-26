@@ -2,7 +2,7 @@ import type { ToolCall } from "@agentclientprotocol/sdk";
 
 /** Embedded in the webview: keep helpers local and escape all agent-provided values. */
 export function renderToolDetails(tool: ToolCall): string {
-  const escape = (value: unknown) =>
+  const escapeHtml = (value: unknown) =>
     String(value ?? "").replace(
       /[&<>"']/g,
       (character) =>
@@ -12,14 +12,14 @@ export function renderToolDetails(tool: ToolCall): string {
   const raw = (label: string, value: unknown) =>
     value == null
       ? ""
-      : `<details class="acp-tool-raw"><summary>${label}</summary><pre>${escape(JSON.stringify(value, null, 2))}</pre></details>`;
+      : `<details class="acp-tool-raw"><summary>${label}</summary><pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre></details>`;
 
   return (
-    `<div class="acp-tool-identity">${tool.name == null ? "" : `<span class="acp-tool-name">${escape(tool.name)}</span> · `}<span class="acp-tool-kind">${escape(tool.kind ?? "other")}</span></div>` +
+    `<div class="acp-tool-identity">${tool.name == null ? "" : `<span class="acp-tool-name">${escapeHtml(tool.name)}</span> · `}<span class="acp-tool-kind">${escapeHtml(tool.kind ?? "other")}</span></div>` +
     (tool.locations ?? [])
       .map(
         (location, index) =>
-          `<button type="button" class="acp-tool-location" data-location-index="${index}">${escape(location.path)}${location.line == null ? "" : `:${escape(location.line)}`}</button>`,
+          `<button type="button" class="acp-tool-location" data-location-index="${index}">${escapeHtml(location.path)}${location.line == null ? "" : `:${escapeHtml(location.line)}`}</button>`,
       )
       .join("") +
     raw("Input", tool.rawInput) +

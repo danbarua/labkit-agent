@@ -35,6 +35,7 @@ export type AcpUsageBinding = Readonly<{
     signal: AbortSignal,
   ) => AcpUsage | undefined | Promise<AcpUsage | undefined>;
   /** Notify when external accounting changes without a session journal commit. */
+  // biome-ignore lint/suspicious/noConfusingVoidType: the subscriber may return nothing or an unsubscribe function.
   subscribe?: (changed: () => void, signal: AbortSignal) => void | (() => void);
 }>;
 

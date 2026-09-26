@@ -4,8 +4,8 @@ import type { SessionNotification } from "@agentclientprotocol/sdk";
 import { marked } from "marked";
 import * as vscode from "vscode";
 
-import { SessionManager } from "../core/SessionManager";
-import { SessionUpdateHandler, type SessionUpdateListener } from "../handlers/SessionUpdateHandler";
+import type { SessionManager } from "../core/SessionManager";
+import type { SessionUpdateHandler, SessionUpdateListener } from "../handlers/SessionUpdateHandler";
 import type { TerminalDisplay } from "../handlers/TerminalHandler";
 import { mergeToolCall } from "../tool-call";
 import { sendEvent } from "../utils/Diagnostics";

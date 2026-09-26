@@ -300,7 +300,7 @@ test("read_file ranges can read beyond the full-file byte cap with correct UTF-8
   try {
     await writeFile(
       join(f.cwd, "large.txt"),
-      "padding\n".repeat(40000) + "first 🌍\r\nsecond\nlast",
+      `${"padding\n".repeat(40000)}first 🌍\r\nsecond\nlast`,
     );
     const read = f.tools.get("read_file")!;
     const run = async (range: { line?: number; limit?: number }) =>

@@ -240,7 +240,7 @@ test.skipIf(process.platform === "win32")(
         command: process.execPath,
         args: [
           "-e",
-          'const {spawn}=require("node:child_process");spawn(process.execPath,["-e", "console.log(\\\"child ready\\\");setInterval(()=>{},1000)"],{stdio:["ignore","inherit","inherit"]});setInterval(()=>{},1000)',
+          'const {spawn}=require("node:child_process");spawn(process.execPath,["-e", "console.log(\\"child ready\\");setInterval(()=>{},1000)"],{stdio:["ignore","inherit","inherit"]});setInterval(()=>{},1000)',
         ],
       });
       await until(() => f.updates.some((update) => update.output.includes("child ready")));

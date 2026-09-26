@@ -2,8 +2,8 @@ import type { SessionInfo as ProtocolSessionInfo } from "@agentclientprotocol/sd
 import * as vscode from "vscode";
 
 import { getAgentNames } from "../config/AgentConfig";
-import { SessionHistoryStore, type PersistedSessionEntry } from "../core/SessionHistoryStore";
-import { SessionManager, type AgentCapabilitySummary } from "../core/SessionManager";
+import type { PersistedSessionEntry, SessionHistoryStore } from "../core/SessionHistoryStore";
+import type { AgentCapabilitySummary, SessionManager } from "../core/SessionManager";
 import { log, logError } from "../utils/Logger";
 
 /**
@@ -140,9 +140,7 @@ interface AgentListState {
  *   - Else: a single "not supported" info leaf.
  */
 export class SessionTreeProvider implements vscode.TreeDataProvider<AgentNode | ChildNode> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<
-    AgentNode | ChildNode | undefined | null | void
-  >();
+  private _onDidChangeTreeData = new vscode.EventEmitter<AgentNode | ChildNode | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private listStates: Map<string, AgentListState> = new Map();
@@ -198,13 +196,12 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<AgentNode | 
     return getAgentNames().map((name) => {
       const caps = this.sessionManager.getCachedCapabilities(name);
       const localCount = this.historyStore?.list(name, this.workspaceCwd()).length ?? 0;
-      const collapsibleState = this.computeCollapsibleState(name, caps, localCount);
+      const collapsibleState = this.computeCollapsibleState(caps, localCount);
       return new AgentTreeItem(name, this.sessionManager.isAgentConnected(name), collapsibleState);
     });
   }
 
   private computeCollapsibleState(
-    agentName: string,
     caps: AgentCapabilitySummary | undefined,
     localCount: number,
   ): vscode.TreeItemCollapsibleState {
@@ -351,7 +348,7 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<AgentNode | 
   /** Fetch and append the next page (only meaningful for agent-sourced lists). */
   async loadMore(agentName: string): Promise<void> {
     const state = this.listStates.get(agentName);
-    if (!state || state.state !== "ready" || !state.nextCursor) {
+    if (state?.state !== "ready" || !state.nextCursor) {
       return;
     }
     const cursor = state.nextCursor;
@@ -504,11 +501,11 @@ function shortSessionId(id: string): string {
   if (id.length <= 14) {
     return id;
   }
-  return id.slice(0, 8) + "…" + id.slice(-4);
+  return `${id.slice(0, 8)}…${id.slice(-4)}`;
 }
 
 function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
 function relativeTime(iso: string | null | undefined): string | undefined {

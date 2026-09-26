@@ -1,4 +1,4 @@
-import { ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 
 import { ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
@@ -8,7 +8,7 @@ import * as vscode from "vscode";
 import { version as extensionVersion } from "../../package.json";
 import { FileSystemHandler } from "../handlers/FileSystemHandler";
 import { PermissionHandler } from "../handlers/PermissionHandler";
-import { SessionUpdateHandler } from "../handlers/SessionUpdateHandler";
+import type { SessionUpdateHandler } from "../handlers/SessionUpdateHandler";
 import { TerminalHandler } from "../handlers/TerminalHandler";
 import { log, logError, logTraffic } from "../utils/Logger";
 import { clientApp } from "./client-app";

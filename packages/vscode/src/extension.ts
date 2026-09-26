@@ -39,7 +39,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const sessionUpdateHandler = new SessionUpdateHandler();
   const agentManager = new AgentManager();
   const connectionManager = new ConnectionManager(sessionUpdateHandler);
-  const sessionManager = new SessionManager(agentManager, connectionManager, sessionUpdateHandler);
+  const sessionManager = new SessionManager(agentManager, connectionManager);
 
   // Persistent client-side session-history cache (used as the tier-2 tree
   // source for agents that support session/load or session/resume but not

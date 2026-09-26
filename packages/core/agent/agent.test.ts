@@ -1,7 +1,6 @@
 import { expect, test } from "@logtape/testing-bun/autoload";
 
 import { createChatCompletion } from "./agent.ts";
-import { CompletionSchema } from "./types.ts";
 
 test("sends a chat completion request and returns the assistant message", async () => {
   let receivedUrl = "";

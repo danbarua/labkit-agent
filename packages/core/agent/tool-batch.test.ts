@@ -1,6 +1,6 @@
 import { expect, test } from "@logtape/testing-bun/autoload";
 
-import { completeResults, toolBatchMachine, type BatchState } from "./tool-batch.ts";
+import { completeResults, toolBatchMachine } from "./tool-batch.ts";
 import { ref, ToolCallIdSchema, ToolCallsSchema } from "./types.ts";
 
 const calls = ToolCallsSchema.parse([

@@ -201,8 +201,9 @@ test("SessionManager stop dismisses permission before sending session/cancel and
   const connection = clientApp({ permissions: f.handler } as any).connect(server);
   const manager = new SessionManager(
     {} as any,
-    { getConnection: () => ({ connection, permissions: f.handler }) } as any,
-    {} as any,
+    {
+      getConnection: () => ({ connection, permissions: f.handler }),
+    } as any,
   );
   (manager as any).sessions.set("s", { agentId: "agent" });
   try {

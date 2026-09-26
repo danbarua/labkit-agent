@@ -323,7 +323,8 @@ export class TerminalHandler {
 
   async releaseTerminal(params: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse> {
     const terminal = this.get(params);
-    return (terminal.release ??= this.release(terminal));
+    terminal.release ??= this.release(terminal);
+    return terminal.release;
   }
 
   private async release(terminal: ManagedTerminal): Promise<ReleaseTerminalResponse> {
@@ -343,7 +344,8 @@ export class TerminalHandler {
 
   dispose(): Promise<void> {
     this.disposed = true;
-    return (this.disposal ??= this.cleanup());
+    this.disposal ??= this.cleanup();
+    return this.disposal;
   }
 
   private async cleanup(): Promise<void> {

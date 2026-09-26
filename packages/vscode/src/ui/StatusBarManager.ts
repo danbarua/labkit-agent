@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 
-import { SessionManager } from "../core/SessionManager";
+import type { SessionManager } from "../core/SessionManager";
 
 /**
  * Manages the status bar item showing ACP connection status.

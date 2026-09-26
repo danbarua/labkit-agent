@@ -17,12 +17,11 @@ import * as vscode from "vscode";
 
 import { getAgentConfigs } from "../config/AgentConfig";
 import { workspaceCwd } from "../config/workspace-cwd";
-import { SessionUpdateHandler } from "../handlers/SessionUpdateHandler";
 import { sendError, sendEvent } from "../utils/Diagnostics";
 import { log, logDiagnostic, logError } from "../utils/Logger";
-import { AgentManager } from "./AgentManager";
-import { ConnectionManager, type ConnectionInfo } from "./ConnectionManager";
-import { SessionHistoryStore } from "./SessionHistoryStore";
+import type { AgentManager } from "./AgentManager";
+import type { ConnectionInfo, ConnectionManager } from "./ConnectionManager";
+import type { SessionHistoryStore } from "./SessionHistoryStore";
 
 type UsageUpdate = Extract<SessionNotification["update"], { sessionUpdate: "usage_update" }>;
 
@@ -106,7 +105,6 @@ export class SessionManager extends EventEmitter {
   constructor(
     private readonly agentManager: AgentManager,
     private readonly connectionManager: ConnectionManager,
-    private readonly sessionUpdateHandler: SessionUpdateHandler,
   ) {
     super();
   }

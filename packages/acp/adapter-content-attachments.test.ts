@@ -367,7 +367,7 @@ test("ACP embedded image, PDF, and large editor text reach provider wire through
   const directory = `.session-artifacts/acp-full-text/${crypto.randomUUID()}`;
   await withFixtureDiagnostics(directory, {}, async () => {
     const base = setup();
-    const text = "Documentation body. ".repeat(4000) + "UNSAVED_EDITOR_CONTENT_SENTINEL";
+    const text = `${"Documentation body. ".repeat(4000)}UNSAVED_EDITOR_CONTENT_SENTINEL`;
     const image = Buffer.from("IMAGE_CONTENT_SENTINEL").toString("base64");
     const pdf = Buffer.from("PDF_CONTENT_SENTINEL").toString("base64");
     let wire: any;
