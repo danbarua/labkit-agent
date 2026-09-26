@@ -76,7 +76,8 @@ export function chatAssembler(): StreamAssembler {
       for (const choice of choices) {
         if (finish) throw new Error("Choice after finish reason");
         if (choice.delta.refusal) throw new Error("Provider refused completion");
-        if (choice.delta.reasoning_content) deltas.push({ thinking: choice.delta.reasoning_content });
+        if (choice.delta.reasoning_content)
+          deltas.push({ thinking: choice.delta.reasoning_content });
         if (choice.delta.content) {
           text += choice.delta.content;
           deltas.push({ text: choice.delta.content });
