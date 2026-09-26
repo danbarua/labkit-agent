@@ -149,9 +149,7 @@ test("permission rejection for write_file preserves bytes; approved execution re
         },
       });
       const result = await session.input("write").settled;
-      expect(result.kind === "terminal" && result.record.outcome.kind).toBe(
-        optionId === "allow-once" ? "completed" : "failed",
-      );
+      expect(result.kind === "terminal" && result.record.outcome.kind).toBe("completed");
       expect(await readFile(join(f.cwd, "README.md"), "utf8")).toBe(
         optionId === "allow-once" ? "approved" : "# workspace 🌍",
       );

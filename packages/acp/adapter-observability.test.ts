@@ -4,13 +4,14 @@ import { expect, spyOn, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
 
 import { until } from "../core/agent/test-support.ts";
-import { prompt, tools } from "./testing/fixtures.ts";
+import { answer, prompt, tools } from "./testing/fixtures.ts";
 import { harness, setup } from "./testing/harness.ts";
 
-test("ACP diagnostics correlate permission waits, turn outcomes and failed session restores", async () => {
+test("ACP diagnostics correlate permission waits, turn outcomes and a completed refusal", async () => {
   const emitted = spyOn(getLogger(["labkit", "acp"]), "emit");
+  let completions = 0;
   const { options } = setup({
-    complete: () => tools,
+    complete: () => (++completions === 1 ? tools : answer),
     tools: new Map([
       [
         "echo",
@@ -49,7 +50,7 @@ test("ACP diagnostics correlate permission waits, turn outcomes and failed sessi
       id: permission.id,
       result: { outcome: { outcome: "selected", optionId: "reject-once" } },
     });
-    expect((await h.response(requestId)).result.stopReason).toBe("refusal");
+    expect((await h.response(requestId)).result.stopReason).toBe("end_turn");
     const records = emitted.mock.calls.map((call) => call[0].properties);
     expect(records).toContainEqual(
       expect.objectContaining({
@@ -72,7 +73,7 @@ test("ACP diagnostics correlate permission waits, turn outcomes and failed sessi
         event: "acp.prompt.settled",
         sessionId,
         turnId: expect.any(String),
-        outcome: "failed",
+        outcome: "completed",
       }),
     );
     const missing = await h.request("session/load", {

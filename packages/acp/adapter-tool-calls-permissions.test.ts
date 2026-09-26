@@ -125,7 +125,43 @@ test("permission response correlation and both durable gates precede tool execut
   await h.close();
 });
 
-for (const choice of ["reject-once", "bad-option", "cancelled"] as const)
+test("reject-once permission refuses the call and completes the turn", async () => {
+  let ran = 0;
+  let completions = 0;
+  const { options } = setup({
+    complete: () => (++completions === 1 ? tools : answer),
+    tools: new Map([
+      [
+        "echo",
+        defineTool({
+          input: z.object({ text: z.string() }),
+          run: () => {
+            ran++;
+            return "bad";
+          },
+        }),
+      ],
+    ]),
+  });
+  const h = harness(options);
+  await h.initialize();
+  const id = await h.newSession();
+  const requestId = await h.start("session/prompt", prompt(id));
+  await until(() => h.messages.some((m) => m.method === "session/request_permission"));
+  const permission = h.messages.find((m) => m.method === "session/request_permission")!;
+  const option = permission.params.options.find((value: any) => value.kind === "reject_once");
+  await h.send({
+    jsonrpc: "2.0",
+    id: permission.id,
+    result: { outcome: { outcome: "selected", optionId: option.optionId } },
+  });
+  const response = await h.response(requestId);
+  expect(response.result.stopReason).toBe("end_turn");
+  expect(ran).toBe(0);
+  await h.close();
+});
+
+for (const choice of ["bad-option", "cancelled"] as const)
   test(`${choice} permission never runs tools`, async () => {
     let ran = 0;
     const { options } = setup({
@@ -161,8 +197,7 @@ for (const choice of ["reject-once", "bad-option", "cancelled"] as const)
     });
     const response = await h.response(requestId);
     if (choice === "bad-option") expect(response.error?.code).toBe(-32000);
-    else
-      expect(response.result.stopReason).toBe(choice === "reject-once" ? "refusal" : "cancelled");
+    else expect(response.result.stopReason).toBe("cancelled");
     expect(ran).toBe(0);
     await h.close();
   });

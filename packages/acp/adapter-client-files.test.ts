@@ -142,9 +142,7 @@ for (const scenario of [
       if (scenario === "error" || scenario === "oversize")
         expect(response.error?.code).toBe(-32000);
       else
-        expect(response.result.stopReason).toBe(
-          scenario === "reject" ? "refusal" : scenario === "cancel" ? "cancelled" : "end_turn",
-        );
+        expect(response.result.stopReason).toBe(scenario === "cancel" ? "cancelled" : "end_turn");
       if (scenario === "reject" || scenario === "unsupported")
         expect(h.messages.some((message) => message.method?.startsWith("fs/"))).toBe(false);
       expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("disk contents");

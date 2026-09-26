@@ -28,6 +28,10 @@ for (const scenario of [
             text: "Run checks",
             calls: [{ id: "cmd", name: "run_command", args: { command: "bun", args: ["test"] } }],
           };
+        if (scenario === "reject") {
+          expect(JSON.stringify(request.messages)).toContain("Permission refused by the user");
+          return answer;
+        }
         expect(JSON.stringify(request.messages)).toContain("test output");
         if (scenario === "failed_exit")
           expect(JSON.stringify(request.messages)).toMatch(/exitCode\\?":2/);
@@ -78,7 +82,7 @@ for (const scenario of [
       );
       await reply(permission, { outcome: { outcome: "selected", optionId: option.optionId } });
       if (scenario === "reject") {
-        expect((await h.response(turn)).result.stopReason).toBe("refusal");
+        expect((await h.response(turn)).result.stopReason).toBe("end_turn");
         expect(h.messages.some((message) => message.method?.startsWith("terminal/"))).toBe(false);
         return;
       }

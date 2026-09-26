@@ -33,7 +33,10 @@ export function runTools(
     (!grant?.approved ||
       grant.batchId !== command.child.id ||
       command.completion.calls.some(
-        (call) => !grant.inputs.has(call.id) && !grant.invalidInputs.has(call.id),
+        (call) =>
+          !grant.inputs.has(call.id) &&
+          !grant.invalidInputs.has(call.id) &&
+          !grant.refused.has(call.id),
       ))
   )
     throw new Error("Missing tool permission grant");
@@ -69,11 +72,13 @@ export function runTools(
           ...identity,
           toolName: batchCommand.call.name,
           kind: tool.kind ?? "other",
-          permission: grant?.invalidInputs.has(batchCommand.call.id)
-            ? "not_requested_invalid_input"
-            : grant
-              ? "approved"
-              : "not_required",
+          permission: grant?.refused.has(batchCommand.call.id)
+            ? "refused"
+            : grant?.invalidInputs.has(batchCommand.call.id)
+              ? "not_requested_invalid_input"
+              : grant
+                ? "approved"
+                : "not_required",
         });
         if (!grant)
           host.notifyTool({
@@ -105,6 +110,8 @@ export function runTools(
             },
             parseInput: async (raw) => {
               if (grant) {
+                const refused = grant.refused.get(batchCommand.call.id);
+                if (refused) throw refused;
                 const invalid = grant.invalidInputs.get(batchCommand.call.id);
                 if (invalid) throw invalid;
                 return grant.inputs.get(batchCommand.call.id);

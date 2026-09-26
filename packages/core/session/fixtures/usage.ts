@@ -87,7 +87,7 @@ function toolUsage(allow: boolean): Scenario {
     baseline: "assertions",
     purpose: allow
       ? "Define a typed tool, approve its invocation through the host permission port, and let the assistant use its result."
-      : "Deny a requested tool through the host permission port and verify that its effect never runs.",
+      : "Deny a requested tool through the host permission port, verify its effect never runs, and confirm the turn continues with a permission-refused result.",
     source: "packages/core/session/fixtures/usage.ts#toolUsage",
     environment:
       "The assistant is named reviewer. The read_note tool reads a local in-memory note, not a real file. Provider and permission responses are deterministic doubles. The real runtime owns the tool loop and admission ordering.",
@@ -143,12 +143,16 @@ function toolUsage(allow: boolean): Scenario {
               };
             f.check(
               "The follow-up model request includes the tool result",
-              JSON.stringify(request.messages).includes(notes.design!),
+              JSON.stringify(request.messages).includes(
+                allow ? notes.design! : "Permission refused by the user",
+              ),
               true,
             );
             return {
               kind: "answer",
-              text: "The design keeps decisions pure and persists before releasing effects.",
+              text: allow
+                ? "The design keeps decisions pure and persists before releasing effects."
+                : "I could not read the design note; permission was refused.",
             };
           },
         },
@@ -169,12 +173,8 @@ function toolUsage(allow: boolean): Scenario {
         reads,
         allow ? 1 : 0,
       );
-      f.check("Only approved results are sent back to the model", modelCalls, allow ? 2 : 1);
-      f.check(
-        "The turn outcome reflects the permission choice",
-        result.record.outcome.kind,
-        allow ? "completed" : "failed",
-      );
+      f.check("The model is asked exactly twice", modelCalls, 2);
+      f.check("The turn always completes, refusal or not", result.record.outcome.kind, "completed");
     },
   };
 }

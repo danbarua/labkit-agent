@@ -463,10 +463,12 @@ factory `requestPermission` callback. Existing observe/toolUpdate/streamUpdate c
 best-effort subscribers. Neither outgoing display updates nor an ACP response certifies a commit.
 Both the admitted tool-intent receipt and approval receipt still precede execution.
 
-Prompt responses map completed → `end_turn`, exhausted → `max_turn_requests`, aborted → `cancelled`,
-and terminal error classification `permission_refused` → `refusal`. Explicit provider token limits
-map to `max_tokens`; provider refusals map to `refusal`. These responses retain the structured
-failure in `_meta["labkit.dev/failure"]`. Other provider, tool, storage and malformed-permission
+Prompt responses map completed → `end_turn`, exhausted → `max_turn_requests`, aborted → `cancelled`.
+Explicit provider token limits map to `max_tokens`; provider refusals map to `refusal`. A user
+refusing a tool call does not end the turn: it becomes a permission-refused tool result, the turn
+continues, and the eventual stop reason reflects how the turn actually ended. These responses
+retain the structured failure in `_meta["labkit.dev/failure"]`. Other provider, tool, storage and
+malformed-permission
 failures return JSON-RPC error -32000 whose message names the failed operation (tool name and call
 ID when present), classification and cause, and whose `data` is the structured core failure. A tool
 or permission failure ends only that turn; the connection and session accept the next prompt.

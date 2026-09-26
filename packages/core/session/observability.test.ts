@@ -38,10 +38,11 @@ function observeLogs() {
   };
 }
 
-test("permission logs identify the file, wait, refusal and committed turn failure", async () => {
+test("permission logs identify the file, wait, refusal and the completed turn", async () => {
   const capture = observeLogs();
   const gate = deferred<unknown>();
   let ran = false;
+  let completions = 0;
   const session = await createSession({
     persistence: createMemoryPersistence(),
     configuration: {
@@ -52,11 +53,16 @@ test("permission logs identify the file, wait, refusal and committed turn failur
     },
     bindings: {
       id: deterministicIds(),
-      complete: () => ({
-        kind: "tools",
-        text: "Read",
-        calls: [{ id: "read-1", name: "read", args: { path: "/workspace/README.md" } }],
-      }),
+      complete: () => {
+        completions++;
+        return completions === 1
+          ? {
+              kind: "tools",
+              text: "Read",
+              calls: [{ id: "read-1", name: "read", args: { path: "/workspace/README.md" } }],
+            }
+          : { kind: "answer", text: "Done" };
+      },
       requestPermission: () => gate.promise,
       tools: new Map([
         [
@@ -109,21 +115,16 @@ test("permission logs identify the file, wait, refusal and committed turn failur
       toolName: "read",
       rawInput: { path: "/workspace/README.md" },
       locations: [{ path: "/workspace/README.md" }],
-      blockedCallCount: 1,
     });
     const terminal = capture.records.find((r) => r.event === "turn.settled");
-    expect(terminal?.level).toBe("warning");
+    expect(terminal?.level).toBe("info");
     expect(terminal?.fields).toMatchObject({
       operation: "agent_turn",
       agentId: "a",
-      message: "Agent turn failed: Tool permission rejected",
-      reason: "Tool permission rejected",
-      trigger: "permission_settled",
-      childOperation: "permission",
-      childId: waiting.childId,
-      outcome: "failed",
+      message: "Agent turn completed",
+      trigger: "model_settled",
+      outcome: "completed",
       appendId: expect.any(String),
-      error: { message: expect.any(String) },
     });
     expect(ran).toBe(false);
   } finally {

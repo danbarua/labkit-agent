@@ -25,7 +25,7 @@ test("conversation reports introduce actors, quote messages, and explain identic
   expect(result.report).not.toContain('"messages":');
 });
 
-test("refusal report explains the batch failure and shows approval decisions beside readable tools", async () => {
+test("refusal report explains the refused call, the approved call, and the completed turn", async () => {
   const result = await runFixture(permissionRejectBatchV2, {
     artifactDirectory: `${directory}/refusal`,
   });
@@ -33,8 +33,11 @@ test("refusal report explains the batch failure and shows approval decisions bes
   expect(result.transcript).toContain('```json\n{\n  "text": "one"\n}\n```');
   expect(result.transcript).toContain("Call one: **allow_once**");
   expect(result.transcript).toContain("Call two: **reject_once**");
-  expect(result.transcript).toContain("failed — Tool permission rejected");
-  expect(result.report).toContain("No tool executes without batch approval");
+  expect(result.transcript).toContain("Tool result — call two");
+  expect(result.transcript).toContain('"refused": true');
+  expect(result.transcript).toContain('"reason": "Permission refused by the user"');
+  expect(result.transcript).toContain("**Outcome:** completed.");
+  expect(result.report).toContain("Only the approved call executes");
   expect(result.transcript).not.toContain("durable state changed during recovery");
 });
 
@@ -132,28 +135,29 @@ test("warning-only logs expose user refusal and its consequence; approved work e
     const decision = records.find((record) => record.event === "permission.decided");
     expect(decision.level).toBe("info");
     if (scenario === denyToolUsage) {
-      expect(signals.map((record) => record.event)).toEqual(["permission.refused", "turn.settled"]);
+      expect(signals.map((record) => record.event)).toEqual([
+        "permission.refused",
+        "child.failed",
+        "tool.status_changed",
+        "child.settled",
+      ]);
       expect(signals[0]).toMatchObject({
         reasonCode: "permission_refused",
         toolName: "read_note",
         rawInput: { name: "design" },
         outcome: "blocked",
-        blockedCallCount: 1,
       });
-      expect(signals[1]).toMatchObject({
+      expect(records.find((record) => record.event === "turn.settled")).toMatchObject({
+        level: "info",
         operation: "agent_turn",
         agentId: "reviewer",
-        outcome: "failed",
-        reason: "Tool permission rejected",
-        trigger: "permission_settled",
-        childId: signals[0].childId,
-        turnId: signals[0].turnId,
+        outcome: "completed",
       });
       const text = await Bun.file(`${location}/diagnostics.log`).text();
       const warningLines = text.split("\n").filter((line) => line.includes(" WARNING "));
       expect(warningLines[0]).toContain("permission.refused");
       expect(warningLines[0]).toContain("User refused permission");
-      expect(warningLines[1]).toContain("Agent turn failed: Tool permission rejected");
+      expect(warningLines).toHaveLength(4);
     } else {
       expect(signals).toEqual([]);
       expect(records.find((record) => record.event === "turn.settled").level).toBe("info");

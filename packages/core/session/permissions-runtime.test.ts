@@ -138,7 +138,6 @@ test("intent and permission receipts gate prompts and the entire batch; parsed i
 });
 
 for (const [label, response, outcome] of [
-  ["reject", reject, "failed"],
   ["cancel", { outcome: { outcome: "cancelled" } }, "aborted"],
   ["unknown option", { outcome: { outcome: "selected", optionId: "allow-always" } }, "failed"],
   ["malformed response", {}, "failed"],
@@ -160,6 +159,21 @@ for (const [label, response, outcome] of [
     );
     await session.close();
   });
+
+test("reject on second permission runs the approved call, refuses only that call, and the turn continues", async () => {
+  const { options, requests, ran, updates } = setup(() => (requests.length === 1 ? allow : reject));
+  const session = await createSession(options);
+  const result = await session.input("Read").settled;
+  expect(result.kind === "terminal" && result.record.outcome.kind).toBe("completed");
+  expect(ran).toEqual(["/tmp/one/1"]);
+  expect(updates.filter((event) => event.status === "failed")).toHaveLength(1);
+  const toolRecords = session.snapshot.durable.records.filter(
+    (record) => record.body.kind === "tool",
+  );
+  expect(toolRecords).toHaveLength(2);
+  expect(JSON.stringify(toolRecords)).toContain('"classification":"permission_refused"');
+  await session.close();
+});
 
 test("abort signals permission port, rejects ordinary barge-in, and ignores late approval", async () => {
   const pending = deferred<unknown>();
@@ -320,12 +334,10 @@ for (const admission of ["queue-user", "abort-tools-on-user"] as const)
     expect((await second.accepted).kind).toBe("accepted");
     if (admission === "queue-user") {
       expect(session.snapshot.durable.conversation.turn.status).toBe("awaiting_permission");
-      pending.resolve(reject);
+      pending.resolve({ outcome: { outcome: "cancelled" } });
     }
     const firstResult = await first.settled;
-    expect(firstResult.kind === "terminal" && firstResult.record.outcome.kind).toBe(
-      admission === "queue-user" ? "failed" : "aborted",
-    );
+    expect(firstResult.kind === "terminal" && firstResult.record.outcome.kind).toBe("aborted");
     const secondResult = await second.settled;
     expect(secondResult.kind === "terminal" && secondResult.record.outcome.kind).toBe("completed");
     expect(ran).toEqual([]);
@@ -555,7 +567,7 @@ test("session tool approval is committed before reuse, retained across model cha
   expect(logs.filter((entry) => ["warning", "error"].includes(entry.level))).toEqual([]);
 });
 
-test("refused batch discards uncommitted remembered approvals and tool scopes do not cross", async () => {
+test("a remembered grant survives a refused sibling in the same batch; the refused tool is asked again", async () => {
   let round = 0;
   const fixture = setup((request) =>
     request.toolCall.name === "other"
@@ -577,21 +589,22 @@ test("refused batch discards uncommitted remembered approvals and tool scopes do
       ]),
       complete: () => {
         round++;
-        return { ...calls, calls: [calls.calls[0], { ...calls.calls[1], name: "other" }] };
+        return round % 2
+          ? { ...calls, calls: [calls.calls[0], { ...calls.calls[1], name: "other" }] }
+          : { kind: "answer", text: "Done" };
       },
     },
   });
   try {
-    await session.input("First refused batch").settled;
+    await session.input("First batch has a refused sibling").settled;
     await session.input("New explicit invocation").settled;
-    expect(round).toBe(2);
+    expect(round).toBe(4);
     expect(fixture.requests.map((request) => request.toolCall.name)).toEqual([
       "echo",
       "other",
-      "echo",
       "other",
     ]);
-    expect(fixture.ran).toEqual([]);
+    expect(fixture.ran).toEqual(["/tmp/one/1", "/tmp/one/3"]);
   } finally {
     await session.close();
   }

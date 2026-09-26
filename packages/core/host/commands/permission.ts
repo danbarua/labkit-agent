@@ -11,7 +11,9 @@ import { PermissionResponseSchema, ToolLocationSchema, type ToolLocation } from 
 
 /**
  * Asks the permission port about each tool call of a completion, in order, and records the
- * validated inputs and decisions as a grant that the matching `run_tools` batch must present.
+ * validated inputs and decisions as a grant that the matching `run_tools` batch must present. A
+ * refusal records the call as refused and continues to the next call; a cancelled request stops
+ * asking and revokes the grant.
  */
 export function requestPermission(
   host: HostContext,
@@ -24,6 +26,7 @@ export function requestPermission(
     approved: false,
     inputs: new Map<string, unknown>(),
     invalidInputs: new Map<string, Failure>(),
+    refused: new Map<string, Failure>(),
     pending: [] as HostToolNotification[],
     remembered: new Map<string, string>(),
   };
@@ -161,6 +164,12 @@ export function requestPermission(
               durationMs: Math.round(performance.now() - permissionStartedAt),
             });
             if (decision === "reject_once") {
+              grant.refused.set(
+                call.id,
+                failure(new Error("Permission refused by the user"), {
+                  classification: "permission_refused",
+                }),
+              );
               diagnostic("host", "warning", "permission.refused", {
                 ...permissionContext,
                 operation: "tool_execution",
@@ -168,10 +177,9 @@ export function requestPermission(
                 decision,
                 reasonCode: "permission_refused",
                 reason:
-                  "User refused permission for a model-requested tool; no tools in this batch will run",
+                  "User refused permission for a model-requested tool; the model receives a permission-refused result for this call and the turn continues",
                 toolKind: tool.kind ?? "other",
                 rawInput: call.args,
-                blockedCallCount: command.completion.calls.length,
                 durationMs: Math.round(performance.now() - permissionStartedAt),
               });
             }
@@ -186,7 +194,7 @@ export function requestPermission(
                 : undefined;
             if (approval) grant.remembered.set(call.name, approval.grantId);
             decisions.push({ callId: call.id, decision, ...(approval ? { approval } : {}) });
-            if (decision !== "allow_once") break;
+            if (decision === "cancelled") break;
           } catch (error) {
             const invalidInput = phase === "validate_input" && !signal.aborted;
             const detail = failure(error, {
@@ -226,8 +234,6 @@ export function requestPermission(
           command.child.id,
           result.kind === "failed" ? result.error.message : "Tool permission request cancelled",
         );
-      else if (result.value.some((entry) => entry.decision === "reject_once"))
-        host.revoke(command.child.id, "Tool permission rejected by the user");
       else if (result.value.some((entry) => entry.decision === "cancelled"))
         host.revoke(command.child.id, "Tool permission request cancelled");
       else grant.approved = true;
