@@ -397,7 +397,8 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
   `session/fork`, `session/delete`, `session/list`, `logout`) returns -32601 naming the missing
   capability, before initialization, params, auth or session state are checked, and logs
   `acp.method.not_advertised`. Unknown and unstable methods such as `session/set_model` also
-  return -32601.
+  return -32601 and log `acp.method.unknown`. Any other request sent before `initialize` has
+  answered returns -32600 with `data.reason: "not_initialized"`.
 - `session/new`: creates a journaled session. Each connection owns its loaded runtimes.
 - `session/prompt`: admits one active prompt per session and waits for durable terminal settlement.
   Separate sessions run independently; overlapping prompts in one session return an RPC error.

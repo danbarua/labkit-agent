@@ -138,8 +138,11 @@ integration; optionality is not permission to redefine that request as a smaller
   `rpc/unknown-methods.ts` watches the incoming stream and records each as `acp.method.unknown`
   (`kind`, `rpcRequestId` for requests, `specMethod` when the SDK lists it among v1 agent methods);
   `adapter-initialize-framing.test.ts` covers it.
-- `requireInitialized` answers -32002. ACP v1 defines -32002 only as "resource not found", which is
-  now also used when a saved session is missing or deleted.
+- A request other than `initialize` sent before `initialize` has answered gets -32600 with
+  `data.reason: "not_initialized"` (`requireInitialized` in `rpc/connection.ts`). LSP uses -32002
+  ServerNotInitialized and the MCP TypeScript SDK uses -32000; both collide with codes ACP defines
+  (-32002 is "resource not found", used for a missing saved session), so this agent uses the
+  ACP-defined -32600 Invalid Request and names the reason in `data`.
 - Prompt capabilities are fixed per connection at `initialize`. If catalog discovery failed then, the
   client must initialize a new connection to see media support that appears later.
 

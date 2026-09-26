@@ -108,9 +108,10 @@ test("JSON-RPC initialization, framing, validation and baseline text/resource-li
     },
   });
   const h = harness(options);
-  expect((await h.request("session/new", { cwd: "/tmp", mcpServers: [] })).error?.code).toBe(
-    -32002,
-  );
+  expect((await h.request("session/new", { cwd: "/tmp", mcpServers: [] })).error).toMatchObject({
+    code: -32600,
+    data: { reason: "not_initialized" },
+  });
   await h.raw("{broken\n");
   await until(() => h.messages.some((m) => m.error?.code === -32700));
   expect((await h.initialize()).result).toMatchObject({

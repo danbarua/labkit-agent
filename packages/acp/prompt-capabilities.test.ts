@@ -314,7 +314,7 @@ test("a failing capability declaration refuses initialize with an explanation", 
         "Cannot determine which prompt content this agent accepts: catalog snapshot unreadable",
       );
       expect((await h.request("session/new", { cwd: "/tmp", mcpServers: [] })).error?.code).toBe(
-        -32002,
+        -32600,
       );
     } finally {
       await h.close();

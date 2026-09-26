@@ -55,7 +55,12 @@ export function connectionGate(
     promptCapabilities: { image: false, audio: false, embeddedContext: false },
   };
   const requireInitialized = () => {
-    if (!state.initialized) throw new RequestError(-32002, "Initialize the connection first");
+    if (!state.initialized)
+      throw new RequestError(
+        -32600,
+        "Invalid request: the connection is not initialized; send initialize and wait for its response before any other request",
+        { reason: "not_initialized" },
+      );
     if (isClosing()) throw new RequestError(-32000, "Connection closed");
   };
   return {
