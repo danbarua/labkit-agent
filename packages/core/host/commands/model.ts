@@ -60,6 +60,19 @@ export function completeModel(
       input: null,
       parseInput: z.null().parse,
       run: async (_, signal) => {
+        const projected = await context.projectPrompt(prompt, signal);
+        for (const pointer of projected.pointers)
+          diagnostic("prompt", "debug", "prompt.media.pointer", {
+            sessionId: host.sessionId,
+            turnId,
+            childId: command.child.id,
+            provider: prompt.target?.provider,
+            model: prompt.target?.model,
+            media: pointer.media,
+            bytes: pointer.bytes,
+            support: pointer.support,
+            blobId: pointer.blobId,
+          });
         const prepared = PreparedModelSchema.parse({
           model,
           ...(context.provider?.provider
@@ -72,7 +85,7 @@ export function completeModel(
                 successors: agent.successors ?? [...host.agents.keys()],
               }
             : {}),
-          messages: await context.projectPrompt(prompt, signal),
+          messages: projected.messages,
           tools: agent.tools.map((name) => ({
             type: "function",
             function: {

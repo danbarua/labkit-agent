@@ -2,16 +2,7 @@ import { expect, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
 
 import { BlobRefSchema, hashBlob } from "../agent/content.ts";
-import {
-  anthropicMessages,
-  anthropicMessagesV2,
-  googleGenerate,
-  googleGenerateV2,
-  openaiChat,
-  openaiResponses,
-  openaiResponsesV2,
-  type CompletionProfile,
-} from "../providers/index.ts";
+import { anthropicMessagesV2, openaiChat, type CompletionProfile } from "../providers/index.ts";
 import { decodeRecord, journalJSONL, replay } from "./session-log.ts";
 import {
   createSession,
@@ -146,33 +137,26 @@ test("markdown refs commit without bytes, restore does not read blobs, fork and 
   await Promise.all([session, restored, reopened, fork, compact, empty].map((s) => s.close()));
 });
 
-for (const kind of ["missing", "unsupported", "pdf"] as const)
-  test(`${kind} attachment fails the step without HTTP`, async () => {
-    const { opts, bodies, reads } = setup();
-    const session = await createSession(opts);
-    const id = session.snapshot.durable.conversation.sessionId;
-    const ref =
-      kind === "missing"
-        ? BlobRefSchema.parse({ id: hashBlob(bytes), bytes: bytes.length, media: "text/plain" })
-        : await opts.persistence.putBlob(
-            id,
-            bytes,
-            { media: kind === "pdf" ? "application/pdf" : "image/png" },
-            signal(),
-          );
-    const result = await session.input({ attachments: [ref] }).settled;
-    expect(result.kind === "terminal" && result.record.outcome.kind).toBe("failed");
-    expect(bodies).toHaveLength(0);
-    if (kind !== "missing") expect(reads()).toBe(0);
-    const settled = session.snapshot.durable.records.find(
-      (r) =>
-        r.body.kind === "event" &&
-        r.body.event.type === "child" &&
-        r.body.event.event.type === "model_settled",
-    );
-    expect(settled).toMatchObject({ body: { event: { event: { result: { kind: "failed" } } } } });
-    await session.close();
+test("missing attachment fails the step without HTTP", async () => {
+  const { opts, bodies } = setup();
+  const session = await createSession(opts);
+  const ref = BlobRefSchema.parse({
+    id: hashBlob(bytes),
+    bytes: bytes.length,
+    media: "text/plain",
   });
+  const result = await session.input({ attachments: [ref] }).settled;
+  expect(result.kind === "terminal" && result.record.outcome.kind).toBe("failed");
+  expect(bodies).toHaveLength(0);
+  const settled = session.snapshot.durable.records.find(
+    (r) =>
+      r.body.kind === "event" &&
+      r.body.event.type === "child" &&
+      r.body.event.event.type === "model_settled",
+  );
+  expect(settled).toMatchObject({ body: { event: { event: { result: { kind: "failed" } } } } });
+  await session.close();
+});
 
 test("thinking and image attachments retain independent owners and refs across turns", async () => {
   const { opts, bodies } = setup(anthropicMessagesV2);
@@ -418,29 +402,6 @@ test("public user input requires content, accepts empty attachment lists with te
   await session.close();
 });
 
-for (const profile of [
-  anthropicMessages,
-  googleGenerate,
-  googleGenerateV2,
-  openaiResponses,
-  openaiResponsesV2,
-  openaiChat,
-])
-  test(`${profile.id} rejects PDF during prompt projection before blob reads or fetch`, async () => {
-    const { opts, reads, bodies } = setup(profile);
-    const session = await createSession(opts);
-    const ref = await opts.persistence.putBlob(
-      session.snapshot.durable.conversation.sessionId,
-      new TextEncoder().encode("%PDF-1.7"),
-      { media: "application/pdf" },
-      signal(),
-    );
-    const result = await session.input({ attachments: [ref] }).settled;
-    expect(result.kind === "terminal" && result.record.outcome.kind).toBe("failed");
-    expect(reads()).toBe(0);
-    expect(bodies).toHaveLength(0);
-    await session.close();
-  });
 
 test("Anthropic v2 prepares and encodes PDF as a document block", async () => {
   const { opts, bodies } = setup(anthropicMessagesV2);

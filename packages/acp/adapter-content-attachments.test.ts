@@ -479,45 +479,6 @@ test("ACP embedded image, PDF, and large editor text reach provider wire through
   expect(records.filter((record) => ["warning", "error"].includes(record.level))).toHaveLength(0);
 });
 
-test("unbound attachment media is rejected before blob storage or user admission", async () => {
-  const base = setup();
-  let puts = 0;
-  const h = harness({
-    ...base.options,
-    promptCapabilities: { embeddedContext: true },
-    sessionOptions: async (context) => ({
-      ...(await base.options.sessionOptions(context)),
-      persistence: {
-        ...base.persistence,
-        putBlob: async (...args) => {
-          puts++;
-          return base.persistence.putBlob(...args);
-        },
-      },
-    }),
-  });
-  try {
-    await h.initialize();
-    const id = await h.newSession();
-    const response = await h.request("session/prompt", {
-      sessionId: id,
-      prompt: [{ type: "resource", resource: { uri: "urn:text", text: "unsupported text" } }],
-    });
-    expect(response.error?.code).toBe(-32602);
-    expect(puts).toBe(0);
-    const { SessionIdSchema } = await import("@labkit-agent/core/types");
-    const journal = await base.persistence.load(
-      SessionIdSchema.parse(id),
-      new AbortController().signal,
-    );
-    expect(
-      journal.kind === "loaded" && journal.batches.flatMap((batch) => batch.records).length,
-    ).toBe(1);
-  } finally {
-    await h.close();
-  }
-});
-
 test("ACP admits an additional-root resource as a blob and passes its contents through the provider", async () => {
   const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");

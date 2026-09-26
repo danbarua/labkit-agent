@@ -64,9 +64,9 @@ test("continuation representation boundary, operation-only resolution, and exclu
       continuations: [entry],
     });
     const before = reads;
-    await resolveRequestBlobs(port, sessionId, request, [], signal());
+    await resolveRequestBlobs(port, sessionId, request, signal());
     expect(reads).toBe(before);
-    const blobs = await resolveRequestBlobs(port, sessionId, request, [], signal(), true);
+    const blobs = await resolveRequestBlobs(port, sessionId, request, signal(), true);
     expect(continuationPayload(entry, blobs)).toBe(payload);
     expect(reads - before).toBe(length > 65536 ? 1 : 0);
     if (entry.payloadBlob) {

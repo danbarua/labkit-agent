@@ -1,7 +1,12 @@
 import { z } from "zod";
 
 import type { PreparedModel } from "../agent/agent.ts";
-import { blobRefs, type BlobResolver } from "../agent/content.ts";
+import {
+  MediaKindSchema,
+  type BlobResolver,
+  type MediaKind,
+  type MediaSupport,
+} from "../agent/content.ts";
 import { CompletionSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import { diagnostic, diagnosticError, redactDiagnostics } from "../logging/index.ts";
@@ -294,12 +299,40 @@ export function canonicalRequest(prepared: PreparedModel) {
   );
 }
 
+/**
+ * Resolves a profile's binary `media` list (what the wire format can encode) into a three-valued
+ * capability per media kind (D3): a kind the profile declares is `supported` — a bound profile is
+ * an authored declaration that its provider's models handle that kind, not a guess — and a kind it
+ * does not declare is `unsupported`. `unknown` is part of the type (a projection target may be
+ * built with it, and the projection renders it exactly like `unsupported`: a pointer) for a target
+ * whose capabilities genuinely cannot be confirmed, which `describe()` does not currently produce
+ * because the committed catalog snapshot carries no per-model modality data; a future catalog
+ * enrichment can set it explicitly without changing this function's contract. A plain record, not
+ * a closure: prompt input crosses `structuredClone` boundaries in the host.
+ */
+export function mediaCapability(
+  profileMedia: readonly MediaKind[],
+): Readonly<Record<MediaKind, MediaSupport>> {
+  return Object.fromEntries(
+    MediaKindSchema.options.map((kind) => [
+      kind,
+      profileMedia.includes(kind) ? "supported" : "unsupported",
+    ]),
+  ) as Readonly<Record<MediaKind, MediaSupport>>;
+}
+
 export type ResolvedModel = Readonly<{
   provider: string;
   model: string;
   wireModel: string;
   profile: string;
-  capabilities: CompletionProfile["capabilities"];
+  capabilities: Readonly<{
+    thinking: CompletionProfile["capabilities"]["thinking"];
+    outputTokens?: CompletionProfile["capabilities"]["outputTokens"];
+    stream: boolean;
+    /** Three-valued per media kind; see {@link mediaCapability}. */
+    media: Readonly<Record<MediaKind, MediaSupport>>;
+  }>;
 }>;
 
 export type ProviderBindings = ReadonlyMap<
@@ -366,7 +399,14 @@ export function bindProviders(bindings: ProviderBindings) {
         model,
         wireModel: selected?.wireModel ?? model,
         profile: profile.id,
-        capabilities: profile.capabilities,
+        capabilities: {
+          thinking: profile.capabilities.thinking,
+          ...(profile.capabilities.outputTokens
+            ? { outputTokens: profile.capabilities.outputTokens }
+            : {}),
+          stream: profile.capabilities.stream,
+          media: mediaCapability(profile.capabilities.media),
+        },
       });
     },
     validateSelection: (
@@ -395,17 +435,12 @@ export function bindProviders(bindings: ProviderBindings) {
           `Unsupported streaming for model ${model ?? "(default)"}; use stream:false`,
         );
     },
-    mediaFor: (provider: string, model: string) => {
-      const binding = bound.get(provider);
-      return (binding?.models?.get(model)?.profile ?? binding?.profile)?.capabilities.media ?? [];
-    },
     streams: new Map(
       [...bound].map(([id, binding]) => [
         id,
         binding.profile.capabilities.stream && !!binding.profile.stream,
       ]),
     ),
-    media: new Map([...bound].map(([id, binding]) => [id, binding.profile.capabilities.media])),
     capabilities: new Map(
       [...bound].map(([id, binding]) => [
         id,
@@ -468,9 +503,6 @@ export function bindProviders(bindings: ProviderBindings) {
           model: selected?.wireModel ?? input.model,
           continuations: input.continuations?.map((entry) => ({ ...entry, provider: profile.id })),
         };
-        for (const ref of blobRefs(input.messages))
-          if (!profile.capabilities.media.includes(ref.media))
-            throw new Error(`Provider does not support attachment media: ${ref.media}`);
         phase = "encode";
         const encoded = profile.encode(wireInput, blobs);
         phase = "transport";

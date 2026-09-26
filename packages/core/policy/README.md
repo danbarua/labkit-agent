@@ -50,15 +50,20 @@ step the projection receives the packet plus the messages added since as `input.
 sends the replacement context and the current turn's messages, as on any other step.
 
 Custom projectors must be pure and preserve correlated tool exchanges and desired attachment refs.
-They may select/rearrange valid context, but cannot fetch files or call another model. Invalid
-projected calls fail the step before HTTP. Malformed provider calls fail completion admission;
-neither becomes a tolerant tool result because no tool operation was admitted.
+They may select/rearrange valid context, but cannot fetch files or call another model.
+`projectPolicy` then rewrites, in every role, each blob part the target's media capability marks
+`unsupported` or `unknown` as pointer text (`projectMediaPointers`, `agent/prompt.ts`), so a custom
+projector keeps blob parts as they are. Invalid projected calls fail the step before HTTP.
+Malformed provider calls fail completion admission; neither becomes a tolerant tool result because
+no tool operation was admitted.
 
 ## Model settings and permission scope
 
 Select a provider binding name and declared model. Capabilities come from that model's bound profile,
-not from guesses based on its name. Unsupported thinking, streaming, or media combinations reject
-before HTTP, including on configuration changes. Patch incompatible settings together when switching
+not from guesses based on its name. Unsupported thinking or streaming combinations reject before
+HTTP, including on configuration changes. Media capability never rejects (D3): a step whose target
+cannot, or might not, read an attachment's media still runs, with that attachment projected as a
+pointer instead of its bytes. Patch incompatible settings together when switching
 models. A restored session whose saved selection is no longer bound is not rejected: replay ignores
 live availability, and the next work first journals a reconciled policy (see
 [registry adoption](../../../docs/session-runtime.md#restore-adopts-the-live-registry-and-bindings)).

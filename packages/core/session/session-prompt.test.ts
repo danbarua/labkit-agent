@@ -60,7 +60,7 @@ test("a handoff step sees the resolver's packet and later messages, not the pred
       },
       ["session"],
       policy,
-    ).map((message) => message.content),
+    ).messages.map((message) => message.content),
   ).toEqual(["configured", "session", "current", "review this", "after"]);
 });
 test("an invalid correlation in the projected context rejects", () => {

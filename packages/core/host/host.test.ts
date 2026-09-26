@@ -52,7 +52,7 @@ test("host reports tools but cannot advance a batch before explicit release", as
       turnId: ActorIdSchema.parse("turn"),
       command: { type: "run_tools", child: ref("batch", "batch"), completion },
     },
-    { projectPrompt: () => [] },
+    { projectPrompt: () => ({ messages: [], pointers: [] }) },
   );
   await until(() => outcomes.length === 1);
   expect(events).toHaveLength(0);
@@ -113,7 +113,7 @@ test("a step command rejects missing prompt context before spawning operations",
         turnId: turn.id,
         command: { type: "complete", child: ref("completion", "complete"), turn },
       },
-      { projectPrompt: () => [] },
+      { projectPrompt: () => ({ messages: [], pointers: [] }) },
     ),
   ).toThrow("complete requires prompt context");
   expect(host.snapshot).toHaveLength(0);
@@ -166,7 +166,7 @@ for (const cancelled of [false, true])
       provider: { provider: "p", stream: true },
       projectPrompt: () => {
         projecting = true;
-        return projected;
+        return projected.then((messages) => ({ messages, pointers: [] }));
       },
       loadBlobs: async () => {
         loads++;

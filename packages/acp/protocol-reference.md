@@ -70,6 +70,11 @@ at 256 KiB per result/write. `read_file` accepts optional `line` (1-based starti
 (maximum line count). Omit both to read the complete file. A range can read part of a file larger
 than 256 KiB; local reads scan with bounded memory and retain original line endings. A start beyond
 EOF returns empty text. A single selected line larger than the result cap is rejected explicitly.
+`read_file` also accepts a `blob://<sha256>.<ext>` path (D4): the pointer text prompt projection
+renders for a media part the target model cannot, or might not, read. A text blob (`text/plain`,
+`text/markdown`) resolves to its content; a binary blob resolves to its pointer metadata only —
+tool results cannot yet carry an image or attachment part. Requires a bound `SessionPersistence`
+(`workspaceTools`'s third argument); without one, resolving a `blob://` path fails explicitly.
 The same range is forwarded to `fs/read_text_file` when the client owns reads, preserving unsaved
 editor content rather than substituting disk contents. Listings are shallow and capped at 1,000 entries and 256 KiB of entry data. Writes
 require existing parent directories. Rejected permission prevents execution. Cancellation after
@@ -672,7 +677,7 @@ them. Non-file URLs remain textual references; the adapter never fetches them. C
 ingestion admits no user turn (an unreferenced blob may already have been stored).
 
 Local attachments retain the 8 MiB blob cap. Extensions select markdown, PDF, PNG, JPEG, or UTF-8
-plain text; the bound provider must support the selected media. Accepted text attachments are sent in full within the blob limit; oversized model context
+plain text; ingestion does not check the current model's media capabilities. Accepted text attachments are sent in full within the blob limit; oversized model context
 is reported as a provider failure rather than silently substituted content. Attaching a local resource is an explicit user input and does not create
 a tool permission request. Model-initiated file access still uses the permission-gated tools.
 `AcpOptions.promptCapabilities` declares `image`, `audio` and `embeddedContext`, either as values or
@@ -690,13 +695,19 @@ raw-byte cap. Binary resources require an explicit supported MIME type. Embedded
 as markdown when declared `text/markdown`, otherwise as plain text, including source-code MIME
 types. Embedded URIs are labels only: supplied bytes can represent unsaved or outside-workspace
 content, and no file read or URL fetch occurs. Blob refs, not content bytes, enter the journal.
-Provider media support is checked before storage/admission; attachments require a bound provider
-profile. When the current model cannot take an advertised medium, the refusal lists its supported
-media and asks the user to select a model that accepts it.
-Custom completion ports without a provider registry cannot resolve attachment media. Audio blocks require a declared supported audio MIME type and canonical base64 within the same
-8 MiB cap. Google bindings encode them as native audio; bindings without audio support reject
-before storage/admission. Local audio file links use the declared audio MIME type or a recognized
-extension. Reload displays the saved audio reference without invoking a model; a new prompt can
+Attachments are stored and journaled as facts regardless of the current model's media
+capabilities (D3). Whether the current step's target can read a given medium is a projection
+decision, not an ingress gate: the prompt projection renders a blob part the target does not
+support, or might not (three-valued: supported/unsupported/unknown), as pointer text instead —
+`[<media>, <size>[, <name>]: blob://<sha256>.<ext>]` — and logs `prompt.media.pointer` (debug) for
+each part it rewrites. A tool that resolves `blob://` URIs (`read_file`) lets the model follow the
+pointer. Switching to a model that reads the medium sends the content again on the next step; no
+model is ever asked to describe media it cannot read.
+Custom completion ports without a provider registry supply no target capabilities, so their prompt
+projection keeps every blob part as-is. Audio blocks require a declared supported audio MIME type and canonical base64 within the same
+8 MiB cap. Google bindings encode them as native audio; a target that cannot read audio gets a
+pointer instead, chosen by the same projection as other media. Local audio file links use the
+declared audio MIME type or a recognized extension. Reload displays the saved audio reference without invoking a model; a new prompt can
 resolve the saved bytes. Audio playback in the installed editor still needs verification.
 Embedded text resources follow the same full-content rule.
 

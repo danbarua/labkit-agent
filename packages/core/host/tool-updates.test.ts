@@ -48,7 +48,7 @@ function setup(tool: Tool, sink?: ToolUpdateSink) {
         turnId: ActorIdSchema.parse("turn"),
         command: { type: "run_tools", child: ref("batch", batch), completion },
       },
-      { projectPrompt: () => [] },
+      { projectPrompt: () => ({ messages: [], pointers: [] }) },
     );
   }
   function cancel(batch = "batch") {
@@ -58,7 +58,7 @@ function setup(tool: Tool, sink?: ToolUpdateSink) {
         turnId: ActorIdSchema.parse("turn"),
         command: { type: "cancel", child: ref("batch", batch) },
       },
-      { projectPrompt: () => [] },
+      { projectPrompt: () => ({ messages: [], pointers: [] }) },
     );
   }
   return { host, updates, outcomes, turns, start, cancel };

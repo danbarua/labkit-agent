@@ -261,10 +261,12 @@ Use the child ID recorded in the parent request to restore it instead of creatin
 
 Store attachment bytes with `persistence.putBlob` before submitting their refs via
 `input({ text, attachments })`. A successful restore proves the journal is intact, not that all blobs
-are still available: bytes are checked when needed for a new completion. Unsupported media or
-missing bytes fail before HTTP. Forks copy referenced blobs; compaction copies only replacement
-context refs. Continuation payloads are provider-owned context, retained for matching assistant
-messages; compaction drops them. Applications should not manufacture or edit their contents.
+are still available: bytes are checked when needed for a new completion. Missing bytes fail before
+HTTP. Unsupported or unconfirmed media (D3) never fails: the target-aware prompt projection sends a
+pointer instead of the blob, and only the blobs the projected request keeps are loaded. Forks copy
+referenced blobs; compaction copies only replacement context refs. Continuation payloads are
+provider-owned context, retained for matching assistant messages; compaction drops them.
+Applications should not manufacture or edit their contents.
 
 ## Diagnose and verify an integration
 

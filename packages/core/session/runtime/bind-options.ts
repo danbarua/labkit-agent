@@ -40,7 +40,6 @@ export function bindOptions(options: SessionOptions, restoring = false) {
     initialPolicy,
     observe: bindings.observe,
     completePort,
-    providerMedia: providers?.mediaFor,
     describeModel: providers?.describe,
   };
 }

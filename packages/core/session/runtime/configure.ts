@@ -23,7 +23,6 @@ export type ConfiguredSession = Readonly<{
   initialPolicy: Policy | undefined;
   observe: BoundOptions["observe"];
   completePort: CompletionPort;
-  providerMedia: BoundOptions["providerMedia"];
   describeModel: BoundOptions["describeModel"];
   toolUpdate: ToolUpdateSink | undefined;
   streamUpdate: StreamUpdateSink | undefined;
@@ -41,8 +40,10 @@ export type ConfiguredSession = Readonly<{
 
 /** Validates `raw` and captures its bindings; `restoring` skips the new-session policy. */
 export function configureSession(raw: SessionOptions, restoring = false): ConfiguredSession {
-  const { options, resolvers, initialPolicy, observe, completePort, providerMedia, describeModel } =
-    bindOptions(raw, restoring);
+  const { options, resolvers, initialPolicy, observe, completePort, describeModel } = bindOptions(
+    raw,
+    restoring,
+  );
   const toolUpdate = options.toolUpdate;
   const streamUpdate = options.streamUpdate;
   const requestPermission = options.requestPermission;
@@ -63,7 +64,6 @@ export function configureSession(raw: SessionOptions, restoring = false): Config
     initialPolicy,
     observe,
     completePort,
-    providerMedia,
     describeModel,
     toolUpdate,
     streamUpdate,

@@ -2,7 +2,7 @@ import type { ConversationCommand } from "../agent/agent-conversation.ts";
 import type { TurnEvent } from "../agent/agent-fsm.ts";
 import type { PreparedModel } from "../agent/agent.ts";
 import type { BlobResolver } from "../agent/content.ts";
-import type { PromptInput } from "../agent/prompt.ts";
+import type { ProjectedPrompt, PromptInput } from "../agent/prompt.ts";
 import type { ActorId, Result, ToolCall } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import { diagnostic } from "../logging/index.ts";
@@ -166,11 +166,15 @@ export type ExecutionContext = Readonly<{
   >;
   /**
    * Prompt projection: builds the step's messages from the turn's prompt input at the step
-   * boundary, run inline by `complete` before its LLM call. The result is validated as chat
-   * messages. A handoff's own prompt input names the predecessor via `turn.view`; a target-aware
-   * projection renders it into the handoff packet plus the messages added since.
+   * boundary, run inline by `complete` before its LLM call. The messages are validated as chat
+   * messages; each pointer is reported as `prompt.media.pointer`. A handoff's own prompt input names
+   * the predecessor via `turn.view`; the projection renders it into the handoff packet plus the
+   * messages added since.
    */
-  projectPrompt: (input: PromptInput, signal: AbortSignal) => unknown | Promise<unknown>;
+  projectPrompt: (
+    input: PromptInput,
+    signal: AbortSignal,
+  ) => ProjectedPrompt | Promise<ProjectedPrompt>;
 }>;
 
 /**

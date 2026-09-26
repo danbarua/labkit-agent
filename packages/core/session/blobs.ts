@@ -7,7 +7,6 @@ import {
   hashBlob,
   type BlobRef,
   type BlobResolver,
-  type MediaKind,
 } from "../agent/content.ts";
 import type { SessionId } from "../agent/types.ts";
 import { ContinuationSchema, type Continuation } from "../providers/types.ts";
@@ -40,25 +39,20 @@ async function readBlob(
 /**
  * Reads and verifies the blobs a prepared completion request refers to and returns a resolver that
  * hands out copies of their bytes. Called inside operation lifetimes only. Replay never reads the
- * object store.
- * @param media Attachment media the bound provider accepts; checked for message attachments only.
+ * object store. The target-aware prompt projection already keeps only blob parts the target
+ * supports, so this loads exactly what the projected request references — no separate media check.
  * @param includeContinuations Also read the payload blobs of continuations (provider continuation
  * payloads, not the next step).
- * @throws when an attachment's media is unsupported, a blob is missing, or its size, media or hash
- * does not match its ref.
+ * @throws when a blob is missing, or its size, media or hash does not match its ref.
  */
 export async function resolveRequestBlobs(
   port: SessionPersistence,
   sessionId: SessionId,
   request: PreparedModel,
-  media: readonly MediaKind[],
   signal: AbortSignal,
   includeContinuations = false,
 ): Promise<BlobResolver> {
   const refs = blobRefs(request.messages);
-  for (const ref of refs)
-    if (!media.includes(ref.media))
-      throw new Error(`Provider does not support attachment media: ${ref.media}`);
   if (includeContinuations) refs.push(...continuationBlobRefs(request.continuations ?? []));
   const blobs = new Map<string, { ref: BlobRef; bytes: Uint8Array }>();
   for (const ref of refs) {

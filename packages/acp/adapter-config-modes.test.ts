@@ -438,14 +438,16 @@ test("set_config_option switches the workspace launcher between providers; the n
           body: { model: "gpt-5.4", reasoning: { effort: "high" }, max_output_tokens: 16384 },
         });
 
-        // The selected OpenAI model reads no images: refused before any provider request.
+        // The selected OpenAI model can't read images: the request still succeeds, but the
+        // image is rendered as a pointer instead of being sent.
         const sent = requests.length;
-        const refused = await ask(withImage);
-        expect(refused.error?.code).toBe(-32602);
-        expect(refused.error?.message).toContain(
-          "Provider does not support attachment media: image/png",
-        );
-        expect(requests).toHaveLength(sent);
+        expect((await ask(withImage)).result).toEqual({ stopReason: "end_turn" });
+        expect(requests).toHaveLength(sent + 1);
+        expect(requests.at(-1)).toMatchObject({ host: "api.openai.com" });
+        const pointerBody = JSON.stringify(requests.at(-1)?.body);
+        expect(pointerBody).not.toContain(image);
+        expect(pointerBody).toContain("image/png");
+        expect(pointerBody).toContain("blob://");
 
         await set("model", "anthropic/claude-sonnet-5");
         expect((await ask(withImage)).result).toEqual({ stopReason: "end_turn" });
@@ -479,6 +481,12 @@ test("set_config_option switches the workspace launcher between providers; the n
         (line) => line.event === "configuration.applied" && line.appendId === switched?.appendId,
       ),
     ).toHaveLength(1);
+    expect(logs.filter((line) => line.event === "prompt.media.pointer")).toContainEqual(
+      expect.objectContaining({ level: "debug", media: "image/png", provider: "openai" }),
+    );
+    expect(
+      logs.some((line) => line.event === "prompt.media.pointer" && line.level === "warning"),
+    ).toBe(false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });

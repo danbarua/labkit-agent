@@ -174,10 +174,26 @@ export function openInstance(
 }
 
 function promptInput(ctx: SessionInstance, turn: TurnData): PromptInput {
+  const policy = ctx.actor.snapshot.durable.policy;
+  const resolved = policy?.provider
+    ? ctx.configured.describeModel?.(
+        policy.provider,
+        policy.model ?? ctx.configured.agents.get(turn.agent)!.model,
+      )
+    : undefined;
   return {
     context: ctx.actor.snapshot.durable.conversation.context,
     log: ctx.actor.snapshot.durable.conversation.log,
     turn,
+    ...(resolved
+      ? {
+          target: {
+            provider: resolved.provider,
+            model: resolved.model,
+            media: resolved.capabilities.media,
+          },
+        }
+      : {}),
     agent: {
       ...ctx.configured.agents.get(turn.agent)!,
       tools:

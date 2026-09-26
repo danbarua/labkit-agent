@@ -4,6 +4,7 @@ import { ChatMessageSchema, type ChatMessage } from "../agent/agent.ts";
 import {
   parseSessionContext,
   projectConversationPrompt,
+  projectMediaPointers,
   type PromptInput,
 } from "../agent/prompt.ts";
 import { StepsSchema, ToolNameSchema, type AgentMessage, type Result } from "../agent/types.ts";
@@ -346,12 +347,15 @@ export function projectPolicy(
   const project = resolvers.projections.get(policy.project);
   if (!project) throw new Error("Missing versioned projection");
   const projected = project(projectionInput(input, policy, resolvers));
+  const { messages: pointered, pointers } = input.target
+    ? projectMediaPointers(projected, input.target)
+    : { messages: [...projected], pointers: [] };
   const messages = z
     .array(ChatMessageSchema)
     .parse([
       ...(input.agent.systemPrompt ? [{ role: "system", content: input.agent.systemPrompt }] : []),
       ...systemInputs.map((content) => ({ role: "system", content })),
-      ...projected,
+      ...pointered,
     ]);
   parseSessionContext(
     messages.map((message) => {
@@ -379,7 +383,7 @@ export function projectPolicy(
       };
     }),
   );
-  return freeze(messages);
+  return { messages: freeze(messages), pointers: freeze(pointers) };
 }
 /**
  * Deterministic domain conversion. The raw failed result remains in the journal. A tool deadline

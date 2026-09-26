@@ -20,7 +20,12 @@ import {
 import type { TurnEvent } from "./agent-fsm.ts";
 import { createChatCompletion, type ChatCompletionRequest } from "./agent.ts";
 import type { OperationState } from "./operation-actor.ts";
-import { parseSessionContext, projectConversationPrompt, type PromptInput } from "./prompt.ts";
+import {
+  parseSessionContext,
+  projectConversationPrompt,
+  type ProjectedPrompt,
+  type PromptInput,
+} from "./prompt.ts";
 import type { BatchState } from "./tool-batch.ts";
 import {
   ActorIdSchema,
@@ -141,10 +146,11 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
    * Prompt projection for the host's step. On a handoff step the packet is built by
    * `projectHandoff` over the messages up to `turn.view.at`; the packet plus the messages added
    * since are passed to `project` as `input.handoff`, so the projection option applies to every step.
+   * This runtime binds no provider, so the input has no target and no part becomes a pointer.
    */
-  const projectPrompt = async (input: PromptInput, signal: AbortSignal) => {
+  const projectPrompt = async (input: PromptInput, signal: AbortSignal): Promise<ProjectedPrompt> => {
     const view = input.turn.view;
-    if (view.kind !== "handoff") return project(input, signal);
+    if (view.kind !== "handoff") return { messages: await project(input, signal), pointers: [] };
     const packet = MessagesSchema.parse(
       await projectHandoff(
         {
@@ -160,10 +166,13 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
         signal,
       ),
     );
-    return project(
-      { ...input, handoff: [...packet, ...input.turn.messages.slice(view.at)] },
-      signal,
-    );
+    return {
+      messages: await project(
+        { ...input, handoff: [...packet, ...input.turn.messages.slice(view.at)] },
+        signal,
+      ),
+      pointers: [],
+    };
   };
   function build(initial: ConversationState): AgentRuntime {
     const replies = new Map<ActorId, (reply: SessionReply) => void>();
