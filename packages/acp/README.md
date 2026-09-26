@@ -226,6 +226,31 @@ is rejected. Deleting a session removes its journal/blobs and does not delete in
 children. Remote/client resources have their own cleanup rules; consult the
 [reference](protocol-reference.md) when adding one of these integrations.
 
+## Architecture
+
+`connectAcp` in [adapter.ts](adapter.ts) is the composition root. It builds one set of services
+per connection, registers every handler on the SDK `agent()` app, then connects the stream. The
+handlers live in `rpc/`:
+
+| Module                                           | Responsibility                                                                                            |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| [rpc/core.ts](rpc/core.ts)                       | Connection identity and the ordered `session/update` outbox (`send`, `flushed`).                          |
+| [rpc/session.ts](rpc/session.ts)                 | The per-session record and configuration/prompt serialization (`afterPrompt`, `awaitConfigurationQuiet`). |
+| [rpc/connection.ts](rpc/connection.ts)           | `initialize`, `authenticate`, `logout`, the initialize/auth gate, and -32601 for unadvertised methods.    |
+| [rpc/sessions.ts](rpc/sessions.ts)               | The session registry and `session/new`, `load`, `resume`, `fork`, `delete`, `list`, `close`.              |
+| [rpc/open.ts](rpc/open.ts)                       | Opening a session: MCP, client resources, runtime creation or restore, replay and publication.            |
+| [rpc/permission.ts](rpc/permission.ts)           | Forwarding runtime permission requests as `session/request_permission` and validating the answer.         |
+| [rpc/updates.ts](rpc/updates.ts)                 | Projecting runtime snapshots, tool and stream events, and saved history to `session/update`.              |
+| [rpc/config.ts](rpc/config.ts)                   | `session/set_config_option`, `session/set_mode`, and config/mode projection.                              |
+| [rpc/prompt.ts](rpc/prompt.ts)                   | `session/prompt` and `session/cancel`: turn admission, settlement and stop reasons.                       |
+| [rpc/mcp.ts](rpc/mcp.ts)                         | `mcp/message` requests and notifications for ACP-transported MCP servers.                                 |
+| [rpc/unknown-methods.ts](rpc/unknown-methods.ts) | Logging `acp.method.unknown` for incoming methods no handler registers.                                   |
+
+Registration order: the -32601 handlers for unadvertised methods come first, so they answer before
+params, initialization, auth or session state are checked. Then come connection, MCP bridge, session
+lifecycle, configuration and prompt handlers. Each `register*` returns its method names; together
+with the SDK's `$/cancel_request` they form the set `rpc/unknown-methods.ts` treats as known.
+
 ## Find an operational failure
 
 The CLI prints the log path on stderr. By default it is
