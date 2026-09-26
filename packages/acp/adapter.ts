@@ -6,7 +6,6 @@ import {
   RequestError,
   type AgentConnection,
   type AgentContext,
-  type ClientCapabilities,
   type ListSessionsRequest,
   type ListSessionsResponse,
   type NewSessionRequest,
@@ -35,13 +34,12 @@ import { acpMcpBridge, McpMessageSchema } from "./mcp-acp.ts";
 import { mcpConnections, McpOpenError } from "./mcp.ts";
 import { PlanEntriesSchema, type PlanSink } from "./plan.ts";
 import {
-  advertisedPromptCapabilities,
   promptInput,
   requireAdvertisedContent,
   type AcpPromptCapabilities,
-  type AdvertisedPromptCapabilities,
 } from "./prompt-input.ts";
 import { configProjection, logUnlisted, registerConfiguration } from "./rpc/config.ts";
+import { connectionGate, registerConnection, registerUnadvertised } from "./rpc/connection.ts";
 import { adapterCore } from "./rpc/core.ts";
 import { afterPrompt, awaitConfigurationQuiet, type Session } from "./rpc/session.ts";
 import { locatedTitle, sessionUpdates, toolEvidence } from "./rpc/updates.ts";
@@ -166,14 +164,6 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
   const resources = new Set<() => Promise<void>>();
   const borrowedParents = new Set<string>();
   const deleting = new Set<string>();
-  let initialized = false;
-  let initializing = false;
-  let promptCapabilities: AdvertisedPromptCapabilities = {
-    image: false,
-    audio: false,
-    embeddedContext: false,
-  };
-  let clientCapabilities: ClientCapabilities = {};
   let closing = false;
   let connection: AgentConnection;
   const mcpBridge = acpMcpBridge(() => connection.signal);
@@ -183,10 +173,8 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     isClosing: () => closing,
     close: (e) => connection.close(e),
   });
-  const requireInitialized = () => {
-    if (!initialized) throw new RequestError(-32002, "Initialize the connection first");
-    if (closing) throw new RequestError(-32000, "Connection closed");
-  };
+  const gate = connectionGate(auth, () => closing);
+  const requireInitialized = () => gate.requireInitialized();
   const config = configProjection(core);
   const updates = sessionUpdates(
     core,
@@ -196,10 +184,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     options.sessionInfo,
     config.project,
   );
-  const requireAccess = () => {
-    requireInitialized();
-    auth.requireAccess();
-  };
+  const requireAccess = () => gate.requireAccess();
   const lookup = (id: string, cleanup = false) => {
     requireInitialized();
     if (!cleanup) auth.requireAccess();
@@ -286,7 +271,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     };
     const elicitation = clientElicitation(
       client,
-      clientCapabilities,
+      gate.clientCapabilities(),
       sessionIdentity,
       connection.signal,
       () => sessions.get(sessionIdentity())?.promptController?.signal ?? AbortSignal.abort(),
@@ -339,12 +324,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       }
       const filesystem = clientFiles(
         client,
-        clientCapabilities,
+        gate.clientCapabilities(),
         sessionIdentity,
         connection.signal,
       );
       const terminal =
-        clientCapabilities.terminal === true
+        gate.clientCapabilities().terminal === true
           ? clientTerminal(
               client,
               sessionIdentity,
@@ -433,7 +418,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         configurationTail: Promise.resolve(),
         config: bindConfig(
           original.config,
-          clientCapabilities.session?.configOptions?.boolean != null,
+          gate.clientCapabilities().session?.configOptions?.boolean != null,
         ),
         commands: bindCommands(original.commands),
         configSignature: "",
@@ -770,68 +755,20 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       }),
     );
   };
-  // A conditional method that initialize does not advertise is claimed by this earlier handler,
-  // which answers -32601 before params, initialization, auth or session state are checked.
-  const conditional = [
-    ["session/load", "agentCapabilities.loadSession", loadSession],
-    ["session/resume", "agentCapabilities.sessionCapabilities.resume", loadSession],
-    ["session/fork", "agentCapabilities.sessionCapabilities.fork", forkSession],
-    ["session/delete", "agentCapabilities.sessionCapabilities.delete", !!options.deleteSession],
-    ["session/list", "agentCapabilities.sessionCapabilities.list", !!options.listSessions],
-    ["logout", "agentCapabilities.auth.logout", auth.logoutSupported],
-  ] as const;
   const app = agent();
-  for (const [method, capability, advertised] of conditional)
-    if (!advertised)
-      app.onRequest(
-        method,
-        (params: unknown) => params,
-        ({ client }) => {
-          diagnostic("acp", "warning", "acp.method.not_advertised", {
-            connectionId,
-            rpcRequestId: String(client.requestId),
-            method,
-            capability,
-          });
-          throw new RequestError(
-            -32601,
-            `Method not found: ${method} is unavailable because this agent's initialize response does not advertise ${capability}; check agentCapabilities before calling it`,
-            { method, capability },
-          );
-        },
-      );
   registerConfiguration(app, { lookup, setConfig });
-  app
-    .onRequest("initialize", async ({ params, client }) => {
-      if (initialized || initializing)
-        throw RequestError.invalidRequest(undefined, "Connection already initialized");
-      initializing = true;
-      try {
-        promptCapabilities = await advertisedPromptCapabilities(options.promptCapabilities);
-      } catch (error) {
-        diagnostic("acp", "error", "acp.capabilities.failed", {
-          connectionId,
-          rpcRequestId: String(client.requestId),
-          method: "initialize",
-          error: diagnosticError(error),
-          reason:
-            "The host could not declare which prompt content its models accept; initialize refused so nothing is advertised falsely",
-        });
-        throw RequestError.internalError(
-          undefined,
-          `Cannot determine which prompt content this agent accepts: ${error instanceof Error ? error.message : String(error)}. Fix the agent's model configuration, then initialize again.`,
-        );
-      } finally {
-        initializing = false;
-      }
-      initialized = true;
-      clientCapabilities = structuredClone(params.clientCapabilities ?? {});
-      diagnostic("acp", "debug", "acp.capabilities.prompt", {
-        connectionId,
-        rpcRequestId: String(client.requestId),
-        method: "initialize",
-        promptCapabilities,
-      });
+  registerUnadvertised(app, core, {
+    loadSession,
+    forkSession,
+    deleteSession: !!options.deleteSession,
+    listSessions: !!options.listSessions,
+    logout: gate.logoutSupported,
+  });
+  registerConnection(app, {
+    core,
+    gate,
+    agentInfo,
+    buildInitializeResponse(clientCapabilities, promptCapabilities) {
       return {
         protocolVersion: PROTOCOL_VERSION,
         agentInfo,
@@ -851,57 +788,21 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           },
         },
       };
-    })
-    .onRequest("authenticate", async ({ params, signal, client }) => {
-      requireInitialized();
-      const cancellation = AbortSignal.any([signal, connection.signal]);
-      const interaction = requestElicitation(
-        client,
-        clientCapabilities,
-        cancellation,
-        connection.signal,
-      );
-      const started = performance.now();
-      const trace = {
-        connectionId,
-        rpcRequestId: String(client.requestId),
-        method: "authenticate",
-        authMethodId: params.methodId,
-      };
-      diagnostic("acp", "info", "acp.auth.started", trace);
-      try {
-        await auth.authenticate(params.methodId, cancellation, closeForAuth, {
-          elicitation: interaction.port,
-        });
-        diagnostic("acp", "info", "acp.auth.completed", {
-          ...trace,
-          durationMs: performance.now() - started,
-        });
-        return {};
-      } catch (error) {
-        const cause = diagnosticError(error);
-        diagnostic("acp", "warning", "acp.auth.failed", {
-          ...trace,
-          durationMs: performance.now() - started,
-          error: cause,
-        });
-        // Cancellation, unknown method IDs and a missing binding keep their own codes.
-        if (cancellation.aborted || (error instanceof RequestError && error.code !== -32000))
-          throw error;
-        throw new RequestError(
-          -32000,
-          `Authentication with ${params.methodId} failed: ${String(cause.message)}`,
-          { methodId: params.methodId, cause },
-        );
-      } finally {
-        interaction.close();
-      }
-    })
-    .onRequest("logout", async ({ signal }) => {
-      requireInitialized();
-      await auth.logout(AbortSignal.any([signal, connection.signal]), closeForAuth);
-      return {};
-    })
+    },
+    promptCapabilities: options.promptCapabilities,
+    revokeSessions: closeForAuth,
+    connectionId,
+    clientElicitation: requestElicitation,
+    getConnection() {
+      return connection;
+    },
+    auth,
+    resetAuthLifetime() {
+      authLifetime.abort();
+      authLifetime = new AbortController();
+    },
+  });
+  app
     .onRequest("mcp/message", McpMessageSchema, ({ params, signal }) => {
       requireInitialized();
       return mcpBridge.request(params, signal);
@@ -1133,7 +1034,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       };
       diagnostic("acp", "info", "acp.prompt.received", { ...trace, count: params.prompt.length });
       const entry = lookup(params.sessionId);
-      requireAdvertisedContent(params.prompt, promptCapabilities, trace);
+      requireAdvertisedContent(params.prompt, gate.promptCapabilities(), trace);
       if (entry.busy) throw new RequestError(-32000, "Session already has an active prompt");
       await awaitConfigurationQuiet(entry, AbortSignal.any([signal, connection.signal]));
       if (sessions.get(params.sessionId) !== entry || !entry.acceptingUpdates)
