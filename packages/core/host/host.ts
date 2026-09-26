@@ -4,11 +4,6 @@ import type { ConversationCommand } from "../agent/agent-conversation.ts";
 import { admittedCompletionSchema, type TurnEvent } from "../agent/agent-fsm.ts";
 import { PreparedModelSchema, type PreparedModel } from "../agent/agent.ts";
 import type { BlobResolver } from "../agent/content.ts";
-import {
-  createOperationActor,
-  type Operation,
-  type OperationState,
-} from "../agent/operation-actor.ts";
 import { PermissionDecisionsSchema, type PermissionDecisions } from "../agent/permissions.ts";
 import type { PromptInput } from "../agent/prompt.ts";
 import {
@@ -23,7 +18,6 @@ import {
   ref,
   ToolNameSchema,
   type ActorId,
-  type ChildRef,
   type Failure,
   type Result,
   type ToolCall,
@@ -39,6 +33,7 @@ import {
   type StreamDelta,
 } from "../providers/types.ts";
 import { CompletionUsageSchema } from "../providers/usage.ts";
+import { createHostContext } from "./context.ts";
 import { notify } from "./notifications.ts";
 import {
   copyRegistries,
@@ -216,10 +211,6 @@ export type ExecutionContext = Readonly<{
   ) => unknown | Promise<unknown>;
 }>;
 
-type Child = {
-  readonly snapshot: OperationState<unknown> | BatchState;
-  cancel(reason?: Failure): Promise<unknown>;
-};
 /**
  * Creates the host that runs a turn's child operations (child: an operation the turn spawned, not a
  * child session): prompt preparation, completions, handoff preparation, permission requests and
@@ -247,165 +238,12 @@ export function createHost(
     streamUpdate?: StreamUpdateSink;
   },
 ) {
-  const { agents, tools } = copyRegistries(bindings);
-  const children = new Map<ActorId, { ref: ChildRef; actor: Child }>();
-  const pendingTools = new Map<
-    string,
-    {
-      outcome: HostToolOutcome;
-      toolFailure?: Policy["toolFailure"];
-      batch: Actor<BatchState, BatchEvent, BatchCommand>;
-    }
-  >();
-  const requestPermission = bindings.requestPermission;
-  const remembered = new Map<string, string>();
-
-  const grants = new Map<
-    ActorId,
-    {
-      batchId: ActorId;
-      approved: boolean;
-      inputs: Map<string, unknown>;
-      invalidInputs: Map<string, Failure>;
-      pending: HostToolNotification[];
-      remembered: Map<string, string>;
-    }
-  >();
-  /** Drop a permission grant; tool cards still pending approval fail with `reason`. */
-  const revoke = (id: ActorId, reason: string) => {
-    const grant = grants.get(id);
-    grants.delete(id);
-    for (const { sessionId, turnId, batchId, callId, toolCallId } of grant?.pending ?? [])
-      notifyTool({
-        ...(sessionId ? { sessionId } : {}),
-        turnId,
-        batchId,
-        callId,
-        toolCallId,
-        sessionUpdate: "tool_call_update",
-        status: "failed",
-        rawOutput: { error: reason },
-      });
-  };
-  let closed = false;
-  const toolUpdate = sinks.toolUpdate;
-  const streamUpdate = sinks.streamUpdate;
-  const notifyTool = (notification: HostToolNotification) => {
-    if (closed || !toolUpdate) return;
-    notify(toolUpdate, notification);
-  };
-  const post: typeof sinks.turn = (turnId, event) => {
-    if (!closed) sinks.turn(turnId, event);
-  };
-  function spawn<I, O>(
-    child: ChildRef,
-    operation: Operation<I, O>,
-    settled: (result: Result<O>) => void,
-    observe?: (state: OperationState<O>) => unknown,
-  ) {
-    const startedAt = performance.now();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const attempt = async <T>(
-      phase: string,
-      run: () => T | Promise<T>,
-      signal?: AbortSignal,
-    ): Promise<T> => {
-      try {
-        return await run();
-      } catch (error) {
-        diagnostic(
-          child.kind === "completion" ? "provider" : "host",
-          signal?.aborted ? "info" : "warning",
-          signal?.aborted ? "child.cancelled" : "child.failed",
-          {
-            sessionId: bindings.sessionId,
-            childId: child.id,
-            operation: child.kind,
-            phase,
-            durationMs: Math.round(performance.now() - startedAt),
-            error: diagnosticError(error),
-          },
-        );
-        throw error;
-      }
-    };
-    const actor = createOperationActor(
-      child,
-      {
-        ...operation,
-        input: operation.input,
-        parseInput: (input) => attempt("validate_input", () => operation.parseInput(input)),
-        run: (input, signal) => attempt("run", () => operation.run(input, signal), signal),
-        parseOutput: (output) => attempt("validate_output", () => operation.parseOutput(output)),
-      },
-      (result) => {
-        if (timer !== undefined) clearTimeout(timer);
-        children.delete(child.id);
-        diagnostic(
-          child.kind === "completion" ? "provider" : "host",
-          result.kind === "failed" ? "warning" : "debug",
-          "child.settled",
-          {
-            sessionId: bindings.sessionId,
-            childId: child.id,
-            operation: child.kind,
-            outcome: result.kind,
-            durationMs: Math.round(performance.now() - startedAt),
-            ...(result.kind === "failed" ? { error: diagnosticError(result.error) } : {}),
-          },
-        );
-        if (!closed) settled(result);
-      },
-      observe,
-    );
-    diagnostic(child.kind === "completion" ? "provider" : "host", "debug", "child.started", {
-      sessionId: bindings.sessionId,
-      childId: child.id,
-      operation: child.kind,
-    });
-    children.set(child.id, { ref: child, actor });
-    if (operation.timeoutMs !== undefined) {
-      const timeoutMs = operation.timeoutMs;
-      timer = setTimeout(() => {
-        const reason: Failure = {
-          message: `${child.kind} operation ${child.id} exceeded its ${timeoutMs} ms deadline`,
-          classification: "timeout",
-          timeoutMs,
-          phase: actor.snapshot.status,
-          operation: {
-            id: child.id,
-            kind: child.kind,
-            sessionId: bindings.sessionId,
-            ...operation.failureContext?.operation,
-          },
-        };
-        diagnostic("host", "warning", "child.timed_out", {
-          ...reason,
-          sessionId: bindings.sessionId,
-          childId: child.id,
-        });
-        void actor.cancel(reason);
-      }, timeoutMs);
-    }
-    void actor.start();
-  }
-  const cancel = (child: ChildRef, reason?: Failure) => {
-    revoke(child.id, reason?.message ?? "Tool permission request cancelled");
-    diagnostic("host", "debug", "child.cancellation_requested", {
-      sessionId: bindings.sessionId,
-      childId: child.id,
-      operation: child.kind,
-      reason,
-    });
-    void children
-      .get(child.id)
-      ?.actor.cancel(reason ? { ...reason, classification: "cancelled" } : undefined);
-  };
+  const ctx = createHostContext(bindings, sinks);
   const dispatch = (
     effect: Extract<ConversationCommand, { type: "turn" }>,
     context: ExecutionContext,
   ): undefined => {
-    if (closed) throw new Error("Host closed");
+    if (ctx.closed) throw new Error("Host closed");
     context = freeze({
       ...context,
       prompt: context.prompt ? structuredClone(context.prompt) : undefined,
@@ -429,13 +267,13 @@ export function createHost(
     });
     switch (command.type) {
       case "cancel":
-        cancel(command.child);
+        ctx.cancel(command.child);
         break;
       case "prepare_model": {
         const prompt = context.prompt;
         if (!prompt) throw new Error("Host prepare_model requires prompt context");
         const agent = prompt.agent;
-        spawn(
+        ctx.spawn(
           command.child,
           {
             failureContext: {
@@ -458,7 +296,7 @@ export function createHost(
                       thinkingBudgetTokens: context.provider.thinkingBudgetTokens,
                       stream: context.provider.stream,
                       maxOutputTokens: context.provider.maxOutputTokens,
-                      successors: agent.successors ?? [...agents.keys()],
+                      successors: agent.successors ?? [...ctx.agents.keys()],
                     }
                   : {}),
                 messages: await context.projectPrompt(prompt, signal),
@@ -466,8 +304,8 @@ export function createHost(
                   type: "function",
                   function: {
                     name,
-                    description: tools.get(ToolNameSchema.parse(name))!.description,
-                    parameters: tools.get(ToolNameSchema.parse(name))!.parameters,
+                    description: ctx.tools.get(ToolNameSchema.parse(name))!.description,
+                    parameters: ctx.tools.get(ToolNameSchema.parse(name))!.parameters,
                   },
                 })),
               });
@@ -487,7 +325,7 @@ export function createHost(
               });
             },
           },
-          (result) => post(turnId, { type: "prepared", child: command.child, result }),
+          (result) => ctx.post(turnId, { type: "prepared", child: command.child, result }),
         );
         break;
       }
@@ -500,19 +338,20 @@ export function createHost(
         };
         let status = "pending";
         const notifyStream = (fields: Omit<HostStreamNotification, keyof typeof identity>) => {
-          if (!closed && command.request.stream) notify(streamUpdate, { ...identity, ...fields });
+          if (!ctx.closed && command.request.stream)
+            notify(ctx.streamUpdate, { ...identity, ...fields });
         };
         notifyStream({ sessionUpdate: "completion", status: "pending" });
-        if (closed) break;
+        if (ctx.closed) break;
         const admitted = admittedCompletionSchema(
           new Set(
             command.request.successors ??
-              agents.get(command.turn.agent)!.successors ??
-              agents.keys(),
+              ctx.agents.get(command.turn.agent)!.successors ??
+              ctx.agents.keys(),
           ),
-          new Set(context.allowedTools ?? agents.get(command.turn.agent)!.tools),
+          new Set(context.allowedTools ?? ctx.agents.get(command.turn.agent)!.tools),
         );
-        spawn(
+        ctx.spawn(
           command.child,
           {
             input: command.request,
@@ -599,7 +438,7 @@ export function createHost(
             }).parseAsync,
           },
           (result) =>
-            post(turnId, {
+            ctx.post(turnId, {
               type: "model_settled",
               child: command.child,
               ...(result.kind === "succeeded" && result.value.usage
@@ -645,7 +484,7 @@ export function createHost(
       case "prepare_handoff": {
         const prompt = context.prompt;
         if (!prompt) throw new Error("Host prepare_handoff requires prompt context");
-        spawn(
+        ctx.spawn(
           command.child,
           {
             failureContext: {
@@ -670,7 +509,7 @@ export function createHost(
                   ].filter((message) => message !== undefined),
             parseOutput: MessagesSchema.parseAsync,
           },
-          (result) => post(turnId, { type: "handoff_prepared", child: command.child, result }),
+          (result) => ctx.post(turnId, { type: "handoff_prepared", child: command.child, result }),
         );
         break;
       }
@@ -683,8 +522,8 @@ export function createHost(
           pending: [] as HostToolNotification[],
           remembered: new Map<string, string>(),
         };
-        grants.set(command.child.id, grant);
-        spawn(
+        ctx.grants.set(command.child.id, grant);
+        ctx.spawn(
           command.child,
           {
             failureContext: {
@@ -698,13 +537,13 @@ export function createHost(
             input: null,
             parseInput: z.null().parse,
             run: async (_, signal) => {
-              if (!requestPermission) throw new Error("Missing permission request binding");
+              if (!ctx.requestPermission) throw new Error("Missing permission request binding");
               const decisions: PermissionDecisions[number][] = [];
               for (const call of command.completion.calls) {
                 let phase = "validate_input";
                 try {
                   signal.throwIfAborted();
-                  const tool = tools.get(call.name)!;
+                  const tool = ctx.tools.get(call.name)!;
                   const identity = {
                     ...(bindings.sessionId ? { sessionId: bindings.sessionId } : {}),
                     turnId,
@@ -723,7 +562,7 @@ export function createHost(
                     rawInput: call.args,
                   };
                   grant.pending.push(display);
-                  notifyTool(display);
+                  ctx.notifyTool(display);
                   signal.throwIfAborted();
                   const input = await tool.parseInput(call.args);
                   signal.throwIfAborted();
@@ -744,7 +583,7 @@ export function createHost(
                     }
                   }
                   if (locations)
-                    notifyTool({ ...identity, sessionUpdate: "tool_call_update", locations });
+                    ctx.notifyTool({ ...identity, sessionUpdate: "tool_call_update", locations });
                   signal.throwIfAborted();
                   const permissionStartedAt = performance.now();
                   const permissionContext = {
@@ -755,7 +594,7 @@ export function createHost(
                     locations,
                   };
                   const rememberedGrant =
-                    remembered.get(call.name) ?? grant.remembered.get(call.name);
+                    ctx.remembered.get(call.name) ?? grant.remembered.get(call.name);
                   if (rememberedGrant) {
                     const approval = {
                       scope: "live-session-tool" as const,
@@ -777,7 +616,7 @@ export function createHost(
                   });
                   phase = "await_permission";
                   const response = PermissionResponseSchema.parse(
-                    await requestPermission(
+                    await ctx.requestPermission(
                       freeze({
                         ...(bindings.sessionId ? { sessionId: bindings.sessionId } : {}),
                         turnId,
@@ -880,24 +719,24 @@ export function createHost(
           },
           (result) => {
             if (result.kind !== "succeeded")
-              revoke(
+              ctx.revoke(
                 command.child.id,
                 result.kind === "failed"
                   ? result.error.message
                   : "Tool permission request cancelled",
               );
             else if (result.value.some((entry) => entry.decision === "reject_once"))
-              revoke(command.child.id, "Tool permission rejected by the user");
+              ctx.revoke(command.child.id, "Tool permission rejected by the user");
             else if (result.value.some((entry) => entry.decision === "cancelled"))
-              revoke(command.child.id, "Tool permission request cancelled");
+              ctx.revoke(command.child.id, "Tool permission request cancelled");
             else grant.approved = true;
-            post(turnId, { type: "permission_settled", child: command.child, result });
+            ctx.post(turnId, { type: "permission_settled", child: command.child, result });
           },
         );
         break;
       }
       case "run_tools": {
-        const grant = command.permission ? grants.get(command.permission.id) : undefined;
+        const grant = command.permission ? ctx.grants.get(command.permission.id) : undefined;
         if (
           command.permission &&
           (!grant?.approved ||
@@ -908,7 +747,7 @@ export function createHost(
         )
           throw new Error("Missing tool permission grant");
         for (const [toolName, grantId] of grant?.remembered ?? []) {
-          remembered.set(toolName, grantId);
+          ctx.remembered.set(toolName, grantId);
           diagnostic("host", "info", "permission.granted", {
             sessionId: bindings.sessionId,
             turnId,
@@ -921,12 +760,12 @@ export function createHost(
               "User approved this tool for all arguments until this session closes, tool scope changes, or permissions are explicitly reset",
           });
         }
-        if (command.permission) grants.delete(command.permission.id);
+        if (command.permission) ctx.grants.delete(command.permission.id);
         let batch: Actor<BatchState, BatchEvent, BatchCommand>;
         const runBatchCommand = (batchCommand: BatchCommand): undefined => {
           switch (batchCommand.type) {
             case "spawn_tool": {
-              const tool = tools.get(batchCommand.call.name)!;
+              const tool = ctx.tools.get(batchCommand.call.name)!;
               const identity = {
                 ...(bindings.sessionId ? { sessionId: bindings.sessionId } : {}),
                 turnId,
@@ -946,7 +785,7 @@ export function createHost(
                     : "not_required",
               });
               if (!grant)
-                notifyTool({
+                ctx.notifyTool({
                   ...identity,
                   sessionUpdate: "tool_call",
                   title: batchCommand.call.name,
@@ -955,10 +794,10 @@ export function createHost(
                   status: "pending",
                   rawInput: batchCommand.call.args,
                 });
-              if (closed) break;
+              if (ctx.closed) break;
               let status = "pending";
 
-              spawn(
+              ctx.spawn(
                 batchCommand.child,
                 {
                   input: batchCommand.call.args,
@@ -980,7 +819,7 @@ export function createHost(
                       return grant.inputs.get(batchCommand.call.id);
                     }
                     const input = await tool.parseInput(raw);
-                    if (!closed && status === "pending" && tool.locations) {
+                    if (!ctx.closed && status === "pending" && tool.locations) {
                       try {
                         const locations = z
                           .array(ToolLocationSchema)
@@ -990,7 +829,11 @@ export function createHost(
                           toolName: batchCommand.call.name,
                           locations,
                         });
-                        notifyTool({ ...identity, sessionUpdate: "tool_call_update", locations });
+                        ctx.notifyTool({
+                          ...identity,
+                          sessionUpdate: "tool_call_update",
+                          locations,
+                        });
                       } catch (error) {
                         diagnostic("host", "warning", "tool.locations_failed", {
                           sessionId: bindings.sessionId,
@@ -1021,7 +864,7 @@ export function createHost(
                     callId: batchCommand.call.id,
                     result,
                   };
-                  pendingTools.set(`${outcome.batchId}/${outcome.callId}`, {
+                  ctx.pendingTools.set(`${outcome.batchId}/${outcome.callId}`, {
                     outcome,
                     batch,
                     toolFailure: context.toolFailure,
@@ -1058,7 +901,7 @@ export function createHost(
                     },
                   );
                   status = next;
-                  notifyTool({
+                  ctx.notifyTool({
                     ...identity,
                     sessionUpdate: "tool_call_update",
                     status: next,
@@ -1075,13 +918,13 @@ export function createHost(
               break;
             }
             case "cancel_tool":
-              cancel(batchCommand.child, batchCommand.reason);
+              ctx.cancel(batchCommand.child, batchCommand.reason);
               break;
             case "notify":
-              children.delete(command.child.id);
-              for (const [key, pending] of pendingTools)
-                if (pending.outcome.batchId === command.child.id) pendingTools.delete(key);
-              post(turnId, {
+              ctx.children.delete(command.child.id);
+              for (const [key, pending] of ctx.pendingTools)
+                if (pending.outcome.batchId === command.child.id) ctx.pendingTools.delete(key);
+              ctx.post(turnId, {
                 type: "batch_settled",
                 child: command.child,
                 outcome: batchCommand.outcome,
@@ -1096,7 +939,7 @@ export function createHost(
           runBatchCommand,
           (_, error) => ({ type: "failed", error: failure(error) }),
         );
-        children.set(command.child.id, {
+        ctx.children.set(command.child.id, {
           ref: command.child,
           actor: {
             get snapshot() {
@@ -1135,9 +978,9 @@ export function createHost(
         sessionId: bindings.sessionId,
         reason,
         ...correlation,
-        toolNames: [...remembered.keys()],
+        toolNames: [...ctx.remembered.keys()],
       });
-      remembered.clear();
+      ctx.remembered.clear();
     },
     /**
      * Lets one tool call's outcome count toward its tool batch. Pass the exact object received by
@@ -1148,9 +991,9 @@ export function createHost(
      */
     releaseTool(outcome: HostToolOutcome) {
       const key = `${outcome.batchId}/${outcome.callId}`;
-      const pending = pendingTools.get(key);
+      const pending = ctx.pendingTools.get(key);
       if (!pending || pending.outcome !== outcome) return;
-      pendingTools.delete(key);
+      ctx.pendingTools.delete(key);
       diagnostic("host", "debug", "tool.released", {
         sessionId: bindings.sessionId,
         turnId: outcome.turnId,
@@ -1174,15 +1017,15 @@ export function createHost(
     close() {
       diagnostic("host", "debug", "host.closed", {
         sessionId: bindings.sessionId,
-        activeChildren: children.size,
-        pendingToolReceipts: pendingTools.size,
-        pendingGrants: grants.size,
+        activeChildren: ctx.children.size,
+        pendingToolReceipts: ctx.pendingTools.size,
+        pendingGrants: ctx.grants.size,
       });
-      closed = true;
-      for (const { actor } of children.values()) void actor.cancel();
-      pendingTools.clear();
-      grants.clear();
-      remembered.clear();
+      ctx.closed = true;
+      for (const { actor } of ctx.children.values()) void actor.cancel();
+      ctx.pendingTools.clear();
+      ctx.grants.clear();
+      ctx.remembered.clear();
     },
     /**
      * Frozen list of active child operations with their current states, for diagnostics and runtime
@@ -1191,7 +1034,7 @@ export function createHost(
      */
     get snapshot() {
       return freeze(
-        [...children.values()].map(({ ref, actor }) => ({ ref, state: actor.snapshot })),
+        [...ctx.children.values()].map(({ ref, actor }) => ({ ref, state: actor.snapshot })),
       );
     },
   };
