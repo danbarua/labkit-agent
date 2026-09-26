@@ -13,7 +13,7 @@ mutating an options object does nothing to an open session.
 
 | Choice                               | When it fits                                              | Consequence to handle                                                                                                                             |
 | ------------------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `default@1`                          | Interactive replacement of a model request.               | Input can replace preparation/completion/handoff in the same turn; input during tools/permission waiting is rejected.                             |
+| `default@1`                          | Interactive replacement of a model request.               | Input can replace a step in flight (including a handoff successor's step) in the same turn; input during tools/permission waiting is rejected.    |
 | `strict@1`                           | Each active turn must finish unchanged.                   | New input cannot barge in.                                                                                                                        |
 | `queued@1`                           | Every accepted input needs its own turn.                  | Inputs persist in order; aborting the current turn does not discard its queued successors.                                                        |
 | `abort-tools-on-user` input behavior | A new instruction should stop tool work first.            | The successor is saved before cancellation and starts only after the aborted turn commits. Already-started effects cannot be undone.              |
@@ -38,11 +38,14 @@ fact that the model does not see.
 
 Handoff projection is separate. `handoff-slim@1` gives the successor the latest user instruction and
 handoff message; `handoff-history@1` carries history. Slim handoff reduces input but requires the
-handoff to contain what the successor needs. Neither setting generates a summary.
+handoff to contain what the successor needs. Neither setting generates a summary. A handoff step's
+prompt is the handoff resolver's packet plus the messages added since, whatever `project` names:
+`context-only@1` session context reaches the successor only through a resolver that carries it,
+such as `handoff-history@1`.
 
 Custom projectors must be pure and preserve correlated tool exchanges and desired attachment refs.
 They may select/rearrange valid context, but cannot fetch files or call another model. Invalid
-projected calls fail preparation before HTTP. Malformed provider calls fail completion admission;
+projected calls fail the step before HTTP. Malformed provider calls fail completion admission;
 neither becomes a tolerant tool result because no tool operation was admitted.
 
 ## Model settings and permission scope

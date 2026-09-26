@@ -505,7 +505,7 @@ for (const [name, value] of [
   });
 }
 
-test("malformed projected arguments fail preparation without inventing tool results", async () => {
+test("malformed projected arguments fail the step without inventing tool results", async () => {
   const options = boundOptions();
   let completions = 0;
   const policies = {

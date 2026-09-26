@@ -76,7 +76,8 @@ under another. Mutating the original options map does not reconfigure an open se
 are captured at construction. `session.model` exposes the resolved selection and capabilities;
 [provider bindings](../providers/README.md) explain how to declare them.
 
-The default input policy allows replacement during model preparation/completion/handoff and rejects
+The default input policy allows replacement while a step's prompt is projected or its completion is
+in flight (including a handoff successor's first step) and rejects
 input during tools or permission waiting. Replacement joins the active turn; both callers receive
 that turn's eventual terminal record. Choose a [queue policy](../policy/README.md) if every accepted
 input must become a separate turn. Abort does not discard already accepted queued successors.
@@ -131,6 +132,27 @@ It remains historical when configuration or input changes. Missing accounting le
 observed record available with its original operation ID. `completion.usage.received` and
 `completion.usage.committed` distinguish observed from persisted evidence in launcher logs.
 
+## What the journal records
+
+The journal holds facts, not projections. Every record is format `version: 2`; a version 1 journal
+(written before prompts stopped being journaled) does not load and has no migration.
+
+| Record                                                                                   | What it states                                                                                                                               |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `created`                                                                                | The session's seed: registry, instructions, initial policy, inherited context and log. The step allowance is the policy's `steps`.           |
+| `event`                                                                                  | User input, abort, a branch request, or a child operation settling (`model_settled`, `permission_settled`, `batch_settled`, `failed`).       |
+| `model_settled`                                                                          | A step's model output (or failure), the provider and model it was made with, and any continuation. No prompt, no usage, no permission flag.  |
+| `tool`                                                                                   | One tool call's raw result, committed before its batch settles.                                                                              |
+| `batch_settled`                                                                          | How the batch settled (`succeeded`, `failed` with error, `cancelled`). Its results are the batch's `tool` records.                           |
+| `effect` (`usage`)                                                                       | The accounting a completion reported, committed in the same append as its `model_settled`, just before it. The conversation fold ignores it. |
+| `terminal`                                                                               | The turn's final agent and outcome, in the append that ended the turn. The turn's messages come from the fold.                               |
+| `policy`, `system`, `configuration`, `queued`, `dequeued`, `input_cancelled`, `recovery` | Configuration boundaries, queued input, and closing an interrupted turn.                                                                     |
+
+A step's prompt is a projection of these facts, recomputed when the step runs and never stored. So
+is a handoff's packet: the successor's first step renders it from the policy's handoff resolver and
+the turn's messages up to the handoff. Whether a step needs permission is derived from the policy in
+force, on staging and on load alike.
+
 ## Reopen without repeating effects
 
 Save the session ID and call `restoreSession(options, sessionId)` with the current agents, tools and
@@ -141,18 +163,20 @@ Loading a journal checks its integrity only: each record decodes, batches contin
 revision, revisions run 1, 2, 3…, append IDs are unique and entry IDs are `<appendId>/<index>`, every
 record belongs to the session, the first record (and only the first) creates it, and a turn's
 terminal record follows the record that ended the turn in the same batch. A record must also name a
-turn, operation, tool batch, call or queued input that exists in the folded state. Nothing else is
-checked. Commit-time rules (prompt projection, policy patches, permissions, admission, bindings) run
-only when new work is staged, never again on load. Where a stored record and a value today's code
-would derive disagree, the stored record wins: the captured prompt, the policy in a policy record and
-the terminal record are history as written.
+turn, operation, tool batch, call or queued input that exists in the folded state; a usage effect
+must name the turn's active completion. Commit-time rules (policy patches, permissions, admission,
+bindings) run only when new work is staged, never again on load. The fold is authoritative: no
+stored copy overrides what it derives. A terminal record whose agent or outcome disagrees with the
+fold fails `record_applicable`. A policy record's stored policy is the configuration fact itself and
+is applied as written.
 
 A load failure is a `JournalIntegrityError` with `rule`, `revision`, `appendId` and `entryId` of the
 offending record (for an undecodable record, where it should be). `session.restore_failed` reports
 the same fields at stage `replay_journal`. A record with a newer `version` or a `kind` this build
 does not know fails `record_decode` with a message that names the version or kind and says the
 journal was probably written by a newer Labkit build, so the launcher should be restarted on current
-code; the schema error stays as the `cause`.
+code; an older `version` fails `record_decode` naming the older format and saying to start a new
+session. The schema error stays as the `cause`.
 
 `restoreSession` rejects with `SessionNotFoundError` (carrying `sessionId`) when the store holds no
 journal under that ID, so hosts can tell a missing or deleted session from a failed load.
@@ -253,8 +277,8 @@ through the `session-log` namespace. The implementation lives in `journal/`:
 - `reduce.ts`: the typed reducer table (one reducer per journal body kind) and `reduce`, which
   applies the entry guard before dispatch. The reducers live in `reduce-boundary.ts` (policy,
   configuration, system), `reduce-queue.ts` (queued, input_cancelled, dequeued), `reduce-tools.ts`
-  (tool, recovery) and `reduce-event.ts` (event, with `domain-event.ts`). `shared.ts` holds their
-  common helpers.
+  (tool, recovery) and `reduce-event.ts` (event, with `domain-event.ts`, and the usage effect).
+  `shared.ts` holds their common helpers.
 - `stage.ts`: commit time. It applies every commit-time rule before a record is written.
 - `replay.ts`: load time. It folds stored records and checks journal integrity only
   (`JournalIntegrityError`).

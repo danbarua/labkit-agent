@@ -50,12 +50,12 @@ sequenceDiagram
   S->>P: append accepted input
   P-->>S: matching committed receipt
   S-->>A: accepted
-  S->>H: start preparation
-  Note over S,H: Prepared request commits before completion starts.<br/>Intermediate outcomes have their own receipt gates.
+  S->>H: start the step (project prompt, call model)
+  Note over S,H: The prompt is projected inside the step and never journaled.<br/>Each step output commits under its own receipt gate before tools or the next step start.
   H-->>S: outcome that ends the turn
   S->>P: append outcome and terminal record
   P-->>S: matching committed receipt
-  S-->>A: settled with terminal record
+  S-->>A: settled with the turn record the fold derived
 ```
 
 The two arrows following a receipt express eligibility, not a promise about callback scheduling.
@@ -174,11 +174,11 @@ journal integrity only: record decoding, batch continuity, the revision sequence
 IDs, session identity, the creation record first, and each turn's terminal record in the same batch
 as the record that ended the turn. A record must also name a turn, operation, tool batch, call or
 queued input that exists in the folded state, because the fold cannot apply it otherwise. Load never
-re-runs commit-time rules (prompt projection, policy patches, permissions, admission) and never asks
-whether a provider, model, profile setting or permission port named in a record is bound today.
-Where a stored record and a value derived by today's code disagree, the stored record wins. New
-work is still staged under every commit-time rule, and new policy patches are validated against live
-bindings before they are admitted.
+re-runs commit-time rules (policy patches, permissions, admission) and never asks whether a
+provider, model, profile setting or permission port named in a record is bound today. No prompt is
+stored, so none is compared. The fold is authoritative: a terminal record is checked against the
+outcome the fold derived, never used in its place. New work is still staged under every commit-time
+rule, and new policy patches are validated against live bindings before they are admitted.
 
 If the live agents or tool schemas differ from the journal's registry, or the current policy does
 not validate against the live bindings, restore still succeeds and reports
@@ -201,8 +201,8 @@ sequenceDiagram
   S-->>A: turn runs with live tools; registry is current
 ```
 
-Staging checks prompt captures after that record against the new registry; load takes every
-captured prompt as written. The record replaces the registry and, only when needed, reconciles:
+Steps staged after that record are admitted against the new registry (a proposed tool call must be
+one the active agent may use). The record replaces the registry and, only when needed, reconciles:
 
 - `policy`: a new policy version. Per-agent tool permissions drop unregistered tools and removed
   agents; new agents are derived as creation does. A policy pack `id`, projection (`project`) or

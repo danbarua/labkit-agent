@@ -49,9 +49,9 @@ export type AdmittedCompletion = z.infer<ReturnType<typeof admittedCompletionSch
 
 /**
  * State of one turn: from the user prompt until the model stops. Each active state holds exactly one
- * `child`: the operation the turn is waiting on (not a child session). A step runs
- * `preparing_model` → `awaiting_model`, then ends the turn, hands off, or runs its tool batch
- * (optionally after `awaiting_permission`) before the next step starts.
+ * `child`: the operation the turn is waiting on (not a child session). A step runs in
+ * `awaiting_model` (prompt projection and LLM call as one operation), then ends the turn, hands
+ * off, or runs its tool batch (optionally after `awaiting_permission`) before the next step starts.
  */
 export type TurnState =
   /** No prompt yet. `steps` is the allowance the turn will start with. */
@@ -123,7 +123,7 @@ export type TurnEvent =
   | { type: "permission_settled"; child: Ref<"permission">; result: Result<PermissionDecisions> }
   /**
    * The step's whole tool batch settled. Collected results are appended as tool messages; a
-   * succeeded batch prepares the next step, a failed or cancelled one ends the turn.
+   * succeeded batch starts the next step, a failed or cancelled one ends the turn.
    */
   | { type: "batch_settled"; child: Ref<"batch">; outcome: BatchOutcome }
   /** Dispatching or running the current child failed outside its result; ends the turn failed. */

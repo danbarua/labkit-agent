@@ -259,7 +259,7 @@ test("queued attachment input retains refs until its turn", async () => {
   await Promise.all([session.close(), restored.close()]);
 });
 
-test("abort during a blob read cancels preparation and prevents late HTTP", async () => {
+test("abort during a blob read cancels the step and prevents late HTTP", async () => {
   const { opts, bodies } = setup();
   const backing = opts.persistence;
   const release = deferred<void>();
@@ -426,7 +426,7 @@ for (const profile of [
   openaiResponsesV2,
   openaiChat,
 ])
-  test(`${profile.id} rejects PDF during prepare before blob reads or fetch`, async () => {
+  test(`${profile.id} rejects PDF during prompt projection before blob reads or fetch`, async () => {
     const { opts, reads, bodies } = setup(profile);
     const session = await createSession(opts);
     const ref = await opts.persistence.putBlob(

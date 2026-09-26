@@ -145,8 +145,7 @@ LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/
 | `host.ts`                | Public types and `createHost`: dispatch checks, the table call, public methods    |
 | `context.ts`             | `HostContext`: registries, children, grants, sinks, and the `spawn`/`cancel` core |
 | `commands/index.ts`      | The handler table keyed by turn command type, plus `cancel`                       |
-| `commands/model.ts`      | `prepare_model` and `complete`                                                    |
-| `commands/handoff.ts`    | `prepare_handoff`                                                                 |
+| `commands/model.ts`      | `complete`: projects the step's prompt, then makes its LLM call, as one operation |
 | `commands/permission.ts` | `request_permission`: input validation and permission grants                      |
 | `commands/tools.ts`      | `run_tools`: the tool batch actor and each tool call                              |
 | `ports.ts`               | Binding types, `defineTool`, and registry validation                              |

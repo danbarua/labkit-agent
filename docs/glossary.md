@@ -14,12 +14,14 @@ Not to be confused with the provider stop reason `end_turn`.
 **Step.** One LLM call. The model emits narrative and tool-call decisions. The harness dispatches those
 tool calls and gathers their results, and the results go back to the model in the next step.
 Code today: "step" in `docs/core-runtime.md` and the policy's `steps` allowance. `TurnData.generation`
-is not a step counter; it counts child operations and rises two or three times per step.
+is not a step counter; it counts child operations: one per step, plus one per permission request and
+tool batch.
 
 **Step boundary.** The point where the next completion request is assembled from history, the current
 turn and any new context. This is where interjections are inserted.
-Code today: prompt projection (the `prepare_model` child and the policy `project` resolver, such as
-`history@1`). The provider profile's `encode` only formats the request; it adds no content.
+Code today: prompt projection inside the `complete` host operation, which projects the prompt with
+the policy `project` resolver (such as `history@1`) and then makes the LLM call. The prompt is not
+journaled. The provider profile's `encode` only formats the request; it adds no content.
 
 **Settled step.** A step whose model output is committed to the journal (`model_settled`). Queued
 notices wait for this point. Other things also "settle" (operations, tool batches, turns, append
@@ -54,8 +56,8 @@ after the whole batch settles.
 **Barge-in.** Cancelling a live completion, streaming or not, and re-issuing that step with the new
 context. This is a separate feature from interjection at the step boundary.
 Code today: the `bargeIn` policy flag; some docs call it "replacement". It is implemented only for
-user input while a step is preparing or awaiting the model. The partial stream is discarded, and
-the re-issued call uses up a step.
+user input while a step is in flight (prompt projection and LLM call are one operation). The partial
+stream is discarded, and the re-issued call uses up a step.
 
 **Queued input.** User input held for delivery after the current turn (`pendingInputs`, the
 `queue-user` policy). It is not an interjection: it waits for the end of the turn, not for the next
@@ -90,8 +92,9 @@ session identity, the creation record first, and terminal records where a turn e
 also name a turn, operation or queued input that exists in the folded state. Commit-time rules are
 not re-run, and no projection is recomputed.
 Code today: `replay()` in `session-log.ts`; a failure is a `JournalIntegrityError` naming the rule
-and the offending record. Stored copies of derived values (the captured prompt, the terminal record's
-messages, the policy in a policy record) override what the fold derives.
+and the offending record. No prompt is stored; a terminal record is checked against the outcome the
+fold derived (`record_applicable` when they disagree). A policy record's stored policy is applied as
+written: it is the configuration fact, not a copy of a derivation.
 
 **Recovery.** Closing a turn that was interrupted by process exit when the session is reloaded. External
 effects are not repeated. Do not confuse it with **reconciliation**, which resolves a storage append

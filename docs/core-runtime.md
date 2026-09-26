@@ -52,8 +52,12 @@ historical tool exchange, the default projection can omit calls without results 
 is valid; it does not rewrite the stored evidence. Missing results in a completed exchange are an
 error rather than context to silently discard.
 
-A step is one model attempt after successful preparation, including replacement/handoff/tool-loop
-continuation. Preparation failure uses no step. Zero allowance exhausts the turn without dispatch.
+A step is one model attempt: its prompt is projected and its model called as a single operation,
+including replacement/handoff/tool-loop continuation. A step counts when it starts, so a barge-in
+that replaces an in-flight step uses another, and a handoff's successor starts its own step. The
+prompt is recomputed from the journaled facts each time and never journaled; a projection failure
+(an unreadable attachment, an invalid projected exchange) fails the step before any HTTP request.
+Zero allowance exhausts the turn without dispatch.
 This bounds a loop, not tokens, elapsed time, or external effects. Model settings, projection, and
 input admission are described in the [policy guide](../packages/core/policy/README.md).
 
