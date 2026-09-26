@@ -165,7 +165,7 @@ export function openInstance(
     ),
   };
   const runtime = createFacade(ctx);
-  /** Restore-only: any registry difference is journaled before the next new work. */
+  /** Restore-only: every registry difference is journaled before the next new work. */
   const pend = (plan: Adoption) => {
     ctx.adoption.plan = plan;
   };
