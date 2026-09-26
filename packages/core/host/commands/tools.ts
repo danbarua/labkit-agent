@@ -68,11 +68,12 @@ export function runTools(
           toolCallId: batchCommand.child.id,
           name: batchCommand.call.name,
         };
+        const refused = grant?.refused.get(batchCommand.call.id);
         diagnostic("host", "debug", "tool.admitted", {
           ...identity,
           toolName: batchCommand.call.name,
           kind: tool.kind ?? "other",
-          permission: grant?.refused.has(batchCommand.call.id)
+          permission: refused
             ? "refused"
             : grant?.invalidInputs.has(batchCommand.call.id)
               ? "not_requested_invalid_input"
@@ -80,6 +81,49 @@ export function runTools(
                 ? "approved"
                 : "not_required",
         });
+        if (refused) {
+          diagnostic("host", "info", "tool.refused", {
+            ...identity,
+            toolName: batchCommand.call.name,
+            permissionChildId: command.permission?.id,
+            reason:
+              "Not run: user refused permission (see permission.refused); the model receives a permission-refused result",
+          });
+          if (!host.closed)
+            host.notifyTool({
+              ...identity,
+              sessionUpdate: "tool_call_update",
+              status: "failed",
+              rawOutput: { refused: true, reason: refused.message },
+            });
+          const outcome: HostToolOutcome = {
+            turnId,
+            batchId: command.child.id,
+            callId: batchCommand.call.id,
+            result: {
+              kind: "failed",
+              error: failure(refused, {
+                operation: {
+                  id: batchCommand.child.id,
+                  kind: "tool",
+                  sessionId: host.sessionId,
+                  turnId,
+                  toolName: batchCommand.call.name,
+                  callId: batchCommand.call.id,
+                },
+              }),
+            },
+          };
+          host.pendingTools.set(`${outcome.batchId}/${outcome.callId}`, {
+            outcome,
+            batch,
+            toolFailure: context.toolFailure,
+          });
+          void Promise.resolve().then(() => {
+            if (!host.closed) host.reportTool(outcome);
+          });
+          break;
+        }
         if (!grant)
           host.notifyTool({
             ...identity,
@@ -110,8 +154,6 @@ export function runTools(
             },
             parseInput: async (raw) => {
               if (grant) {
-                const refused = grant.refused.get(batchCommand.call.id);
-                if (refused) throw refused;
                 const invalid = grant.invalidInputs.get(batchCommand.call.id);
                 if (invalid) throw invalid;
                 return grant.inputs.get(batchCommand.call.id);

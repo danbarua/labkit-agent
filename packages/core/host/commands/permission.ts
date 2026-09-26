@@ -164,12 +164,15 @@ export function requestPermission(
               durationMs: Math.round(performance.now() - permissionStartedAt),
             });
             if (decision === "reject_once") {
-              grant.refused.set(
-                call.id,
-                failure(new Error("Permission refused by the user"), {
-                  classification: "permission_refused",
-                }),
-              );
+              grant.refused.set(call.id, {
+                message: "Permission refused by the user",
+                classification: "permission_refused",
+                phase: "permission",
+                details: {
+                  requestId: permissionContext.requestId,
+                  permissionChildId: command.child.id,
+                },
+              });
               diagnostic("host", "warning", "permission.refused", {
                 ...permissionContext,
                 operation: "tool_execution",

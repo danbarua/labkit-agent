@@ -1238,7 +1238,7 @@
           },
           {
             "role": "tool",
-            "content": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+            "content": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
             "tool_call_id": "read-design"
           }
         ],
@@ -1323,7 +1323,7 @@
               },
               {
                 "role": "tool",
-                "text": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+                "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
                 "callId": "read-design"
               },
               {
@@ -1377,7 +1377,7 @@
                 },
                 {
                   "role": "tool",
-                  "text": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+                  "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
                   "callId": "read-design"
                 },
                 {
@@ -1670,10 +1670,10 @@
                     "toolName": "read_note",
                     "callId": "read-design"
                   },
-                  "phase": "validate_input",
-                  "cause": {
-                    "name": "Error",
-                    "message": "Permission refused by the user"
+                  "phase": "permission",
+                  "details": {
+                    "requestId": "00000000-0000-4000-8000-000000000001/turn/1/3/read-design",
+                    "permissionChildId": "00000000-0000-4000-8000-000000000001/turn/1/3"
                   }
                 }
               }
@@ -1701,7 +1701,7 @@
                     "results": [
                       {
                         "callId": "read-design",
-                        "text": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}"
+                        "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}"
                       }
                     ]
                   }
@@ -1753,7 +1753,7 @@
                         },
                         {
                           "role": "tool",
-                          "content": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+                          "content": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
                           "tool_call_id": "read-design"
                         }
                       ],
@@ -1844,7 +1844,7 @@
                   },
                   {
                     "role": "tool",
-                    "text": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+                    "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
                     "callId": "read-design"
                   },
                   {
@@ -31768,7 +31768,7 @@
           },
           {
             "role": "tool",
-            "content": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+            "content": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
             "tool_call_id": "two"
           },
           {
@@ -31912,7 +31912,7 @@
               },
               {
                 "role": "tool",
-                "text": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+                "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
                 "callId": "two"
               },
               {
@@ -31978,7 +31978,7 @@
                 },
                 {
                   "role": "tool",
-                  "text": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+                  "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
                   "callId": "two"
                 },
                 {
@@ -32309,10 +32309,10 @@
                     "toolName": "echo",
                     "callId": "two"
                   },
-                  "phase": "validate_input",
-                  "cause": {
-                    "name": "Error",
-                    "message": "Permission refused by the user"
+                  "phase": "permission",
+                  "details": {
+                    "requestId": "00000000-0000-4000-8000-000000000001/turn/1/3/two",
+                    "permissionChildId": "00000000-0000-4000-8000-000000000001/turn/1/3"
                   }
                 }
               }
@@ -32357,7 +32357,7 @@
                     "results": [
                       {
                         "callId": "two",
-                        "text": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}"
+                        "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}"
                       },
                       {
                         "callId": "one",
@@ -32425,7 +32425,7 @@
                         },
                         {
                           "role": "tool",
-                          "content": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+                          "content": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
                           "tool_call_id": "two"
                         },
                         {
@@ -32528,7 +32528,7 @@
                   },
                   {
                     "role": "tool",
-                    "text": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+                    "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
                     "callId": "two"
                   },
                   {
@@ -32594,7 +32594,7 @@
                 },
                 {
                   "role": "tool",
-                  "text": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+                  "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
                   "callId": "two"
                 },
                 {
@@ -32925,10 +32925,10 @@
                     "toolName": "echo",
                     "callId": "two"
                   },
-                  "phase": "validate_input",
-                  "cause": {
-                    "name": "Error",
-                    "message": "Permission refused by the user"
+                  "phase": "permission",
+                  "details": {
+                    "requestId": "00000000-0000-4000-8000-000000000001/turn/1/3/two",
+                    "permissionChildId": "00000000-0000-4000-8000-000000000001/turn/1/3"
                   }
                 }
               }
@@ -32973,7 +32973,7 @@
                     "results": [
                       {
                         "callId": "two",
-                        "text": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}"
+                        "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}"
                       },
                       {
                         "callId": "one",
@@ -33041,7 +33041,7 @@
                         },
                         {
                           "role": "tool",
-                          "content": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+                          "content": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
                           "tool_call_id": "two"
                         },
                         {
@@ -33144,7 +33144,7 @@
                   },
                   {
                     "role": "tool",
-                    "text": "{\"refused\":true,\"reason\":\"Permission refused by the user\"}",
+                    "text": "{\"refused\":true,\"reason\":\"The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.\"}",
                     "callId": "two"
                   },
                   {

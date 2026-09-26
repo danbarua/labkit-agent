@@ -140,19 +140,26 @@ existing paths. `read_file` also accepts `line` and `limit` to read large files 
 those parameters are forwarded to editor reads so unsaved content remains authoritative. Invalid arguments return the validator’s field-level errors without execution or a
 permission prompt; other calls in the batch finish, and the
 model can choose a corrected action. Failed tool cards and original journal outcomes stay failed.
-No tool is automatically retried. Permission refusal, cancellation, deadlines, and persistence
-failures retain their distinct stopping behavior. Reopening an existing session preserves its
-committed policy; changing the factory default does not silently rewrite that policy.
+No tool is automatically retried. Cancellation, deadlines, and persistence failures retain their
+distinct stopping behavior; a permission refusal does not stop the turn (see below). Reopening an
+existing session preserves its committed policy; changing the factory default does not silently
+rewrite that policy.
 
 ## Keep display, permission, and completion distinct
 
-A pending tool card describes intended work. Only `request_permission` approves a call, and every
-call in the batch must be approved before any tool runs. A refusal blocks the batch; a cancelled
-dialog aborts the turn. The picker also offers approval of the named tool for all arguments until
-the live session closes. Other tools remain unapproved. Each reuse is logged and journaled with its
-grant identity; input validation and persistence gates still apply. Closing/reloading a session or
-committing a permission reset or tool scope change clears these approvals. Under Tool approvals, select Ask to clear
-remembered grants or explicitly allow all enabled tools without asking. The adapter maps the typed core refusal directly to ACP `refusal`.
+A pending tool card describes intended work. Only `request_permission` approves a call, and each
+call in the batch is decided independently, in order. A refusal answers that call with a
+permission-refused tool result and does not stop the other calls in the batch or the turn; the
+model sees the refusal on its next step and can ask the user what to do instead. A cancelled dialog
+stops asking about the rest of the batch and aborts the turn. The picker also offers approval of
+the named tool for all arguments until the live session closes; that grant installs even when
+another call in the same batch is refused. Other tools remain unapproved. Each reuse is logged and
+journaled with its grant identity; input validation and persistence gates still apply.
+Closing/reloading a session or committing a permission reset or tool scope change clears these
+approvals. Under Tool approvals, select Ask to clear remembered grants or explicitly allow all
+enabled tools without asking. A refused call's tool card still shows failed with the refusal
+reason; the prompt response's stop reason reflects how the turn actually ended, not the refusal
+itself.
 
 Stream text is provisional. It can be visible before EOF exposes a malformed response, and a tool
 card can show completion before its result is saved. Wait for the prompt response to decide how

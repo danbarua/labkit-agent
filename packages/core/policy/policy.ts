@@ -338,7 +338,8 @@ export function projectPolicy(
  * Deterministic domain conversion. The raw failed result remains in the journal. A tool deadline
  * (classification `timeout`) is converted like any other tool failure. A permission refusal always
  * converts to a "permission refused" result, regardless of `toolFailure`: refusal is a user
- * decision, not a tool error the policy chooses to tolerate.
+ * decision, not a tool error the policy chooses to tolerate. The projected reason is fixed
+ * guidance for the model, not the stored audit message.
  */
 export function effectiveToolResult(
   result: Result<string>,
@@ -348,7 +349,11 @@ export function effectiveToolResult(
   if (result.error.classification === "permission_refused")
     return {
       kind: "succeeded",
-      value: JSON.stringify({ refused: true, reason: result.error.message }),
+      value: JSON.stringify({
+        refused: true,
+        reason:
+          "The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed.",
+      }),
     };
   return policy?.toolFailure === "return-error-and-continue"
     ? {

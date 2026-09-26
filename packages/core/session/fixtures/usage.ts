@@ -144,7 +144,7 @@ function toolUsage(allow: boolean): Scenario {
             f.check(
               "The follow-up model request includes the tool result",
               JSON.stringify(request.messages).includes(
-                allow ? notes.design! : "Permission refused by the user",
+                allow ? notes.design! : "The user refused permission for this call",
               ),
               true,
             );

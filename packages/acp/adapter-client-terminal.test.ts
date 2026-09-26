@@ -29,7 +29,9 @@ for (const scenario of [
             calls: [{ id: "cmd", name: "run_command", args: { command: "bun", args: ["test"] } }],
           };
         if (scenario === "reject") {
-          expect(JSON.stringify(request.messages)).toContain("Permission refused by the user");
+          expect(JSON.stringify(request.messages)).toContain(
+            "The user refused permission for this call",
+          );
           return answer;
         }
         expect(JSON.stringify(request.messages)).toContain("test output");

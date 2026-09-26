@@ -35,7 +35,9 @@ test("refusal report explains the refused call, the approved call, and the compl
   expect(result.transcript).toContain("Call two: **reject_once**");
   expect(result.transcript).toContain("Tool result — call two");
   expect(result.transcript).toContain('"refused": true');
-  expect(result.transcript).toContain('"reason": "Permission refused by the user"');
+  expect(result.transcript).toContain(
+    '"reason": "The user refused permission for this call; it did not run. Do not retry it unchanged; ask the user how to proceed."',
+  );
   expect(result.transcript).toContain("**Outcome:** completed.");
   expect(result.report).toContain("Only the approved call executes");
   expect(result.transcript).not.toContain("durable state changed during recovery");
@@ -135,12 +137,7 @@ test("warning-only logs expose user refusal and its consequence; approved work e
     const decision = records.find((record) => record.event === "permission.decided");
     expect(decision.level).toBe("info");
     if (scenario === denyToolUsage) {
-      expect(signals.map((record) => record.event)).toEqual([
-        "permission.refused",
-        "child.failed",
-        "tool.status_changed",
-        "child.settled",
-      ]);
+      expect(signals.map((record) => record.event)).toEqual(["permission.refused"]);
       expect(signals[0]).toMatchObject({
         reasonCode: "permission_refused",
         toolName: "read_note",
@@ -157,7 +154,7 @@ test("warning-only logs expose user refusal and its consequence; approved work e
       const warningLines = text.split("\n").filter((line) => line.includes(" WARNING "));
       expect(warningLines[0]).toContain("permission.refused");
       expect(warningLines[0]).toContain("User refused permission");
-      expect(warningLines).toHaveLength(4);
+      expect(warningLines).toHaveLength(1);
     } else {
       expect(signals).toEqual([]);
       expect(records.find((record) => record.event === "turn.settled").level).toBe("info");

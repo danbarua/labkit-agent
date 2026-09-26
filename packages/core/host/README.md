@@ -74,12 +74,15 @@ records an `invalid_input` decision without asking permission. After that decisi
 host reports a failed tool result containing the validation cause; the invalid call never runs.
 Valid siblings still require approval. The model receives all committed results to choose its next
 action. `tool.input_rejected` explains the invalid call and consequence in diagnostics. Return `allow-once`, `allow-session`, `reject-once`, or a
-cancelled outcome. Every call must be allowed before the batch runs. A malformed response or callback
-failure fails closed; cancellation discards uncommitted grants, and late approval cannot start a tool.
+cancelled outcome. Each call is decided independently, in order: a refusal answers only that call
+with a permission-refused result and the rest of the batch still runs; only a cancelled outcome
+stops asking about the rest of the batch. A malformed response or callback failure fails closed;
+cancellation or a port failure discards uncommitted grants, and late approval cannot start a tool.
 `allow-session` approves the named tool for all arguments in this host's live session. The host
-installs that grant only when the committed permission outcome releases the batch. Later calls
+installs that grant when the committed permission outcome releases the batch, even when another
+call in the same batch was refused. Later calls
 still validate inputs and commit permission outcomes, with the original grant ID and `remembered`
-source. Other tools still need approval. Rejection/cancellation discards uncommitted grants.
+source. Other tools still need approval. Only cancellation or a port failure discards uncommitted grants.
 Closing the host, explicitly committing permission mode, or changing allowed tools clears remembered grants; restore does not resurrect
 them. `permission.granted`, `permission.reused`, and `permission.grants_cleared` explain this at INFO.
 Model, thinking, and limit changes retain approvals. Direct host consumers call `resetPermissions`

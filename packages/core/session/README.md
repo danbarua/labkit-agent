@@ -88,7 +88,9 @@ independently, in order. `allow-session` remembers approval for the named tool a
 arguments until this live session closes or tool scope changes or permissions are explicitly reset;
 `allow-once` covers only this call. A refusal produces a permission-refused tool result for that
 call only; approved calls in the same batch run normally, and the turn continues to the next step
-so the model can ask the user what to do instead. A cancelled dialog stops asking about the rest of
+so the model can ask the user what to do instead. An `allow-session` grant from the same batch
+installs even alongside a refused sibling call; only a cancelled dialog or a permission port
+failure discards uncommitted grants. A cancelled dialog stops asking about the rest of
 the batch and aborts the turn. Without the binding, this policy is rejected before execution.
 
 Use `bindings.toolUpdate` for display only. A pending card is not a permission request, and a completed

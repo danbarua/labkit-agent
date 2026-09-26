@@ -110,8 +110,10 @@ launcher runs old code. An old launcher cannot read journal records a newer buil
 version and asks you to restart the launcher on current code.
 
 For the denial check, ask: “Use write_file to create acp-deny-check.txt containing DENY_CHECK.”
-Choose **Reject** in the permission picker. The adapter returns `stopReason: "refusal"`; the file
-must remain absent (or unchanged if it already exists). The exact refusal rendering is client-owned.
+Choose **Reject** in the permission picker. The tool card shows failed with a refusal reason; the
+file must remain absent (or unchanged if it already exists). The assistant sees the refusal and
+replies instead of writing the file, so the prompt ends `stopReason: "end_turn"` once it answers.
+The exact refusal rendering is client-owned.
 
 ## Attachments and validation
 
