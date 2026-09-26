@@ -69,7 +69,17 @@ test("MCP stdio initializes, paginates, namespaces tools, validates before call,
       structuredContent: { tokenPresent: true, providerKeyPresent: false },
     });
     await expect(tool.run({ text: "error" }, signal())).rejects.toThrow("fixture tool error");
-    await expect(tool.run({ text: "binary" }, signal())).rejects.toThrow("Binary MCP");
+    const binary = (await tool.run({ text: "binary" }, signal())) as {
+      text: string;
+      parts: readonly unknown[];
+    };
+    expect(binary.text).toContain('"mimeType":"image/png"');
+    expect(binary.text).not.toContain("AA==");
+    expect(binary.parts).toContainEqual({
+      type: "blob",
+      bytes: new Uint8Array([0]),
+      media: "image/png",
+    });
     await f.connection.close();
     expect((await f.events()).at(-1).method).toBe("closed");
   } finally {

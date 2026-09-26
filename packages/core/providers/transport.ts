@@ -260,7 +260,12 @@ export function canonicalRequest(prepared: PreparedModel) {
       model: prepared.model,
       messages: prepared.messages.map((message) => {
         if (message.role === "tool")
-          return { role: "tool", text: message.content, callId: message.tool_call_id };
+          return {
+            role: "tool",
+            text: message.content,
+            callId: message.tool_call_id,
+            ...(message.parts ? { parts: message.parts } : {}),
+          };
         if (message.role === "assistant" && message.tool_calls)
           return {
             role: "assistant",

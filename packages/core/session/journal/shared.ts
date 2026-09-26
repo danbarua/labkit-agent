@@ -56,7 +56,7 @@ export function accepts(state: JournalState, input: SessionInput): boolean {
 export function partialResults(state: JournalState) {
   return state.partial.flatMap((entry) => {
     const result = effectiveToolResult(entry.result, state.policy);
-    return result.kind === "succeeded" ? [{ callId: entry.callId, text: result.value }] : [];
+    return result.kind === "succeeded" ? [{ callId: entry.callId, ...result.value }] : [];
   });
 }
 

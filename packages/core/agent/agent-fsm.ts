@@ -394,6 +394,7 @@ export const decideTurn = defineMachine<TurnState, TurnEvent, TurnCommand>({
             role: "tool",
             text: result.text,
             callId: result.callId,
+            ...(result.parts ? { parts: result.parts } : {}),
           }),
         state.turn,
       );
@@ -412,6 +413,7 @@ export const decideTurn = defineMachine<TurnState, TurnEvent, TurnCommand>({
             role: "tool",
             text: result.text,
             callId: result.callId,
+            ...(result.parts ? { parts: result.parts } : {}),
           }),
         state.turn,
       );

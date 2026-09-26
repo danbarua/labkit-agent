@@ -43,11 +43,11 @@ export const ChatMessageSchema = z
       role: z.literal("tool"),
       content: z.string(),
       tool_call_id: z.string().min(1),
+      parts: ContentPartsSchema.optional(),
     }),
   ])
   .refine(
-    (message) =>
-      message.role === "tool" || !message.parts || message.content === partsText(message.parts),
+    (message) => !message.parts || message.content === partsText(message.parts),
     "Message content must equal its text parts",
   )
   .readonly();

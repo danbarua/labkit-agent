@@ -124,7 +124,80 @@ for (const media of ["image/png", "image/jpeg", "application/pdf"] as const)
     });
   });
 
-test("message text must agree with text parts and tools cannot carry parts", () => {
+test("D4: a tool result carrying an image blob part reaches Anthropic as tool_result content blocks", () => {
+  const bytes = new Uint8Array([9, 9]);
+  const image = { id: hashBlob(bytes), bytes: bytes.length, media: "image/png" as const };
+  const request = CompletionRequestSchema.parse({
+    ...input,
+    messages: [
+      {
+        role: "assistant",
+        text: "",
+        calls: [{ id: "call-1", name: "look", args: {} }],
+      },
+      {
+        role: "tool",
+        callId: "call-1",
+        text: "Result image",
+        parts: [
+          { type: "text", text: "Result image" },
+          { type: "blob", ref: image },
+        ],
+      },
+    ],
+  });
+  const body = anthropicMessagesV2.encode(request, (id) => {
+    expect(id).toBe(image.id);
+    return bytes;
+  }).body as { messages: unknown[] };
+  expect(body.messages.at(-1)).toMatchObject({
+    role: "user",
+    content: [
+      {
+        type: "tool_result",
+        tool_use_id: "call-1",
+        content: [
+          { type: "text", text: "Result image" },
+          { type: "image", source: { type: "base64", media_type: "image/png", data: "CQk=" } },
+        ],
+      },
+    ],
+  });
+});
+
+test("D4: an OpenAI target ignores tool-result blob parts and sends pointer text only", () => {
+  const bytes = new Uint8Array([9, 9]);
+  const image = { id: hashBlob(bytes), bytes: bytes.length, media: "image/png" as const };
+  const request = CompletionRequestSchema.parse({
+    ...input,
+    messages: [
+      {
+        role: "assistant",
+        text: "",
+        calls: [{ id: "call-1", name: "look", args: {} }],
+      },
+      {
+        role: "tool",
+        callId: "call-1",
+        text: "Image: image/png, 2 B, blob://not-supported",
+        parts: [
+          { type: "text", text: "Image: image/png, 2 B, blob://not-supported" },
+          { type: "blob", ref: image },
+        ],
+      },
+    ],
+  });
+  const body = openaiChat.encode(request, () => {
+    throw new Error("OpenAI must never resolve tool-result blob bytes");
+  }).body as { messages: unknown[] };
+  expect(body.messages.at(-1)).toMatchObject({
+    role: "tool",
+    content: "Image: image/png, 2 B, blob://not-supported",
+    tool_call_id: "call-1",
+  });
+});
+
+test("message text must agree with text parts, including on tool results", () => {
   expect(() =>
     MessageSchema.parse({
       role: "user",
@@ -145,6 +218,14 @@ test("message text must agree with text parts and tools cannot carry parts", () 
   expect(() =>
     MessageSchema.parse({ role: "tool", text: "result", callId: "c", parts: [] }),
   ).toThrow();
+  expect(
+    MessageSchema.parse({
+      role: "tool",
+      text: "result",
+      callId: "c",
+      parts: [{ type: "text", text: "result" }],
+    }).parts,
+  ).toEqual([{ type: "text", text: "result" }]);
 });
 
 test("adjacent explicit text parts concatenate without added separators", () => {

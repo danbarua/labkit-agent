@@ -40,7 +40,7 @@ exposes it, so editor verification is listed as its own gap wherever it is still
 | G7  | Prompt lifecycle     | Evidence that a live model recovers and completes workspace work (scripted runs do not count)                                | Not done  |
 | G8  | Content              | Audio playback in the editor; review all content variants, annotations and capability combinations                           | Not done  |
 | G9  | Tool calls           | Native permission UI, file navigation, rich content and diffs in the editor                                                  | Not done  |
-| G10 | MCP                  | Binary MCP tool results (image, audio, blob resources) reach the model; today they are refused as a failed tool result       | Not done  |
+| G10 | MCP                  | Binary MCP tool results (image, audio, blob resources) reach the model as stored blob parts       | Done      |
 | G11 | MCP                  | Stdio open failures report the server's exit code and stderr                                                                 | Not done  |
 | G12 | Client filesystem    | Client read, edit and save paths in the native editor                                                                        | Not done  |
 | G13 | Client filesystem    | Tool descriptions and recovery paths match the operations actually available                                                 | Not done  |
@@ -128,7 +128,7 @@ schema").
 | `mcpCapabilities.http`                      | always                                                                                 | `mcp-transport.ts` (Streamable HTTP) via `open()`                   | `mcp-capabilities.test.ts`: tools reach the model, result reaches client and next step, load reconnects, failures are tool results, open failure named                                                       | Done   |
 | `mcpCapabilities.sse`                       | always                                                                                 | `mcp-transport.ts` (SSE) via `open()`                               | `mcp-capabilities.test.ts`: same four cases; resume reconnects                                                                                                                                               | Done   |
 | `mcpCapabilities.acp` (UNSTABLE)            | always                                                                                 | `mcp-acp.ts` bridge; `mcp/message` handlers                         | `mcp-capabilities.test.ts`: same four cases through `mcp/connect`/`mcp/message`/`mcp/disconnect`                                                                                                             | Done   |
-| MCP stdio servers (baseline)                | always (no flag)                                                                       | `mcp-transport.ts` (stdio)                                          | `mcp-capabilities.test.ts`: same four cases, catalog failure, binary results refused as a tool result                                                                                                        | Done   |
+| MCP stdio servers (baseline)                | always (no flag)                                                                       | `mcp-transport.ts` (stdio)                                          | `mcp-capabilities.test.ts`: same four cases, catalog failure, "MCP binary tool results are stored as blob parts and reach the model, not refused" (G10)                                                     | Done   |
 | `sessionCapabilities.close`                 | always                                                                                 | `session/close`                                                     | `capabilities.test.ts`: launcher end to end; a later prompt gets -32602 "not open on this connection"                                                                                                        | Done   |
 | `sessionCapabilities.resume`                | `loadSession`                                                                          | `session/resume` → `open()`                                         | `capabilities.test.ts`: -32601 when unadvertised; resume without replay, next prompt carries history                                                                                                         | Done   |
 | `sessionCapabilities.fork` (UNSTABLE)       | `AcpOptions.forkSession`                                                               | `session/fork`                                                      | `capabilities.test.ts`: -32601 when unadvertised; child carries parent turns, list shows both                                                                                                                | Done   |
@@ -159,8 +159,9 @@ A tool deadline (`toolTimeoutMs`) is a tool result under return-error-and-contin
 the `timeout` failure on its next step and the turn continues. Core policy still fails the turn on a
 client error or malformed answer to `session/request_permission`. That returns a structured -32000,
 keeps the connection open, and lets the next prompt proceed.
-Binary MCP tool results (image, audio, blob resources) are refused as a failed tool result the model
-reads. They are not forwarded (G10).
+Binary MCP tool results (image, audio, blob resources) are stored as blobs and forwarded as tool
+result parts (`mcp.ts`); the model reads a capable provider's rendering of them, or pointer text on
+a provider without that media capability (G10; `mcp-capabilities.test.ts`, `attachments.test.ts`).
 
 ## Verification gates
 

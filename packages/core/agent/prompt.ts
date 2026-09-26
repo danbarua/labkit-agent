@@ -127,7 +127,12 @@ export function projectConversationPrompt({
     ...(agent.systemPrompt ? [{ role: "system" as const, content: agent.systemPrompt }] : []),
     ...messages.map((message): ChatMessage => {
       if (message.role === "tool")
-        return { role: "tool", content: message.text, tool_call_id: message.callId };
+        return {
+          role: "tool",
+          content: message.text,
+          tool_call_id: message.callId,
+          ...(message.parts ? { parts: message.parts } : {}),
+        };
       if (message.role === "assistant" && message.calls)
         return {
           role: "assistant",

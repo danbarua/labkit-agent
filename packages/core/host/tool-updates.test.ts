@@ -205,7 +205,7 @@ test("invalid display metadata and throwing/rejecting/never-resolving sinks cann
     );
     start();
     await until(() => outcomes.length === 1);
-    expect(outcomes[0]?.result).toEqual({ kind: "succeeded", value: "done" });
+    expect(outcomes[0]?.result).toEqual({ kind: "succeeded", value: { text: "done" } });
     expect(statuses(updates)).toEqual(["pending", "in_progress", "completed"]);
     host.close();
   }

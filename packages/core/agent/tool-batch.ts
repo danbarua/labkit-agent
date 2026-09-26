@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { defineMachine, stay, type Decision } from "../fsm/fsm.ts";
+import { ContentPartsSchema, partsText } from "./content.ts";
 import {
   ref,
   ToolCallIdSchema,
@@ -11,9 +12,30 @@ import {
   type ToolCalls,
 } from "./types.ts";
 
-/** Result text of one tool call, as sent back to the model in the next step. */
+const toolRunResultShape = { text: z.string(), parts: ContentPartsSchema.optional() };
+
+/**
+ * What a tool call produced, before it is addressed to a call id: inline text, or text plus blob
+ * references (for example an image). When `parts` is present, `text` must equal the concatenation
+ * of its text parts; see {@link partsText}.
+ */
+export const ToolRunResultSchema = z
+  .strictObject(toolRunResultShape)
+  .refine(
+    (result) => !result.parts || result.text === partsText(result.parts),
+    "Tool result text must equal its text parts",
+  )
+  .readonly();
+/** See {@link ToolRunResultSchema}. */
+export type ToolRunResult = z.infer<typeof ToolRunResultSchema>;
+
+/** Result of one tool call, as sent back to the model in the next step. See {@link ToolRunResultSchema}. */
 export const ToolResultSchema = z
-  .strictObject({ callId: ToolCallIdSchema, text: z.string() })
+  .strictObject({ callId: ToolCallIdSchema, ...toolRunResultShape })
+  .refine(
+    (result) => !result.parts || result.text === partsText(result.parts),
+    "Tool result text must equal its text parts",
+  )
   .readonly();
 /** See {@link ToolResultSchema}. */
 export type ToolResult = z.infer<typeof ToolResultSchema>;
@@ -68,7 +90,7 @@ export type BatchEvent =
   /** Cancel all pending calls and settle `cancelled`. */
   | { type: "cancel" }
   /** One call settled; a failed or cancelled call settles the whole batch. */
-  | { type: "tool_settled"; callId: ToolResult["callId"]; result: Result<string> }
+  | { type: "tool_settled"; callId: ToolResult["callId"]; result: Result<ToolRunResult> }
   | { type: "failed"; error: Failure };
 /** Effect the batch asks its host to perform; `notify` reports the {@link BatchOutcome} to the turn. */
 export type BatchCommand =
@@ -122,7 +144,7 @@ export function toolBatchMachine(id: Ref<"batch">) {
           });
         if (event.result.kind === "cancelled")
           return settle(state.pending, { kind: "cancelled", results: state.results });
-        const results = [...state.results, { callId: event.callId, text: event.result.value }];
+        const results = [...state.results, { callId: event.callId, ...event.result.value }];
         const remaining = state.pending.filter((call) => call.id !== event.callId);
         if (remaining.length)
           return {

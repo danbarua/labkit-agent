@@ -6,6 +6,7 @@ import {
   projectConversationPrompt,
   type PromptInput,
 } from "../agent/prompt.ts";
+import type { ToolRunResult } from "../agent/tool-batch.ts";
 import { StepsSchema, ToolNameSchema, type AgentMessage, type Result } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import {
@@ -336,13 +337,13 @@ export function projectPolicy(
 }
 /** Deterministic domain conversion. The raw failed result remains in the journal. A tool deadline (classification `timeout`) is converted like any other tool failure. */
 export function effectiveToolResult(
-  result: Result<string>,
+  result: Result<ToolRunResult>,
   policy?: Pick<Policy, "toolFailure">,
-): Result<string> {
+): Result<ToolRunResult> {
   return result.kind === "failed" && policy?.toolFailure === "return-error-and-continue"
     ? {
         kind: "succeeded",
-        value: JSON.stringify({ error: result.error.message, failure: result.error }),
+        value: { text: JSON.stringify({ error: result.error.message, failure: result.error }) },
       }
     : result;
 }

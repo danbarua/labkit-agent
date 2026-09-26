@@ -1,7 +1,8 @@
 import { pathToFileURL } from "node:url";
 
 import type { McpServer } from "@agentclientprotocol/sdk";
-import type { Tool } from "@labkit-agent/core/host";
+import { MAX_BLOB_BYTES, MediaKindSchema } from "@labkit-agent/core";
+import type { Tool, ToolOutput, ToolOutputPart } from "@labkit-agent/core/host";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
@@ -353,30 +354,86 @@ export function mcpConnections(
                         .join("\n")
                         .slice(0, 4096)}`,
                     );
-                  if (
-                    result.content.some(
-                      (block) =>
-                        block.type === "image" ||
-                        block.type === "audio" ||
-                        (block.type === "resource" && !("text" in block.resource)),
-                    )
-                  )
-                    throw new Error("Binary MCP tool results are not supported");
-                  const output = {
-                    content: result.content,
+                  const hasBinary = result.content.some(
+                    (block) =>
+                      block.type === "image" ||
+                      block.type === "audio" ||
+                      (block.type === "resource" && "blob" in block.resource),
+                  );
+                  if (!hasBinary) {
+                    const output = {
+                      content: result.content,
+                      ...(result.structuredContent
+                        ? { structuredContent: result.structuredContent }
+                        : {}),
+                    };
+                    if (Buffer.byteLength(JSON.stringify(output)) > MAX_BYTES)
+                      throw new Error("MCP tool result exceeds 256 KiB; narrow the request");
+                    diagnostic("acp", "debug", "mcp.call.completed", {
+                      ...fields,
+                      durationMs: performance.now() - callStarted,
+                      bytes: Buffer.byteLength(JSON.stringify(output)),
+                      count: result.content.length,
+                    });
+                    return output;
+                  }
+                  // Binary content: keep the base64 payload out of the text envelope (it moves to
+                  // a stored blob part instead) so the model reads a stable pointer, not raw bytes.
+                  const envelope = {
+                    content: result.content.map((block) =>
+                      block.type === "image" || block.type === "audio"
+                        ? { type: block.type, mimeType: block.mimeType }
+                        : block.type === "resource" && "blob" in block.resource
+                          ? {
+                              type: "resource",
+                              resource: { uri: block.resource.uri, mimeType: block.resource.mimeType },
+                            }
+                          : block,
+                    ),
                     ...(result.structuredContent
                       ? { structuredContent: result.structuredContent }
                       : {}),
                   };
-                  if (Buffer.byteLength(JSON.stringify(output)) > MAX_BYTES)
+                  const text = JSON.stringify(envelope);
+                  if (Buffer.byteLength(text) > MAX_BYTES)
                     throw new Error("MCP tool result exceeds 256 KiB; narrow the request");
+                  const decodeBlob = (mime: string | undefined, encoded: string, name?: string) => {
+                    const media = MediaKindSchema.safeParse(mime);
+                    if (!media.success)
+                      throw new Error(`Unsupported MCP result media: ${mime ?? "unknown"}`);
+                    const bytes = Buffer.from(encoded, "base64");
+                    if (Buffer.from(bytes).toString("base64") !== encoded)
+                      throw new Error("MCP embedded content must be canonical base64");
+                    if (bytes.byteLength > MAX_BLOB_BYTES)
+                      throw new Error("MCP embedded resource exceeds 8 MiB");
+                    const part: ToolOutputPart = {
+                      type: "blob",
+                      bytes,
+                      media: media.data,
+                      ...(name ? { name } : {}),
+                    };
+                    return part;
+                  };
+                  const parts: ToolOutputPart[] = [
+                    { type: "text", text },
+                    ...result.content.flatMap((block): ToolOutputPart[] => {
+                      if (block.type === "image" || block.type === "audio")
+                        return [decodeBlob(block.mimeType, block.data)];
+                      if (block.type === "resource" && "blob" in block.resource)
+                        return [
+                          decodeBlob(block.resource.mimeType, block.resource.blob, block.resource.uri),
+                        ];
+                      return [];
+                    }),
+                  ];
                   diagnostic("acp", "debug", "mcp.call.completed", {
                     ...fields,
                     durationMs: performance.now() - callStarted,
-                    bytes: Buffer.byteLength(JSON.stringify(output)),
+                    bytes: Buffer.byteLength(text),
                     count: result.content.length,
+                    binaryParts: parts.length - 1,
                   });
-                  return output;
+                  return { text, parts } satisfies ToolOutput;
                 } catch (error) {
                   const timedOut =
                     error instanceof Error &&

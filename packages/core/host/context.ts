@@ -67,6 +67,7 @@ export type HostContext = {
   readonly sessionId: string | undefined;
   readonly complete: CompletionPort;
   readonly requestPermission: PermissionPort | undefined;
+  readonly storeBlob: ExecutionBindings["storeBlob"];
   readonly agents: Map<AgentId, AgentDefinition>;
   readonly tools: Map<string, Tool>;
   readonly children: Map<ActorId, HostChild>;
@@ -129,6 +130,7 @@ export function createHostContext(
     sessionId: bindings.sessionId,
     complete: bindings.complete,
     requestPermission,
+    storeBlob: bindings.storeBlob,
     agents,
     tools,
     children,
