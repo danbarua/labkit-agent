@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { expect, test } from "@logtape/testing-bun/autoload";
 
+import { withFixtureDiagnostics } from "../core/logging/fixture-capture.ts";
 import { harness, setup } from "./testing/harness.ts";
 
 test("/export writes the session's Markdown journal locally and never dispatches a completion", async () => {
@@ -93,6 +94,88 @@ test("/export with trailing text still runs locally and does not leak into a mod
     expect(await readFile(exportPath, "utf8")).toContain(`# Session ${sessionId}`);
   } finally {
     await h.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("/export completion logs acp.prompt.export.completed with connectionId, sessionId and path", async () => {
+  const directory = `.session-artifacts/acp-export/${crypto.randomUUID()}`;
+  const cwd = await mkdtemp(join(tmpdir(), "labkit-acp-export-"));
+  let exportPath = "";
+  try {
+    await withFixtureDiagnostics(directory, {}, async () => {
+      const base = setup();
+      const h = harness(base.options);
+      try {
+        await h.initialize();
+        const opened = await h.request("session/new", { cwd, mcpServers: [] });
+        const sessionId = opened.result.sessionId as string;
+        exportPath = join(cwd, ".labkit", "exports", `${sessionId}.md`);
+        const response = await h.request("session/prompt", {
+          sessionId,
+          prompt: [{ type: "text", text: "/export" }],
+        });
+        expect(response.result.stopReason).toBe("end_turn");
+      } finally {
+        await h.close();
+      }
+    });
+    const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const completed = records.filter((record) => record.event === "acp.prompt.export.completed");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({
+      level: "info",
+      method: "session/prompt",
+      path: exportPath,
+    });
+    expect(completed[0].connectionId).toBeString();
+    expect(completed[0].sessionId).toBeString();
+    expect(records.filter((record) => record.level === "warning")).toEqual([]);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("/export failure logs acp.prompt.export.failed with the cause and the client gets a clear error", async () => {
+  const directory = `.session-artifacts/acp-export/${crypto.randomUUID()}`;
+  const cwd = await mkdtemp(join(tmpdir(), "labkit-acp-export-"));
+  try {
+    // Make .labkit read-only so mkdir("<cwd>/.labkit/exports") fails and /export cannot write.
+    await mkdir(join(cwd, ".labkit"));
+    await chmod(join(cwd, ".labkit"), 0o500);
+    await withFixtureDiagnostics(directory, {}, async () => {
+      const base = setup();
+      const h = harness(base.options);
+      try {
+        await h.initialize();
+        const opened = await h.request("session/new", { cwd, mcpServers: [] });
+        const sessionId = opened.result.sessionId as string;
+        const response = await h.request("session/prompt", {
+          sessionId,
+          prompt: [{ type: "text", text: "/export" }],
+        });
+        expect(response.result).toBeUndefined();
+        expect(response.error?.code).toBe(-32000);
+        expect(response.error?.message).toContain("Session export failed");
+      } finally {
+        await h.close();
+      }
+    });
+    const records = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const failed = records.filter((record) => record.event === "acp.prompt.export.failed");
+    expect(failed).toHaveLength(1);
+    expect(failed[0].level).toBe("error");
+    expect(failed[0].connectionId).toBeString();
+    expect(failed[0].sessionId).toBeString();
+    expect(failed[0].error).toBeObject();
+  } finally {
+    await chmod(join(cwd, ".labkit"), 0o700);
     await rm(cwd, { recursive: true, force: true });
   }
 });

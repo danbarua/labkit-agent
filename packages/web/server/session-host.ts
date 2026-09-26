@@ -7,6 +7,7 @@ import {
   SessionIdSchema,
 } from "../../core/agent/types.ts";
 import type { PermissionPort, PermissionRequest } from "../../core/host/ports.ts";
+import { diagnostic } from "../../core/logging/index.ts";
 import {
   catalogProviders,
   LOCALHOST_BASE_URL,
@@ -686,12 +687,24 @@ export function exportSession(
   sessionId: string,
   format: "markdown" | "jsonl",
 ): { body: string; contentType: string } | undefined {
+  const started = performance.now();
   const hosted = sessions.get(sessionId);
-  if (!hosted) return undefined;
+  if (!hosted) {
+    diagnostic("web", "info", "web.export.not_found", { sessionId, format });
+    return undefined;
+  }
   const state = hosted.runtime.snapshot.durable;
-  return format === "markdown"
-    ? { body: journalMarkdown(state), contentType: "text/markdown; charset=utf-8" }
-    : { body: journalJSONL(state), contentType: "application/x-ndjson; charset=utf-8" };
+  const result =
+    format === "markdown"
+      ? { body: journalMarkdown(state), contentType: "text/markdown; charset=utf-8" }
+      : { body: journalJSONL(state), contentType: "application/x-ndjson; charset=utf-8" };
+  diagnostic("web", "info", "web.export.completed", {
+    sessionId,
+    format,
+    bytes: Buffer.byteLength(result.body, "utf8"),
+    durationMs: performance.now() - started,
+  });
+  return result;
 }
 
 export function eventResponse(sessionId: string, signal: AbortSignal) {
