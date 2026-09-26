@@ -1,13 +1,4 @@
-import {
-  decideConversation,
-  initialConversation,
-  type ConversationCommand,
-  type ConversationEvent,
-  type ConversationState,
-} from "../agent/agent-conversation.ts";
-import { PreparedModelSchema } from "../agent/agent.ts";
-import { projectConversationPrompt } from "../agent/prompt.ts";
-import { completeResults } from "../agent/tool-batch.ts";
+import { decideConversation, type ConversationCommand } from "../agent/agent-conversation.ts";
 import { ActorIdSchema, failure, MessagesSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import {
@@ -15,18 +6,15 @@ import {
   builtinResolvers,
   patchPolicy,
   PolicyPatchSchema,
-  projectPolicy,
   resolverPolicyFields,
   validatePolicy,
   type Policy,
   type PolicyResolvers,
 } from "../policy/policy.ts";
-import {
-  ContinuationSchema,
-  matchingContinuations,
-  type Continuation,
-} from "../providers/types.ts";
+import { ContinuationSchema } from "../providers/types.ts";
 import { decodeFailure, decodeRecord, encodeRecord } from "./journal/codec.ts";
+import { domainEvent } from "./journal/domain-event.ts";
+import { foldSeed, seedConversation } from "./journal/seed.ts";
 import {
   accepts,
   missingTarget,
@@ -36,12 +24,7 @@ import {
 } from "./journal/shared.ts";
 import type { Fold, JournalState } from "./journal/state.ts";
 import { load } from "./journal/state.ts";
-import {
-  INITIAL_REVISION,
-  RevisionSchema,
-  type AppendId,
-  type CommittedBatch,
-} from "./persistence.ts";
+import { RevisionSchema, type AppendId, type CommittedBatch } from "./persistence.ts";
 import {
   JournalRecordSchema,
   SeedSchema,
@@ -49,107 +32,14 @@ import {
   type JournalRecord,
   type Seed,
   type SessionInput,
-  type WireEvent,
 } from "./types.ts";
 
 export type { ToolEntry, LastCompletionUsage, JournalState } from "./journal/state.ts";
 export { accepts, partialResults } from "./journal/shared.ts";
 export { wireEvent, encodeRecord, decodeRecord } from "./journal/codec.ts";
 export { journalJSONL, journalMarkdown } from "./journal/render.ts";
-
-/**
- * Builds the initial state of a new session from its seed under every commit-time rule: the turn
- * sequence against origin and log, a registered starting agent, the policy against the registry and
- * live `resolvers`, inherited continuation owners and provider bindings, and a history that
- * projects into a prompt. Load folds a committed seed without these checks.
- *
- * @throws Error when the seed breaks a commit-time rule; ZodError when it does not parse.
- */
-export function seedConversation(
-  raw: Seed,
-  resolvers: PolicyResolvers = builtinResolvers,
-): JournalState {
-  const seed = SeedSchema.parse(raw);
-  if (
-    seed.sequence !== seed.log.length + 1 ||
-    (seed.origin.kind === "fork" && seed.sequence !== seed.origin.sequence)
-  )
-    throw new Error("Invalid inherited sequence");
-  if (!seed.configuration.agents.some(([id]) => id === seed.agent))
-    throw new Error("Unknown seed agent");
-  if (seed.origin.kind === "root" && (seed.sequence !== 1 || seed.log.length))
-    throw new Error("Invalid root boundary");
-  if (seed.origin.kind === "compaction" && (seed.sequence !== 1 || seed.log.length))
-    throw new Error("Invalid compaction boundary");
-  if (
-    seed.policy &&
-    validatePolicy(seed.policy, seed.configuration, resolvers).steps !== seed.allowance
-  )
-    throw new Error("Policy allowance mismatch");
-  if (seed.continuations) {
-    const owners = new Set<string>();
-    for (const entry of seed.continuations) {
-      if (resolvers.providerIds && !resolvers.providerIds.has(entry.provider))
-        throw new Error("Missing continuation provider binding");
-      const key = JSON.stringify(entry.owner);
-      if (
-        seed.origin.kind !== "fork" ||
-        owners.has(key) ||
-        ![...seed.context, ...seed.log.flatMap((record) => record.messages)].some(
-          (message) =>
-            message.role === "assistant" &&
-            message.owner?.turnId === entry.owner.turnId &&
-            message.owner.generation === entry.owner.generation,
-        )
-      )
-        throw new Error("Invalid inherited continuation owner");
-      owners.add(key);
-    }
-  }
-  const state = foldSeed(seed);
-  // Validate inherited history as well as the replacement context.
-  projectConversationPrompt({
-    context: seed.context,
-    log: seed.log,
-    agent: { model: "validation", tools: [] },
-    turn: {
-      id: state.conversation.turnId,
-      agent: seed.agent,
-      generation: 0,
-      steps: seed.allowance,
-      messages: [],
-      view: { kind: "history" },
-    },
-  });
-  return state;
-}
-
-/** Loading a creation record: the committed seed is the initial state, as written. */
-function foldSeed(seed: Seed): JournalState {
-  const initial = initialConversation(seed.agent, seed.allowance, seed.sessionId);
-  const id = ActorIdSchema.parse(`${seed.sessionId}/turn/${seed.sequence}`);
-  const conversation: ConversationState = {
-    ...initial,
-    context: seed.context,
-    origin: seed.origin,
-    log: seed.log,
-    sequence: seed.sequence,
-    turnId: id,
-    turn: { ...initial.turn, status: "idle", id, agent: seed.agent, steps: seed.allowance },
-  };
-  return freeze({
-    conversation,
-    ...(seed.continuations?.length ? { continuations: seed.continuations } : {}),
-    configuration: seed.configuration,
-    policy: seed.policy,
-    pendingInputs: [],
-    systemInputs: seed.systemInputs,
-    systemVersion: seed.systemVersion,
-    partial: [],
-    revision: INITIAL_REVISION,
-    records: [],
-  });
-}
+export { seedConversation, foldSeed } from "./journal/seed.ts";
+export { domainEvent } from "./journal/domain-event.ts";
 
 /**
  * The seed that starts a fork or compaction child session (not a child operation) from
@@ -191,174 +81,6 @@ export function toSeed(state: JournalState, conversation = state.conversation): 
         }
       : {}),
   });
-}
-/**
- * Converts a conversation event into its journaled form ({@link WireEvent}). A captured prompt
- * keeps only its journaled fields, so connection settings and credentials never enter a journal. A
- * failed dispatch of a turn's child operation becomes a `failed` child event.
- *
- * @throws Error for a failed branch reply, which has no journaled form.
- */
-function domainEvent(state: JournalState, event: WireEvent, fold: Fold): ConversationEvent {
-  if (event.type !== "child") return event;
-  const child = event.event;
-  if (child.type === "prepared") {
-    // Staging only: the captured prompt must be today's projection of the folded session.
-    if (child.result.kind === "succeeded" && fold.mode === "stage") {
-      const c = state.conversation;
-      if (c.turn.status !== "preparing_model") throw new Error("Prompt outside preparation phase");
-      const activeAgent = c.turn.turn.agent;
-      const agent = state.configuration.agents.find(([id]) => id === activeAgent)?.[1];
-      if (!agent || child.result.value.model !== (state.policy?.model ?? agent.model))
-        throw new Error("Prompt model mismatch");
-      const selection = state.policy?.provider
-        ? {
-            provider: state.policy.provider,
-            thinking: state.policy.thinking,
-            thinkingBudgetTokens: state.policy.thinkingBudgetTokens,
-            stream: state.policy.stream,
-            maxOutputTokens: state.policy.maxOutputTokens,
-            successors: agent.successors ?? state.configuration.agents.map(([id]) => id),
-          }
-        : {};
-      const captured = child.result.value;
-      if (
-        JSON.stringify(selection) !==
-        JSON.stringify(
-          captured.provider
-            ? {
-                provider: captured.provider,
-                thinking: captured.thinking,
-                thinkingBudgetTokens: captured.thinkingBudgetTokens,
-                stream: captured.stream,
-                maxOutputTokens: captured.maxOutputTokens,
-                successors: captured.successors,
-              }
-            : {},
-        )
-      )
-        throw new Error("Prompt provider selection mismatch");
-      const projectionInput = { context: c.context, log: c.log, turn: c.turn.turn, agent };
-      const expected = projectPolicy(
-        projectionInput,
-        state.systemInputs,
-        state.policy,
-        fold.resolvers,
-      );
-      const expectedContinuations = matchingContinuations(
-        expected,
-        state.continuations ?? [],
-        captured.provider,
-      );
-      const canonical = (value: unknown): unknown =>
-        Array.isArray(value)
-          ? value.map(canonical)
-          : value !== null && typeof value === "object"
-            ? Object.fromEntries(
-                Object.entries(value)
-                  .sort(([a], [b]) => a.localeCompare(b))
-                  .map(([key, item]) => [key, canonical(item)]),
-              )
-            : value;
-      const keyed = (entries: readonly Continuation[]) =>
-        entries
-          .map((entry) => [
-            JSON.stringify(entry.owner),
-            entry.provider,
-            canonical(
-              entry.payloadBlob ? { payloadBlob: entry.payloadBlob } : { payload: entry.payload },
-            ),
-          ])
-          .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-      if (
-        JSON.stringify(keyed(expectedContinuations)) !==
-        JSON.stringify(keyed(captured.continuations ?? []))
-      )
-        throw new Error("Prompt continuation mismatch");
-      if (state.policy) {
-        const allowed = state.policy.tools[activeAgent]!;
-        const advertised = child.result.value.tools ?? [];
-        if (
-          advertised.length !== allowed.length ||
-          advertised.some(
-            (tool, index) =>
-              tool.function.name !== allowed[index] ||
-              JSON.stringify(tool.function.parameters) !==
-                JSON.stringify(
-                  state.configuration.tools.find(([name]) => name === tool.function.name)?.[1],
-                ),
-          )
-        )
-          throw new Error("Prompt tool permissions mismatch");
-      }
-      if (JSON.stringify(expected) !== JSON.stringify(child.result.value.messages))
-        throw new Error("Prompt differs from captured session projection");
-    }
-    return {
-      ...event,
-      event: {
-        ...child,
-        result:
-          child.result.kind === "succeeded"
-            ? {
-                kind: "succeeded",
-                value: PreparedModelSchema.parse({
-                  ...child.result.value,
-                }),
-              }
-            : child.result,
-      },
-    };
-  }
-  if (fold.mode === "stage" && child.type === "model_settled") {
-    const required =
-      state.policy?.permissions === "ask" &&
-      child.result.kind === "succeeded" &&
-      child.result.value.kind === "tools";
-    if (!!child.permissionRequired !== required)
-      throw new Error("Permission phase differs from captured policy");
-  }
-  if (
-    fold.mode === "stage" &&
-    child.type === "model_settled" &&
-    child.result.kind === "succeeded"
-  ) {
-    const result = child.result.value;
-    const c = state.conversation;
-    const activeAgent = c.turn.status === "idle" ? c.turn.agent : c.turn.turn.agent;
-    const agent = state.configuration.agents.find(([id]) => id === activeAgent)?.[1];
-    if (
-      result.kind === "handoff" &&
-      !(agent?.successors ?? state.configuration.agents.map(([id]) => id)).includes(result.agent)
-    )
-      throw new Error("Unknown handoff agent");
-    if (
-      result.kind === "tools" &&
-      result.calls.some(
-        (call) => !(state.policy?.tools[activeAgent] ?? agent?.tools)?.includes(call.name),
-      )
-    )
-      throw new Error("Unpermitted tool");
-  }
-  if (child.type !== "batch_settled") return { ...event, event: child };
-  // Load takes the committed outcome as written; staging requires it to match the tool records.
-  const results = fold.mode === "stage" ? partialResults(state) : child.outcome.results;
-  if (fold.mode === "stage" && JSON.stringify(results) !== JSON.stringify(child.outcome.results))
-    throw new Error("Batch results differ from committed individual results");
-  if (child.outcome.kind !== "succeeded")
-    return { ...event, event: { ...child, outcome: child.outcome } };
-  const turn = state.conversation.turn;
-  if (turn.status !== "executing_tools" && turn.status !== "cancelling_tools")
-    throw new Error("Batch outside tool phase");
-  const message = turn.turn.messages.at(-1);
-  if (message?.role !== "assistant" || !message.calls) throw new Error("Missing tool intents");
-  return {
-    ...event,
-    event: {
-      ...child,
-      outcome: { kind: "succeeded", results: completeResults(message.calls, results) },
-    },
-  };
 }
 
 function reduce(
