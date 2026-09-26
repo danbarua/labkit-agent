@@ -59,11 +59,20 @@ necessary when capture is disabled.
 
 ### A long-running launcher's side-car trace
 
-`openHttpTrace(root, keep = 20)` is for a process that opens many sessions over its lifetime, such
-as the ACP workspace launcher or the web server: it prunes run directories under `root` beyond the
-newest `keep` (mirroring the ACP launcher's own log retention), then starts one fresh
-`createProviderCapture` run for the rest of the process's life. Bind its `capture` to every
-provider's `transport.capture` for that process; every session opened from it shares one run
-directory and one manifest. Call `pruneProviderCaptures(root, keep)` directly to reclaim space
-without opening a new run. See the [ACP launcher wiring](../../acp/README.md#find-an-operational-failure)
-for the `LABKIT_HTTP_TRACE_DIR` environment variable that gates this in the shipped launcher.
+`openHttpTrace(root, options?)` is for a process that opens many sessions over its lifetime, such
+as the ACP workspace launcher or the web server. `root` must be an absolute path (it is also
+`resolve()`d; a relative path, including `.`, throws) — never trust an environment variable's
+value as a directory to prune blindly. It prunes recognized capture run directories under `root`
+beyond the newest `options.keep` (default 20, mirroring the ACP launcher's own log retention),
+skipping any run whose name embeds a still-alive process ID, then starts one fresh run: a
+directory holding `manifest.jsonl`, one JSON line appended per request/response event, never
+rewritten, so recording a call costs one append rather than a rewrite of every call recorded so
+far. Bind its `capture` to every provider's `transport.capture` for that process; every session
+opened from it shares the current run until it rotates to a fresh directory after
+`options.maxCalls` calls (default 2000) or once its manifest would exceed `options.maxBytes`
+(default 64 MiB), pruning old runs again at each rotation. Only directories `pruneProviderCaptures`
+recognizes as capture runs (a run-shaped name, a directory, holding `manifest.json` or
+`manifest.jsonl`) are ever candidates for removal; anything else under `root` is left untouched.
+Call `pruneProviderCaptures(root, keep)` directly to reclaim space without opening a new run. See
+the [ACP launcher wiring](../../acp/README.md#find-an-operational-failure) for the
+`LABKIT_HTTP_TRACE_DIR` environment variable that gates this in the shipped launcher.

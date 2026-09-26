@@ -23,11 +23,14 @@ compile error, never a silent fallback.
 
 ## Wire a subscriber
 
-`EffectEmitter` is `(event: EffectEvent) => void`. Supply one through `ExecutionBindings.effects`
-for host-level events, and `TransportBinding.effects` on each provider binding for transport-level
-events. Both are additive: the runtime always combines your subscriber with the default
-`diagnosticsSubscriber()` through `fanoutEffects`, so binding one never silences logging, and a
-throwing subscriber never affects execution or the other subscribers.
+`EffectEmitter` is `(event: EffectEvent) => unknown`. Supply one through
+`SessionBindings.effects`/`ExecutionBindings.effects` for host-level events, and
+`TransportBinding.effects` on each provider binding for transport-level events. Both are additive:
+the runtime always combines your subscriber with the default `diagnosticsSubscriber()` through
+`fanoutEffects`, so binding one never silences logging. A subscriber's failure never affects
+execution or the other subscribers: `fanoutEffects` catches a synchronous throw and attaches a
+rejection handler to an async subscriber's returned promise, so neither crashes the process or
+blocks the rest.
 
 ```ts
 import type { EffectEmitter } from "@labkit-agent/core/effects";
