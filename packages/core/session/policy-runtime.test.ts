@@ -493,6 +493,8 @@ test("a configuration selected while its turn is admitted applies at the next bo
       version: 1,
       inForceVersion: 0,
       changedFields: ["tools"],
+      turnStatus: "preparing_model",
+      source: "caller",
     });
     expect(log.events[1]!.fields).toMatchObject({
       sessionId,
@@ -552,6 +554,7 @@ test("a selection pending when the session stopped survives restart and applies 
       "configuration.selected",
       "configuration.applied",
     ]);
+    expect(log.events[0]!.fields).toMatchObject({ sessionId, source: "restore" });
     expect(log.events[1]!.fields).toMatchObject({ sessionId, changedFields: ["tools"] });
     await restored.input("After restart").settled;
     expect(offered).toEqual([["echo"], []]);

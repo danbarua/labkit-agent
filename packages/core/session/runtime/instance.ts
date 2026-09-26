@@ -170,7 +170,7 @@ export function openInstance(
     ctx.adoption.plan = plan;
   };
   /** Restore-only: applies a selection stored before the session last closed. */
-  const reselect = (policy: Policy) => select(ctx, policy);
+  const reselect = (policy: Policy) => select(ctx, policy, "restore");
   return { runtime, submit: ctx.submit, pend, adopt: () => adopt(ctx), reselect };
 }
 
@@ -259,21 +259,28 @@ function post(ctx: SessionInstance, turnId: ActorId, event: TurnEvent) {
 
 /**
  * Sends a stored configuration selection to the session actor, which applies it at once when the
- * conversation is idle and otherwise at the next boundary between turns.
+ * conversation is idle and otherwise at the next boundary between turns. `source` says whether the
+ * caller selected it now or restore found it in the configuration store.
  */
-function select(ctx: SessionInstance, policy: Policy): Promise<CommandReceipt> {
+function select(
+  ctx: SessionInstance,
+  policy: Policy,
+  source: "caller" | "restore",
+): Promise<CommandReceipt> {
   const id = ctx.configured.id();
-  const { durable } = ctx.actor.snapshot;
-  const inForce = ctx.adoption.plan?.body.policy ?? durable.policy;
-  const turn = durable.conversation.turn;
+  const state = ctx.actor.snapshot;
+  const inForce = ctx.adoption.plan?.body.policy ?? state.durable.policy;
+  // An append in flight may be starting a turn; report the conversation as it will be.
+  const { turn, turnId } = ("pending" in state ? state.pending.next : state.durable).conversation;
   diagnostic("session", "info", "configuration.selected", {
     sessionId: ctx.sessionId,
     selectionId: id,
-    turnId: durable.conversation.turnId,
+    turnId,
     version: policy.version,
     inForceVersion: inForce?.version,
     changedFields: inForce ? changedPolicyFields(inForce, policy) : [],
     turnStatus: turn.status,
+    source,
     message:
       turn.status === "idle"
         ? "Configuration stored; applies at this idle boundary"
@@ -339,7 +346,7 @@ export function selectConfiguration(
       });
       return { kind: "failed", message: cause.message, error: cause };
     }
-    return select(ctx, next);
+    return select(ctx, next, "caller");
   });
   ctx.selecting = selected;
   return selected;
