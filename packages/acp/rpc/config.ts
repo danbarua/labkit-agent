@@ -14,6 +14,7 @@ import {
 import type { ConnectionGate } from "./connection.ts";
 import type { AdapterCore } from "./core.ts";
 import { afterPrompt, type Session } from "./session.ts";
+import type { SessionRegistry } from "./sessions.ts";
 import type { SessionUpdates } from "./updates.ts";
 
 /** Log each saved config value that the selector no longer lists. */
@@ -88,13 +89,13 @@ export function registerConfiguration(
   deps: Readonly<{
     core: AdapterCore;
     gate: Pick<ConnectionGate, "requireAccess">;
-    lookup: (id: string) => Session;
-    isCurrent: (id: string, entry: Session) => boolean;
+    registry: Pick<SessionRegistry, "lookup" | "isCurrent">;
     updates: Pick<SessionUpdates, "observe" | "refreshInfo">;
   }>,
 ): readonly string[] {
-  const { core, gate, lookup, isCurrent, updates } = deps;
+  const { core, gate, updates } = deps;
   const { connectionId } = core;
+  const { lookup, isCurrent } = deps.registry;
   function setConfig(
     id: string,
     configId: string,
