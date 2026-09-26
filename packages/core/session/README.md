@@ -251,15 +251,22 @@ turns folded state into the one `ConversationView` every consumer renders from: 
 settled turns and the live turn's messages so far, each message reduced to its role, text, typed
 blob refs (`id`, `media`, `bytes`, optional `name`, and a resolvable `blob://<sha256>.<ext>` `uri`),
 tool calls, and the call a tool result answers. `projectMessage`/`projectTurn` project one message
-or turn. It is a pure projection: never stored, never compared with a stored copy. ACP replay/live
-updates and the web console build their wire views from it instead of deriving history separately.
+or turn. It is a pure projection: never stored, never compared with a stored copy. ACP `session/load`
+replay and the web console's turn-log and live-message arrays are built from it instead of each
+deriving history separately. Incremental streaming text (ACP's `agent_message_chunk` deltas, the
+web console's `delta` events) still reads its text straight off the completion event as it arrives;
+a partial chunk is not yet a message to project.
 
-`journalMarkdown(state.durable)` and `journalJSONL(state.durable)` (re-exported here from
-`journal/render.ts`) render the same folded facts as a person-readable Markdown report or one JSON
-record per line; blob attachments render as their `blob://` URI. Both back `/export`: the web
+`journalMarkdown(state.durable)` (re-exported here from `journal/render.ts`) renders folded facts —
+context, turn log, the unfinished turn, permission decisions, recoveries — through the same
+`projectMessage`, so its Markdown never surfaces a raw journal record; blob attachments render as
+their `blob://` URI. `journalJSONL(state.durable)` is different: it dumps every stored record
+verbatim, one per line, so it currently includes whatever a `prepared`/`model_settled` record
+stores — today, before the journal-format correction lands, that is the full captured prompt (see
+"Code today" in [the session model](../../../docs/session-model.md)). Both back `/export`: the web
 server exposes `GET /api/session/:id/export.md` and `.jsonl`, and the ACP adapter's built-in
 `/export` slash command writes the Markdown form under `<cwd>/.labkit/exports/<sessionId>.md`
-without calling the model. Neither reads a stored prompt; both are ordinary projections of history.
+without calling the model.
 
 ## Journal modules
 

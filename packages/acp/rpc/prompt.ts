@@ -70,7 +70,7 @@ export function registerPrompt(
           );
           core.send(client, sessionId, {
             sessionUpdate: "agent_message_chunk",
-            messageId: `${sessionId}/export`,
+            messageId: `${sessionId}/export/${trace.rpcRequestId}`,
             content: { type: "text", text: `Exported session history to \`${path}\`.` },
           });
           await core.flushed();

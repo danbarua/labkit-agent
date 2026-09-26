@@ -51,11 +51,26 @@ test("/export writes the session's Markdown journal locally and never dispatches
       .updates()
       .map(({ update }) => update)
       .find((update) => update.sessionUpdate === "agent_message_chunk") as
-      { content: { type: string; text: string } } | undefined;
+      { messageId: string; content: { type: string; text: string } } | undefined;
     expect(chunk?.content).toEqual({
       type: "text",
       text: `Exported session history to \`${exportPath}\`.`,
     });
+
+    // A second /export in the same session must not reuse the first request's messageId.
+    const second = await h.request("session/prompt", {
+      sessionId,
+      prompt: [{ type: "text", text: "/export" }],
+    });
+    expect(second.result.stopReason).toBe("end_turn");
+    const exportChunks = h
+      .updates()
+      .map(({ update }) => update)
+      .filter((update) => update.sessionUpdate === "agent_message_chunk") as {
+      messageId: string;
+    }[];
+    expect(exportChunks).toHaveLength(2);
+    expect(exportChunks[0]!.messageId).not.toBe(exportChunks[1]!.messageId);
 
     // A normal prompt afterward still dispatches the model, proving /export did not consume the turn.
     const followUp = await h.request("session/prompt", {
