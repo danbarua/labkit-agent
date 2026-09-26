@@ -133,15 +133,18 @@ export function completeModel(
       run: async (request, signal) => {
         const blobs = await context.loadBlobs?.(request, signal, true);
         signal.throwIfAborted();
-        host.emit("provider", "debug", "completion.system_prompt", {
+        host.emit({
+          type: "completion.system_prompt",
           sessionId: host.sessionId,
           turnId,
           childId: command.child.id,
           agentId: command.turn.agent,
           provider: request.provider,
           model: request.model,
-          message: "System instructions supplied to this completion, in order",
-          systemMessages: request.messages.filter((message) => message.role === "system"),
+          systemMessages: request.messages.filter(
+            (message): message is Extract<typeof message, { role: "system" }> =>
+              message.role === "system",
+          ),
         });
         const raw = await host.complete(
           request,
@@ -184,13 +187,13 @@ export function completeModel(
               );
         signal.throwIfAborted();
         if (output.usage)
-          host.emit("provider", "info", "completion.usage.received", {
+          host.emit({
+            type: "completion.usage.received",
             sessionId: host.sessionId,
             turnId,
             childId: command.child.id,
             model: request.model,
             usage: output.usage,
-            message: "Completion response usage validated; awaiting runtime settlement",
           });
         return { completion, continuation, usage: output.usage };
       },

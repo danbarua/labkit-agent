@@ -1,7 +1,6 @@
-import { boundEmitter, noopEffects, type EffectEmitter } from "../effects/index.ts";
+import { noopEffects, type EffectEmitter, type ProviderStreamContext } from "../effects/index.ts";
 import { notify } from "../host/notifications.ts";
 import { diagnosticError } from "../logging/index.ts";
-import type { ProviderDiagnosticContext } from "./transport.ts";
 import type { StreamAssembler, StreamDeltaSink, StreamEvent } from "./types.ts";
 
 /** SSE framing is transport-owned; dialect assembly is an operation-local profile resource. */
@@ -10,7 +9,7 @@ export async function assembleStream(
   assembler: StreamAssembler,
   signal: AbortSignal,
   sink?: StreamDeltaSink,
-  context: ProviderDiagnosticContext = {},
+  context: ProviderStreamContext = {},
   secrets: readonly string[] = [],
   effects: EffectEmitter = noopEffects,
   captureChunk?: (text: string) => void | Promise<void>,
@@ -29,8 +28,7 @@ export async function assembleStream(
   const usage: Record<string, number> = {};
   let lastEvent: string | undefined;
   const terminalEvidence: Record<string, unknown> = {};
-  const emit = boundEmitter(effects);
-  emit("provider", "debug", "provider.stream.started", context);
+  effects({ type: "provider.stream.started", context });
   const reader = response.body.getReader();
   const cancel = () => {
     void reader.cancel().catch(() => {});
@@ -124,34 +122,47 @@ export async function assembleStream(
     if (buffer || data.length) throw new Error("Incomplete completion SSE frame");
     signal.throwIfAborted();
     const body = assembler.finish();
-    emit("provider", "debug", "provider.stream.completed", {
-      ...context,
+    effects({
+      type: "provider.stream.completed",
+      context,
       bytes,
       frames,
       deltas,
       lastEvent,
       usage,
-      ...terminalEvidence,
+      terminalEvidence,
       durationMs: Math.round(performance.now() - started),
     });
     return body;
   } catch (error) {
-    emit(
-      "provider",
-      signal.aborted ? "info" : "warning",
-      signal.aborted ? "provider.stream.cancelled" : "provider.stream.failed",
-      {
-        ...context,
-        bytes,
-        frames,
-        deltas,
-        lastEvent,
-        usage,
-        ...terminalEvidence,
-        bufferedCharacters: buffer.length,
-        durationMs: Math.round(performance.now() - started),
-        error: diagnosticError(error, secrets),
-      },
+    effects(
+      signal.aborted
+        ? {
+            type: "provider.stream.cancelled",
+            context,
+            bytes,
+            frames,
+            deltas,
+            lastEvent,
+            usage,
+            terminalEvidence,
+            bufferedCharacters: buffer.length,
+            durationMs: Math.round(performance.now() - started),
+            error: diagnosticError(error, secrets),
+          }
+        : {
+            type: "provider.stream.failed",
+            context,
+            bytes,
+            frames,
+            deltas,
+            lastEvent,
+            usage,
+            terminalEvidence,
+            bufferedCharacters: buffer.length,
+            durationMs: Math.round(performance.now() - started),
+            error: diagnosticError(error, secrets),
+          },
     );
     throw error;
   } finally {

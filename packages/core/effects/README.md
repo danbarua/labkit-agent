@@ -9,6 +9,18 @@ admission and run, permission decisions, completion usage), and
 (the provider HTTP request/response and stream lifecycle around fetch). Pure decisions and the
 journal fold never emit; the fold also runs on load, where nothing happens.
 
+## `EffectEvent` is a closed, typed union
+
+`EffectEvent` is a discriminated union keyed by `type`: one member per event this runtime can
+raise, each with its own typed payload (correlation IDs plus that event's actual domain data, for
+example `usage: CompletionUsage` on `completion.usage.received`). There is no generic fields bag
+and no open string escape hatch: narrowing on `type` gives typed fields directly, without a cast.
+
+Category and level are not part of the payload. They are a logging decision, made once by
+`resolveDiagnostic`'s internal table, keyed by `type` and checked by the compiler: the table's type
+requires every member of `EffectEvent["type"]`, so adding a union member without a table entry is a
+compile error, never a silent fallback.
+
 ## Wire a subscriber
 
 `EffectEmitter` is `(event: EffectEvent) => void`. Supply one through `ExecutionBindings.effects`
@@ -21,28 +33,22 @@ throwing subscriber never affects execution or the other subscribers.
 import type { EffectEmitter } from "@labkit-agent/core/effects";
 
 const usage: EffectEmitter = (event) => {
-  if (event.type === "completion.usage.received") recordUsage(event.fields.usage);
+  if (event.type === "completion.usage.received") recordUsage(event.usage); // typed, no cast
 };
 ```
-
-`event.fields` carries the same structured bag `diagnostic()` accepts, including whatever
-correlation IDs are known at that boundary (`sessionId`, `turnId`, `childId`, `toolCallId`,
-`httpRequestId`). `event.type` narrows to the runtime's known event names but also accepts any
-other string, so a later core module or an environment can introduce a new effect name without
-widening the exported union.
 
 ## Logging is a subscriber
 
 `diagnosticsSubscriber()` is the default: it reproduces exactly the `diagnostic(category, level,
-event, fields)` record the event names above have always produced. It is not a second emission
-path; every `diagnostic()` call this runtime makes today is one of these events reaching that
-subscriber. `completion.system_prompt` is emitted at `debug` (previously `info`); every other
-event's category, level and fields are unchanged.
+event, fields)` record the event names above have always produced, via `resolveDiagnostic`. It is
+not a second emission path; every `diagnostic()` call this runtime makes today is one of these
+events reaching that subscriber. `completion.system_prompt` is emitted at `debug` (previously
+`info`); every other event's category, level and fields are unchanged.
 
 ## Side-car HTTP trace
 
 Full request/response bodies are not part of `EffectEvent`; a subscriber that needs raw traffic
 subscribes to `TransportBinding.capture` instead (see
 [the environment README](../environment/README.md#retained-provider-traffic)). That keeps
-`EffectEvent` cheap to construct at every boundary and keeps credential-bearing bodies out of the
+`EffectEvent` a closed set of small, typed payloads and keeps credential-bearing bodies out of the
 general subscriber API.

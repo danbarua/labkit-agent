@@ -39,16 +39,14 @@ export function runTools(
     throw new Error("Missing tool permission grant");
   for (const [toolName, grantId] of grant?.remembered ?? []) {
     host.remembered.set(toolName, grantId);
-    host.emit("host", "info", "permission.granted", {
+    host.emit({
+      type: "permission.granted",
       sessionId: host.sessionId,
       turnId,
       childId: command.child.id,
       toolName,
       grantId,
-      scope: "live-session-tool",
       policyVersion: context.policyVersion,
-      reason:
-        "User approved this tool for all arguments until this session closes, tool scope changes, or permissions are explicitly reset",
     });
   }
   if (command.permission) host.grants.delete(command.permission.id);
@@ -65,7 +63,8 @@ export function runTools(
           toolCallId: batchCommand.child.id,
           name: batchCommand.call.name,
         };
-        host.emit("host", "debug", "tool.admitted", {
+        host.emit({
+          type: "tool.admitted",
           ...identity,
           toolName: batchCommand.call.name,
           kind: tool.kind ?? "other",
@@ -115,7 +114,8 @@ export function runTools(
                   const locations = z
                     .array(ToolLocationSchema)
                     .parse(tool.locations(structuredClone(input)));
-                  host.emit("host", "debug", "tool.locations_resolved", {
+                  host.emit({
+                    type: "tool.locations_resolved",
                     ...identity,
                     toolName: batchCommand.call.name,
                     locations,
@@ -126,7 +126,8 @@ export function runTools(
                     locations,
                   });
                 } catch (error) {
-                  host.emit("host", "warning", "tool.locations_failed", {
+                  host.emit({
+                    type: "tool.locations_failed",
                     sessionId: host.sessionId,
                     childId: batchCommand.child.id,
                     toolName: batchCommand.call.name,
@@ -158,12 +159,11 @@ export function runTools(
               batch,
               toolFailure: context.toolFailure,
             });
-            host.emit("host", "debug", "tool.awaiting_release", {
+            host.emit({
+              type: "tool.awaiting_release",
               ...identity,
               toolName: batchCommand.call.name,
               outcome: result.kind,
-              reason:
-                "Result reported; awaiting caller release (session journal receipt when durable)",
             });
             host.reportTool(outcome);
           },
@@ -177,18 +177,15 @@ export function runTools(
                     ? "in_progress"
                     : "pending";
             if (next === status) return;
-            host.emit(
-              "host",
-              state.status === "failed" ? "warning" : "debug",
-              "tool.status_changed",
-              {
-                ...identity,
-                toolName: batchCommand.call.name,
-                previousStatus: status,
-                status: next,
-                ...(state.status === "failed" ? { error: diagnosticError(state.error) } : {}),
-              },
-            );
+            host.emit({
+              type: "tool.status_changed",
+              ...identity,
+              toolName: batchCommand.call.name,
+              previousStatus: status,
+              status: next,
+              rawStatus: state.status,
+              ...(state.status === "failed" ? { error: diagnosticError(state.error) } : {}),
+            });
             status = next;
             host.notifyTool({
               ...identity,
