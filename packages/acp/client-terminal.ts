@@ -21,6 +21,13 @@ export type ClientTerminal = Readonly<{
   }>;
 }>;
 
+/** A client result missing fields ACP v1 requires; the command outcome cannot be reported. */
+function invalidResult(method: string, requirement: string) {
+  return new Error(
+    `The client answered ${method} with an invalid result: ${requirement}. The command outcome is unknown.`,
+  );
+}
+
 /** One terminal per tool operation; the client owns processes and the agent owns release requests. */
 export function clientTerminal(
   client: AgentContext,
@@ -111,18 +118,20 @@ export function clientTerminal(
         .catch(() => {});
       try {
         const handle = await waitForBoundary(created, cancellation);
-        terminalId = handle.terminalId;
+        const createdId: unknown = (handle as { terminalId?: unknown } | null)?.terminalId;
+        if (typeof createdId !== "string" || !createdId)
+          throw invalidResult("terminal/create", "terminalId must be a non-empty string");
+        terminalId = createdId;
         diagnostic("acp", "debug", "client_terminal.waiting_for_exit", { ...fields, terminalId });
         cancellation.throwIfAborted();
         if (context) {
           try {
-            void Promise.resolve(onTerminal?.(context.toolCallId, handle.terminalId)).catch(
-              (error) =>
-                diagnostic("acp", "warning", "client_terminal.display_failed", {
-                  ...fields,
-                  terminalId,
-                  error: diagnosticError(error),
-                }),
+            void Promise.resolve(onTerminal?.(context.toolCallId, createdId)).catch((error) =>
+              diagnostic("acp", "warning", "client_terminal.display_failed", {
+                ...fields,
+                terminalId,
+                error: diagnosticError(error),
+              }),
             );
           } catch (error) {
             diagnostic("acp", "warning", "client_terminal.display_failed", {
@@ -133,35 +142,46 @@ export function clientTerminal(
             /* Display subscribers cannot decide execution. */
           }
         }
-        const params: TerminalOutputRequest = { sessionId, terminalId: handle.terminalId };
-        const status = await waitForBoundary(
+        const params: TerminalOutputRequest = { sessionId, terminalId: createdId };
+        const status: unknown = await waitForBoundary(
           client.request<"terminal/wait_for_exit">("terminal/wait_for_exit", params, {
             cancellationSignal: cancellation,
           }),
           cancellation,
         );
+        if (typeof status !== "object" || status === null)
+          throw invalidResult("terminal/wait_for_exit", "the result must be an object");
         exited = true;
-        const result = await waitForBoundary(
+        // ACP v1 deserializes an invalid exitCode or signal as absent rather than failing the call.
+        const exitCode =
+          "exitCode" in status && Number.isInteger(status.exitCode) && Number(status.exitCode) >= 0
+            ? Number(status.exitCode)
+            : null;
+        const exitSignal =
+          "signal" in status && typeof status.signal === "string" ? status.signal : null;
+        const result: unknown = await waitForBoundary(
           client.request<"terminal/output">("terminal/output", params, {
             cancellationSignal: cancellation,
           }),
           cancellation,
         );
-        if (Buffer.byteLength(result.output) > MAX_FILE_BYTES)
+        const output: unknown = (result as { output?: unknown } | null)?.output;
+        const truncated: unknown = (result as { truncated?: unknown } | null)?.truncated;
+        if (typeof output !== "string" || typeof truncated !== "boolean")
+          throw invalidResult(
+            "terminal/output",
+            "output must be a string and truncated must be a boolean",
+          );
+        if (Buffer.byteLength(output) > MAX_FILE_BYTES)
           throw new Error("Client terminal output exceeds 256 KiB");
         diagnostic("acp", "debug", "client_terminal.exited", {
           ...fields,
           terminalId,
-          exitCode: status.exitCode ?? undefined,
-          bytes: Buffer.byteLength(result.output),
+          exitCode: exitCode ?? undefined,
+          bytes: Buffer.byteLength(output),
           durationMs: performance.now() - started,
         });
-        return {
-          output: result.output,
-          truncated: result.truncated,
-          exitCode: status.exitCode ?? null,
-          signal: status.signal ?? null,
-        };
+        return { output, truncated, exitCode, signal: exitSignal };
       } catch (error) {
         const timedOut =
           cancellation.reason instanceof Error && cancellation.reason.name === "TimeoutError";
