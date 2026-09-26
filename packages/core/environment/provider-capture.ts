@@ -1,11 +1,57 @@
-import { mkdir, rename } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { redactDiagnostics } from "../logging/index.ts";
 import type { ProviderCapture } from "../providers/transport.ts";
 
+/** One caller-owned capture run: retained evidence directory plus its capture sink. */
+export type ProviderCaptureRun = Readonly<{
+  runId: string;
+  directory: string;
+  capture: ProviderCapture;
+  flush: () => Promise<void>;
+}>;
+
+/**
+ * Removes every run directory under `root` beyond the `keep` most recently modified, so a
+ * long-running launcher's capture directory stays bounded across process restarts. Never removes
+ * more than `root`'s immediate run directories; a run that fails to stat is treated as newest and
+ * kept, so a write in progress is never pruned mid-flight.
+ */
+export async function pruneProviderCaptures(root: string, keep: number): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await readdir(root);
+  } catch {
+    return;
+  }
+  const withAge = await Promise.all(
+    entries.map(async (name) => {
+      try {
+        const stats = await stat(join(root, name));
+        return { name, mtimeMs: stats.mtimeMs };
+      } catch {
+        return { name, mtimeMs: Infinity };
+      }
+    }),
+  );
+  const stale = withAge.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(keep);
+  for (const { name } of stale) await rm(join(root, name), { recursive: true, force: true });
+}
+
+/**
+ * Opens a provider capture for a launcher process: prunes run directories older than the newest
+ * `keep` (default 20, matching the ACP launcher's own log retention), then starts a fresh run.
+ * Bind the returned `capture` to every provider's transport for this process's lifetime; call
+ * `flush` before the process exits so the last evidence write is durable.
+ */
+export async function openHttpTrace(root: string, keep = 20): Promise<ProviderCaptureRun> {
+  await pruneProviderCaptures(root, keep);
+  return createProviderCapture(root);
+}
+
 /** One caller-owned run. Files are written as evidence arrives, including failed/partial calls. */
-export async function createProviderCapture(root: string) {
+export async function createProviderCapture(root: string): Promise<ProviderCaptureRun> {
   const runId = crypto.randomUUID();
   const directory = join(root, runId);
   await mkdir(directory, { recursive: true });

@@ -1,4 +1,5 @@
 import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
+import { openHttpTrace, type ProviderCaptureRun } from "@labkit-agent/core/environment/provider-capture";
 import type { Policy, PolicyPatch } from "@labkit-agent/core/policy";
 import {
   CATALOG_SOURCE,
@@ -274,6 +275,13 @@ export function workspaceAgent(
     });
     return pending;
   };
+  // Opened on first session so a launcher without the env var performs no I/O for it.
+  let trace: Promise<ProviderCaptureRun> | undefined;
+  const loadTrace = () => {
+    if (!env.LABKIT_HTTP_TRACE_DIR) return undefined;
+    trace ??= openHttpTrace(env.LABKIT_HTTP_TRACE_DIR);
+    return trace;
+  };
   return {
     loadSession: true,
     forkSession: true,
@@ -292,6 +300,7 @@ export function workspaceAgent(
       publishPlan,
     }) {
       signal.throwIfAborted();
+      const traceRun = await loadTrace();
       const { providers, selection } = await loadCatalog();
       signal.throwIfAborted();
       const files = await workspaceFiles(cwd, additionalDirectories);
@@ -490,6 +499,7 @@ export function workspaceAgent(
                   baseUrl: provider.baseUrl,
                   headers: { ...provider.headers },
                   ...(inject.fetch ? { fetch: inject.fetch } : {}),
+                  ...(traceRun ? { capture: traceRun.capture } : {}),
                 },
               },
             ]),

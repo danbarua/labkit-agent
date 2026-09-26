@@ -8,6 +8,7 @@ import {
   SessionIdSchema,
   type AgentMessage,
 } from "../../core/agent/types.ts";
+import { openHttpTrace, type ProviderCaptureRun } from "../../core/environment/provider-capture.ts";
 import type { PermissionPort, PermissionRequest } from "../../core/host/ports.ts";
 import {
   catalogProviders,
@@ -91,6 +92,15 @@ function model(id: string, label: string, profile: CompletionProfile): CatalogMo
     thinking: thinkingChoices(profile),
     omitThinkingWhenOff: profile.capabilities.thinking.mode === "effort",
   };
+}
+
+let trace: Promise<ProviderCaptureRun> | undefined;
+
+/** Opened once for the server's lifetime, gated on `LABKIT_HTTP_TRACE_DIR`. */
+function loadTrace() {
+  if (!process.env.LABKIT_HTTP_TRACE_DIR) return undefined;
+  trace ??= openHttpTrace(process.env.LABKIT_HTTP_TRACE_DIR);
+  return trace;
 }
 
 let keyed: CatalogProvider[] | undefined;
@@ -463,6 +473,7 @@ function requestPermissionFor(hosted: Hosted): PermissionPort {
 
 export async function openSession(input: CreateSessionBody = {}) {
   const catalog = await providerCatalog();
+  const traceRun = await loadTrace();
   const fixture = !catalog.length;
   const providers = fixture ? [fixtureProvider()] : catalog;
   const selected = providers.find((provider) => provider.id === input.providerId) ?? providers[0];
@@ -577,6 +588,7 @@ export async function openSession(input: CreateSessionBody = {}) {
               baseUrl: provider.baseUrl,
               headers: provider.headers,
               fetch: fixture ? fixtureFetch() : fetch,
+              ...(traceRun ? { capture: traceRun.capture } : {}),
             },
           },
         ]),
