@@ -42,6 +42,16 @@ export type ProviderCapture = (
   }>,
 ) => void | Promise<void>;
 
+/**
+ * Independent, frozen copy of a value about to be handed to an effect subscriber. Some payloads
+ * (for example `bindProviders(...).complete`'s `trace`) are still-mutable local state at the time
+ * they are first emitted; without this, a subscriber that freezes what it receives, or simply
+ * inspects it later, would see a different, or throw on, a value the runtime goes on to mutate.
+ */
+function snapshot<T>(value: T): T {
+  return freeze(structuredClone(value));
+}
+
 /** Numeric usage and terminal reasons only; never copy generated content. */
 function responseEvidence(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object") return {};
@@ -451,7 +461,7 @@ export function bindProviders(bindings: ProviderBindings) {
       let phase = "validate";
       let terminalEvidence: Record<string, unknown> = {};
       const emit = bound.get(request.provider ?? "")?.emit ?? diagnosticsSubscriber();
-      emit({ type: "provider.completion.started", trace });
+      emit({ type: "provider.completion.started", trace: snapshot(trace) });
       try {
         if (!request.provider) throw new Error("Prepared request has no provider");
         ProviderSettingsSchema.parse({
@@ -527,7 +537,12 @@ export function bindProviders(bindings: ProviderBindings) {
                 ),
               );
         if (usage?.status === "invalid")
-          emit({ type: "provider.usage.invalid", trace, terminalEvidence, error: usage.error });
+          emit({
+            type: "provider.usage.invalid",
+            trace: snapshot(trace),
+            terminalEvidence: snapshot(terminalEvidence),
+            error: usage.error,
+          });
         if (result.kind === "handoff" && !input.successors.includes(result.agent))
           throw new Error("Unpermitted handoff target");
         if (result.kind === "tools" && result.calls.some((call) => call.name === HANDOFF_TOOL))
@@ -548,8 +563,8 @@ export function bindProviders(bindings: ProviderBindings) {
         });
         emit({
           type: "provider.completion.completed",
-          trace,
-          terminalEvidence,
+          trace: snapshot(trace),
+          terminalEvidence: snapshot(terminalEvidence),
           durationMs: Math.round(performance.now() - started),
           completionKind: result.kind,
           continuation: decoded.continuationPayload !== undefined,
@@ -569,16 +584,16 @@ export function bindProviders(bindings: ProviderBindings) {
           signal.aborted
             ? {
                 type: "provider.completion.cancelled",
-                trace,
-                terminalEvidence,
+                trace: snapshot(trace),
+                terminalEvidence: snapshot(terminalEvidence),
                 phase,
                 durationMs: Math.round(performance.now() - started),
                 error: diagnosticError(error),
               }
             : {
                 type: "provider.completion.failed",
-                trace,
-                terminalEvidence,
+                trace: snapshot(trace),
+                terminalEvidence: snapshot(terminalEvidence),
                 phase,
                 durationMs: Math.round(performance.now() - started),
                 error: diagnosticError(error),

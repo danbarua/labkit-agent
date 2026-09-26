@@ -49,6 +49,7 @@ export function testOptions(overrides: Partial<TestOptions> = {}): SessionOption
       id: value.id,
       toolUpdate: value.toolUpdate,
       streamUpdate: value.streamUpdate,
+      effects: value.effects,
       complete: value.complete
         ? (request, signal) =>
             value.complete!({ ...request, signal, baseUrl: value.baseUrl, apiKey: value.apiKey })

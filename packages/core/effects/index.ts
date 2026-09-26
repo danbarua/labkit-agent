@@ -1,7 +1,12 @@
 import type { TurnCommand } from "../agent/agent-fsm.ts";
 import type { ActorId, AgentId, Failure, OperationKind, Result, Steps } from "../agent/types.ts";
 import type { ToolKind, ToolLocation } from "../host/ports.ts";
-import { diagnostic, type DiagnosticError, type DiagnosticFields, type LogLevel } from "../logging/index.ts";
+import {
+  diagnostic,
+  type DiagnosticError,
+  type DiagnosticFields,
+  type LogLevel,
+} from "../logging/index.ts";
 import type { Policy } from "../policy/policy.ts";
 import type { CompletionUsage } from "../providers/usage.ts";
 
@@ -37,7 +42,12 @@ export type PermissionContext = ToolIdentity &
  * journal fold never emit.
  */
 export type EffectEvent =
-  | Readonly<{ type: "child.started"; sessionId?: string; childId: ActorId; operation: OperationKind }>
+  | Readonly<{
+      type: "child.started";
+      sessionId?: string;
+      childId: ActorId;
+      operation: OperationKind;
+    }>
   | Readonly<{
       type: "child.failed";
       sessionId?: string;
@@ -94,7 +104,13 @@ export type EffectEvent =
       appendId: string;
       toolNames: readonly string[];
     }>
-  | Readonly<{ type: "tool.released"; sessionId?: string; turnId: ActorId; batchId: ActorId; callId: string }>
+  | Readonly<{
+      type: "tool.released";
+      sessionId?: string;
+      turnId: ActorId;
+      batchId: ActorId;
+      callId: string;
+    }>
   | Readonly<{
       type: "host.closed";
       sessionId?: string;
@@ -180,10 +196,18 @@ export type EffectEvent =
       }
     >
   | Readonly<
-      ToolIdentity & { type: "tool.locations_resolved"; toolName: string; locations: readonly ToolLocation[] }
+      ToolIdentity & {
+        type: "tool.locations_resolved";
+        toolName: string;
+        locations: readonly ToolLocation[];
+      }
     >
   | Readonly<
-      ToolIdentity & { type: "tool.awaiting_release"; toolName: string; outcome: Result<unknown>["kind"] }
+      ToolIdentity & {
+        type: "tool.awaiting_release";
+        toolName: string;
+        outcome: Result<unknown>["kind"];
+      }
     >
   | Readonly<
       ToolIdentity & {
@@ -341,29 +365,48 @@ export type CompletionTrace = Readonly<{
  * subscriber must not affect execution, so callers should combine subscribers with
  * {@link fanoutEffects} rather than let one exception drop the rest.
  */
-export type EffectEmitter = (event: EffectEvent) => void;
+export type EffectEmitter = (event: EffectEvent) => unknown;
 
 /** An emitter that discards every event; the default when no subscriber is bound. */
 export const noopEffects: EffectEmitter = () => {};
+
+/**
+ * Contains a subscriber's rejection so it never surfaces as an unhandled promise rejection. A
+ * synchronous subscriber never returns a thenable, so this is a no-op for it; an async subscriber
+ * that throws still runs to completion elsewhere, its rejection just never propagates here.
+ */
+function containRejection(result: unknown): void {
+  if (result && typeof (result as PromiseLike<unknown>).then === "function")
+    Promise.resolve(result).catch(() => {
+      // Best-effort, like diagnostic(): an async subscriber's rejection never affects execution.
+    });
+}
+
+/** Runs one subscriber for one event; its failure, sync or async, never affects execution. */
+function callEmitter(emitter: EffectEmitter, event: EffectEvent): void {
+  try {
+    containRejection(emitter(event));
+  } catch {
+    // Best-effort, like diagnostic(): a subscriber failure never affects execution.
+  }
+}
 
 /** Combines subscribers so each event reaches every one of them once, in order. */
 export function fanoutEffects(...emitters: readonly (EffectEmitter | undefined)[]): EffectEmitter {
   const live = emitters.filter((emitter): emitter is EffectEmitter => !!emitter);
   if (live.length === 0) return noopEffects;
-  if (live.length === 1) return (event) => live[0]!(event);
+  if (live.length === 1) return (event) => callEmitter(live[0]!, event);
   return (event) => {
-    for (const emitter of live) {
-      try {
-        emitter(event);
-      } catch {
-        // Best-effort, like diagnostic(): a subscriber failure never affects execution.
-      }
-    }
+    for (const emitter of live) callEmitter(emitter, event);
   };
 }
 
 /** What the default subscriber logs for one event: category, level and the rendered fields. */
-export type DiagnosticRecord = Readonly<{ category: string; level: LogLevel; fields: DiagnosticFields }>;
+export type DiagnosticRecord = Readonly<{
+  category: string;
+  level: LogLevel;
+  fields: DiagnosticFields;
+}>;
 
 /**
  * Category, level and rendered fields for every known event, keyed by `type`. A missing or
@@ -371,7 +414,9 @@ export type DiagnosticRecord = Readonly<{ category: string; level: LogLevel; fie
  * so adding a union member without a table entry never silently falls back to a default. This is
  * the only place a log level or category is chosen; events themselves carry only domain data.
  */
-const diagnosticTable: { [K in EffectEvent["type"]]: (event: Extract<EffectEvent, { type: K }>) => DiagnosticRecord } = {
+const diagnosticTable: {
+  [K in EffectEvent["type"]]: (event: Extract<EffectEvent, { type: K }>) => DiagnosticRecord;
+} = {
   "child.started": (e) => ({
     category: e.operation === "completion" ? "provider" : "host",
     level: "debug",
@@ -407,7 +452,12 @@ const diagnosticTable: { [K in EffectEvent["type"]]: (event: Extract<EffectEvent
   "child.cancellation_requested": (e) => ({
     category: "host",
     level: "debug",
-    fields: { sessionId: e.sessionId, childId: e.childId, operation: e.operation, reason: e.reason },
+    fields: {
+      sessionId: e.sessionId,
+      childId: e.childId,
+      operation: e.operation,
+      reason: e.reason,
+    },
   }),
   "command.dispatched": (e) => ({
     category: "host",
@@ -423,7 +473,9 @@ const diagnosticTable: { [K in EffectEvent["type"]]: (event: Extract<EffectEvent
       thinkingBudgetTokens: e.thinkingBudgetTokens,
       stream: e.stream,
       maxOutputTokens: e.maxOutputTokens,
-      ...(e.generation !== undefined ? { generation: e.generation, stepsRemaining: e.stepsRemaining } : {}),
+      ...(e.generation !== undefined
+        ? { generation: e.generation, stepsRemaining: e.stepsRemaining }
+        : {}),
     },
   }),
   "permission.grants_cleared": (e) => ({
@@ -585,7 +637,12 @@ const diagnosticTable: { [K in EffectEvent["type"]]: (event: Extract<EffectEvent
   "tool.admitted": (e) => ({
     category: "host",
     level: "debug",
-    fields: { ...toolIdentityFields(e), toolName: e.toolName, kind: e.kind, permission: e.permission },
+    fields: {
+      ...toolIdentityFields(e),
+      toolName: e.toolName,
+      kind: e.kind,
+      permission: e.permission,
+    },
   }),
   "tool.locations_resolved": (e) => ({
     category: "host",
@@ -697,12 +754,24 @@ const diagnosticTable: { [K in EffectEvent["type"]]: (event: Extract<EffectEvent
   "provider.completion.cancelled": (e) => ({
     category: "provider",
     level: "info",
-    fields: { ...e.trace, ...e.terminalEvidence, phase: e.phase, durationMs: e.durationMs, error: e.error },
+    fields: {
+      ...e.trace,
+      ...e.terminalEvidence,
+      phase: e.phase,
+      durationMs: e.durationMs,
+      error: e.error,
+    },
   }),
   "provider.completion.failed": (e) => ({
     category: "provider",
     level: "warning",
-    fields: { ...e.trace, ...e.terminalEvidence, phase: e.phase, durationMs: e.durationMs, error: e.error },
+    fields: {
+      ...e.trace,
+      ...e.terminalEvidence,
+      phase: e.phase,
+      durationMs: e.durationMs,
+      error: e.error,
+    },
   }),
   "provider.usage.invalid": (e) => ({
     category: "provider",

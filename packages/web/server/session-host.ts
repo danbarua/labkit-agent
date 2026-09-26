@@ -8,7 +8,7 @@ import {
   SessionIdSchema,
   type AgentMessage,
 } from "../../core/agent/types.ts";
-import { openHttpTrace, type ProviderCaptureRun } from "../../core/environment/provider-capture.ts";
+import { openHttpTrace, type HttpTrace } from "../../core/environment/provider-capture.ts";
 import type { PermissionPort, PermissionRequest } from "../../core/host/ports.ts";
 import {
   catalogProviders,
@@ -94,7 +94,7 @@ function model(id: string, label: string, profile: CompletionProfile): CatalogMo
   };
 }
 
-let trace: Promise<ProviderCaptureRun> | undefined;
+let trace: Promise<HttpTrace> | undefined;
 
 /** Opened once for the server's lifetime, gated on `LABKIT_HTTP_TRACE_DIR`. */
 function loadTrace() {

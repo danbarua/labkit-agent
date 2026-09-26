@@ -4,8 +4,8 @@ import { z } from "zod";
 
 import { createChatCompletion, type PreparedModel } from "../agent/agent.ts";
 import type { BlobResolver } from "../agent/content.ts";
-import type { EffectEmitter } from "../effects/index.ts";
 import { AgentIdSchema, ToolNameSchema, type CompletionSchema } from "../agent/types.ts";
+import type { EffectEmitter } from "../effects/index.ts";
 import { freeze } from "../fsm/fsm.ts";
 import type { StreamDeltaSink } from "../providers/types.ts";
 import type { CompletionUsage } from "../providers/usage.ts";

@@ -133,6 +133,7 @@ export function openInstance(
         sessionId,
         requestPermission: configured.requestPermission,
         complete: configured.completePort,
+        effects: configured.effects,
       },
       {
         turn: (turnId, event) => ctx.post(turnId, event),

@@ -13,7 +13,7 @@ import {
 } from "../agent/types.ts";
 import { createHost, type HostToolOutcome } from "../host/host.ts";
 import { defineTool } from "../host/ports.ts";
-import { resolveDiagnostic, type EffectEvent } from "./index.ts";
+import { fanoutEffects, resolveDiagnostic, type EffectEvent } from "./index.ts";
 
 test("a custom subscriber receives provider usage and tool events with correlation IDs", async () => {
   const events: EffectEvent[] = [];
@@ -53,7 +53,10 @@ test("a custom subscriber receives provider usage and tool events with correlati
         type: "complete",
         child: ref("completion", "step"),
         turn,
-        request: PreparedModelSchema.parse({ model: "m", messages: [{ role: "user", content: "hi" }] }),
+        request: PreparedModelSchema.parse({
+          model: "m",
+          messages: [{ role: "user", content: "hi" }],
+        }),
       },
     },
     { projectPrompt: () => [] },
@@ -125,7 +128,13 @@ test("resolveDiagnostic renders every known event type without throwing", () => 
     { type: "child.timed_out", reason: { message: "m", classification: "timeout" }, childId: id },
     { type: "child.cancellation_requested", childId: id, operation: "tool" },
     { type: "command.dispatched", turnId: id, childId: id, operation: "cancel" },
-    { type: "permission.grants_cleared", reason: "r", policyVersion: 1, appendId: "a", toolNames: [] },
+    {
+      type: "permission.grants_cleared",
+      reason: "r",
+      policyVersion: 1,
+      appendId: "a",
+      toolNames: [],
+    },
     { type: "tool.released", turnId: id, batchId: id, callId: "c" },
     { type: "host.closed", activeChildren: 0, pendingToolReceipts: 0, pendingGrants: 0 },
     {
@@ -142,7 +151,13 @@ test("resolveDiagnostic renders every known event type without throwing", () => 
       usage: { status: "reported", native: {} },
     },
     { type: "tool.locations_failed", toolName: "echo", error: {} },
-    { type: "permission.reused", ...permissionContext, scope: "live-session-tool", source: "remembered", grantId: "g" },
+    {
+      type: "permission.reused",
+      ...permissionContext,
+      scope: "live-session-tool",
+      source: "remembered",
+      grantId: "g",
+    },
     { type: "permission.waiting", ...permissionContext },
     { type: "permission.decided", ...permissionContext, decision: "allow_once", durationMs: 1 },
     {
@@ -153,7 +168,13 @@ test("resolveDiagnostic renders every known event type without throwing", () => 
       blockedCallCount: 1,
       durationMs: 1,
     },
-    { type: "tool.input_rejected", turnId: id, toolName: "echo", callId: "c", error: { message: "m" } },
+    {
+      type: "tool.input_rejected",
+      turnId: id,
+      toolName: "echo",
+      callId: "c",
+      error: { message: "m" },
+    },
     { type: "permission.granted", turnId: id, childId: id, toolName: "echo", grantId: "g" },
     { type: "tool.admitted", toolName: "echo", kind: "other", permission: "approved" },
     { type: "tool.locations_resolved", toolName: "echo", locations: [] },
@@ -237,5 +258,36 @@ test("resolveDiagnostic renders every known event type without throwing", () => 
     const record = resolveDiagnostic(sample);
     expect(typeof record.category).toBe("string");
     expect(typeof record.level).toBe("string");
+  }
+});
+
+test("an async throwing subscriber does not crash and does not block the other subscribers", async () => {
+  const rejections: unknown[] = [];
+  const onRejection = (reason: unknown) => rejections.push(reason);
+  process.on("unhandledRejection", onRejection);
+  const received: EffectEvent[] = [];
+  const emit = fanoutEffects(
+    () => {
+      throw new Error("sync subscriber failure");
+    },
+    async () => {
+      throw new Error("async subscriber failure");
+    },
+    (event) => {
+      received.push(event);
+    },
+  );
+  try {
+    emit({ type: "host.closed", activeChildren: 0, pendingToolReceipts: 0, pendingGrants: 0 });
+    // The async subscriber's rejection is caught synchronously inside `emit` (containRejection
+    // attaches `.catch()` before `emit` returns); flush a couple of microtask ticks so Bun's own
+    // unhandled-rejection detection, which runs after the current microtask queue drains, would
+    // have already reported it here if containment had failed.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(received).toHaveLength(1);
+    expect(rejections).toEqual([]);
+  } finally {
+    process.off("unhandledRejection", onRejection);
   }
 });

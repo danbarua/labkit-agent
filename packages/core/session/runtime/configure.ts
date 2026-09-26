@@ -1,6 +1,7 @@
 import type { z } from "zod";
 
 import { AgentIdSchema, StepsSchema, type AgentId } from "../../agent/types.ts";
+import type { EffectEmitter } from "../../effects/index.ts";
 import type { StreamUpdateSink, ToolUpdateSink } from "../../host/host.ts";
 import { copyRegistries, type CompletionPort, type PermissionPort } from "../../host/ports.ts";
 import {
@@ -28,6 +29,7 @@ export type ConfiguredSession = Readonly<{
   toolUpdate: ToolUpdateSink | undefined;
   streamUpdate: StreamUpdateSink | undefined;
   requestPermission: PermissionPort | undefined;
+  effects: EffectEmitter | undefined;
   agentId: AgentId;
   steps: z.infer<typeof StepsSchema>;
   agents: ReturnType<typeof copyRegistries>["agents"];
@@ -46,6 +48,7 @@ export function configureSession(raw: SessionOptions, restoring = false): Config
   const toolUpdate = options.toolUpdate;
   const streamUpdate = options.streamUpdate;
   const requestPermission = options.requestPermission;
+  const effects = options.effects;
   const agentId = AgentIdSchema.parse(options.agent);
   const steps = StepsSchema.parse(options.steps);
   const { agents, tools } = copyRegistries(options);
@@ -68,6 +71,7 @@ export function configureSession(raw: SessionOptions, restoring = false): Config
     toolUpdate,
     streamUpdate,
     requestPermission,
+    effects,
     agentId,
     steps,
     agents,
