@@ -17,7 +17,6 @@ import { notify } from "../notifications.ts";
 
 /**
  * Prepares the next step's prompt and model configuration.
- * Extracted from the prepare_model case in host dispatch.
  */
 export function prepareModel(
   host: HostContext,
@@ -86,7 +85,6 @@ export function prepareModel(
 
 /**
  * Completes the step's LLM call with the prepared request.
- * Extracted from the complete case in host dispatch.
  */
 export function completeModel(
   host: HostContext,

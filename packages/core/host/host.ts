@@ -14,7 +14,6 @@ import {
 } from "../agent/tool-batch.ts";
 import {
   failure,
-  MessagesSchema,
   ref,
   type ActorId,
   type Failure,
@@ -261,6 +260,7 @@ export function createHost(
       case "cancel":
       case "prepare_model":
       case "complete":
+      case "prepare_handoff":
         (hostCommands[command.type] as HostCommandHandler<typeof command.type>)(
           ctx,
           turnId,
@@ -268,38 +268,6 @@ export function createHost(
           context,
         );
         return undefined;
-      case "prepare_handoff": {
-        const prompt = context.prompt;
-        if (!prompt) throw new Error("Host prepare_handoff requires prompt context");
-        ctx.spawn(
-          command.child,
-          {
-            failureContext: {
-              operation: {
-                id: command.child.id,
-                kind: command.child.kind,
-                sessionId: bindings.sessionId,
-                turnId,
-              },
-            },
-            input: null,
-            parseInput: z.null().parse,
-            run: (_, signal) =>
-              context.projectHandoff
-                ? context.projectHandoff(
-                    { ...prompt, from: command.from, to: command.turn.agent },
-                    signal,
-                  )
-                : [
-                    command.turn.messages.findLast((message) => message.role === "user"),
-                    command.turn.messages.at(-1),
-                  ].filter((message) => message !== undefined),
-            parseOutput: MessagesSchema.parseAsync,
-          },
-          (result) => ctx.post(turnId, { type: "handoff_prepared", child: command.child, result }),
-        );
-        break;
-      }
       case "request_permission": {
         const grant = {
           batchId: command.batch.id,
