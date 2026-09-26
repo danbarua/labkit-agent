@@ -454,7 +454,13 @@ Prompt responses map completed → `end_turn`, exhausted → `max_turn_requests`
 and terminal error classification `permission_refused` → `refusal`. Explicit provider token limits
 map to `max_tokens`; provider refusals map to `refusal`. These responses retain the structured
 failure in `_meta["labkit.dev/failure"]`. Other provider, tool, storage and malformed-permission
-failures return JSON-RPC errors. Partial stream text may already be visible when a stream fails;
+failures return JSON-RPC error -32000 whose message names the failed operation (tool name and call
+ID when present), classification and cause, and whose `data` is the structured core failure. A tool
+or permission failure ends only that turn; the connection and session accept the next prompt.
+Permission requests that error or answer with an option that was not offered fail the turn under
+either tool-failure policy; tool deadlines also fail the turn. Client `fs/*` and `terminal/*`
+results that lack required ACP v1 fields fail the tool call with an explanation instead of being
+used. Partial stream text may already be visible when a stream fails;
 it never becomes a successful partial model_settled. Updates queued for a prompt are written before
 its response. EOF, output failure and SIGINT/SIGTERM close owned runtimes and cancel their children.
 Factories should honor their AbortSignal; disconnect does not await an unresponsive factory, and

@@ -151,6 +151,45 @@ function locatedTitle(title: string, locations?: readonly { path: string; line?:
     : title;
 }
 
+/** Self-contained JSON-RPC message for a failed turn; the structured failure travels as `data`. */
+function turnFailureMessage(error: {
+  message: string;
+  classification?: string;
+  operation?: { kind: string; toolName?: string; callId?: string };
+}) {
+  const operation = error.operation;
+  const call = operation?.callId ? ` (call ${operation.callId})` : "";
+  const target = operation?.toolName
+    ? ` in ${operation.kind === "permission" ? "the permission request for " : ""}tool ${operation.toolName}${call}`
+    : operation
+      ? ` in ${operation.kind}`
+      : "";
+  const reason = /[.!?]$/.test(error.message) ? error.message : `${error.message}.`;
+  const next =
+    operation?.kind === "tool" || operation?.kind === "permission"
+      ? " The session stays open; send another prompt to continue."
+      : "";
+  return `Agent turn failed${target}${error.classification ? ` [${error.classification}]` : ""}: ${reason}${next}`;
+}
+
+/** Why a client permission answer cannot be honored, or undefined when it names an offered choice. */
+function permissionAnswerProblem(response: unknown, offered: readonly { optionId: string }[]) {
+  const outcome: unknown =
+    typeof response === "object" && response !== null && "outcome" in response
+      ? response.outcome
+      : undefined;
+  if (typeof outcome !== "object" || outcome === null || !("outcome" in outcome))
+    return "the result has no outcome object";
+  if (outcome.outcome === "cancelled") return undefined;
+  if (outcome.outcome !== "selected")
+    return `outcome ${JSON.stringify(outcome.outcome)?.slice(0, 80)} is neither "selected" nor "cancelled"`;
+  const optionId = "optionId" in outcome ? outcome.optionId : undefined;
+  if (typeof optionId !== "string") return "a selected outcome must name an optionId";
+  if (!offered.some((option) => option.optionId === optionId))
+    return `optionId ${JSON.stringify(optionId.slice(0, 80))} was not offered`;
+  return undefined;
+}
+
 function toolUpdate(
   event: HostToolNotification,
   terminals: readonly string[] = [],
@@ -858,6 +897,22 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
                 )
                 .then(
                   (response) => {
+                    const problem = permissionAnswerProblem(response, request.options);
+                    if (problem) {
+                      const reason = `The client answered session/request_permission for ${request.toolCall.title} with an invalid result: ${problem}`;
+                      diagnostic("acp", "warning", "acp.permission.invalid_response", {
+                        ...trace,
+                        reason,
+                        consequence: "Tool does not run; the turn fails",
+                        durationMs: performance.now() - started,
+                      });
+                      reject(
+                        new Error(
+                          `${reason}. The tool did not run. Answer {"outcome":"cancelled"} or {"outcome":"selected","optionId":…} with one of: ${request.options.map((option) => option.optionId).join(", ")}.`,
+                        ),
+                      );
+                      return;
+                    }
                     diagnostic("acp", "info", "acp.permission.resolved", {
                       ...trace,
                       response: response,
@@ -876,7 +931,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
                         error: diagnosticError(error),
                       },
                     );
-                    reject(error);
+                    reject(
+                      new Error(
+                        `The client failed session/request_permission for ${request.toolCall.title}: ${diagnosticError(error).message ?? "unknown client error"}. The tool did not run.`,
+                        { cause: error },
+                      ),
+                    );
                   },
                 )
                 .finally(() => permissionSignal.removeEventListener("abort", abort));
@@ -1531,7 +1591,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
             outcome.error.providerStop?.category === "refusal"
           )
             return { stopReason: "refusal", _meta: { "labkit.dev/failure": outcome.error } };
-          throw new RequestError(-32000, "Agent turn failed", outcome.error);
+          throw new RequestError(-32000, turnFailureMessage(outcome.error), outcome.error);
         }
         return {
           stopReason:

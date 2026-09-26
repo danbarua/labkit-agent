@@ -117,11 +117,16 @@ export function clientFiles(
                   ),
                   cancellationSignal,
                 );
-                if (Buffer.byteLength(response.content) > MAX_FILE_BYTES)
+                const content: unknown = (response as { content?: unknown } | null)?.content;
+                if (typeof content !== "string")
+                  throw new Error(
+                    "The client answered fs/read_text_file with an invalid result: content must be a string",
+                  );
+                if (Buffer.byteLength(content) > MAX_FILE_BYTES)
                   throw new Error(
                     "Client file response exceeds 256 KiB; narrow the read with line and a smaller limit. A single line larger than 256 KiB cannot be returned by read_file.",
                   );
-                return response.content;
+                return content;
               },
               context,
               range,
