@@ -4,15 +4,17 @@ import { FailureSchema, ToolCallIdSchema, type ToolCalls } from "./types.ts";
 
 /**
  * Result of a permission request for one tool batch: one decision per tool call, in call order.
- * The list stops at the first refusal; see {@link validatePermissionDecisions}.
+ * A `cancelled` decision stops the list early (nothing after it is asked); every other outcome
+ * covers every call. See {@link validatePermissionDecisions}.
  *
  * - `allow_once`: the call may run. `approval` is set when a session-wide grant allowed it:
  *   `source: "user"` when the user just chose "allow for this session", `"remembered"` when an
  *   earlier grant for the same tool name was reused. `grantId` names that grant.
- * - `reject_once`: the user refused this call. No call in the batch runs and the turn fails
- *   with classification `permission_refused`.
- * - `cancelled`: the user dismissed the request. No call in the batch runs and the turn ends
- *   `aborted`.
+ * - `reject_once`: the user refused this call. That call does not run; its tool operation fails
+ *   with classification `permission_refused`, which becomes a "permission refused" tool result
+ *   for the model. Other calls in the same batch are unaffected and the turn continues.
+ * - `cancelled`: the user dismissed the request. No call in the batch runs, decisions for calls
+ *   not yet asked about are omitted, and the turn ends `aborted`.
  * - `invalid_input`: the call's arguments failed validation before approval was asked (only under
  *   the `return-error-and-continue` tool-failure setting). The call does not run; its tool
  *   operation fails with `error`, which the model receives as the call's result.
@@ -50,25 +52,20 @@ export type PermissionDecisions = z.infer<typeof PermissionDecisionsSchema>;
 
 /**
  * Checks that permission decisions fit the batch's tool calls and returns them unchanged.
- * Ordered approvals, ending at the first refusal. No partial batch may execute.
  *
- * Entry `i` must name `calls[i]`. Every entry before the last is `allow_once` or
- * `invalid_input`; a list that ends with one of those covers every call.
+ * Entry `i` must name `calls[i]`. A `cancelled` entry, if present, must be the last entry (no
+ * call after it was asked about). Any other outcome must cover every call: the list's length must
+ * equal `calls.length`.
  *
  * @throws Error when the decisions do not match the calls.
  */
 export function validatePermissionDecisions(calls: ToolCalls, decisions: PermissionDecisions) {
+  const cancelledIndex = decisions.findIndex((entry) => entry.decision === "cancelled");
+  const stoppedEarly = cancelledIndex !== -1;
   if (
-    decisions.length > calls.length ||
-    decisions.some(
-      (entry, index) =>
-        entry.callId !== calls[index]?.id ||
-        (index < decisions.length - 1 &&
-          entry.decision !== "allow_once" &&
-          entry.decision !== "invalid_input"),
-    ) ||
-    (["allow_once", "invalid_input"].includes(decisions.at(-1)?.decision ?? "") &&
-      decisions.length !== calls.length)
+    (stoppedEarly && cancelledIndex !== decisions.length - 1) ||
+    (!stoppedEarly && decisions.length !== calls.length) ||
+    decisions.some((entry, index) => entry.callId !== calls[index]?.id)
   )
     throw new Error("Permission decisions do not match admitted tool calls");
   return decisions;

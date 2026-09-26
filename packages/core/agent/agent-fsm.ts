@@ -117,8 +117,9 @@ export type TurnEvent =
       permissionRequired?: true;
     }
   /**
-   * The user answered the permission request. Any `reject_once` ends the turn failed
-   * (`permission_refused`); any `cancelled` ends it aborted; otherwise the batch runs.
+   * The user answered the permission request. A `cancelled` decision ends the turn aborted; refused
+   * calls (`reject_once`) get a permission-refused tool result and the batch runs for every call,
+   * approved or refused.
    */
   | { type: "permission_settled"; child: Ref<"permission">; result: Result<PermissionDecisions> }
   /**
@@ -287,38 +288,16 @@ export const decideTurn = defineMachine<TurnState, TurnEvent, TurnCommand>({
       if (event.child.id !== state.child.id) return stay(state);
       if (event.result.kind !== "succeeded") return resultFailure(state.turn, event.result);
       const decisions = validatePermissionDecisions(state.completion.calls, event.result.value);
-      const refused = decisions.find(
-        (entry) => entry.decision === "reject_once" || entry.decision === "cancelled",
-      );
-      if (refused)
-        return done(
-          state.turn,
-          refused.decision === "cancelled"
-            ? {
-                kind: "aborted",
-                reason: failure({
-                  message: "User cancelled permission request",
-                  classification: "cancelled",
-                  operation: { ...state.child, turnId: state.turn.id, callId: refused.callId },
-                }),
-              }
-            : {
-                kind: "failed",
-                error: failure({
-                  message: "Tool permission rejected",
-                  classification: "permission_refused",
-                  phase: "permission",
-                  operation: {
-                    id: state.child.id,
-                    kind: "permission",
-                    turnId: state.turn.id,
-                    callId: refused.callId,
-                    toolName: state.completion.calls.find((call) => call.id === refused.callId)!
-                      .name,
-                  },
-                }),
-              },
-        );
+      const cancelled = decisions.find((entry) => entry.decision === "cancelled");
+      if (cancelled)
+        return done(state.turn, {
+          kind: "aborted",
+          reason: failure({
+            message: "User cancelled permission request",
+            classification: "cancelled",
+            operation: { ...state.child, turnId: state.turn.id, callId: cancelled.callId },
+          }),
+        });
       return {
         state: {
           status: "executing_tools",

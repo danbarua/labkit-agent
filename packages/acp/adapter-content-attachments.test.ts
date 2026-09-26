@@ -228,6 +228,7 @@ test("durable ACP reload resolves stored attachments without source files; denie
   await writeFile(join(cwd, "DESIGN.md"), document);
   let blobReads = 0;
   let completions = 0;
+  let deniedAsked = false;
   const options: AcpOptions = {
     loadSession: true,
     sessionOptions: async () => {
@@ -261,7 +262,8 @@ test("durable ACP reload resolves stored attachments without source files; denie
                   fetch: (async (_url, init) => {
                     completions++;
                     const body = String(init?.body);
-                    if (body.includes("WRITE_DENIED"))
+                    if (body.includes("WRITE_DENIED") && !deniedAsked) {
+                      deniedAsked = true;
                       return Response.json({
                         choices: [
                           {
@@ -282,6 +284,13 @@ test("durable ACP reload resolves stored attachments without source files; denie
                               ],
                             },
                           },
+                        ],
+                      });
+                    }
+                    if (body.includes("WRITE_DENIED"))
+                      return Response.json({
+                        choices: [
+                          { message: { content: "Cannot write; permission was refused." } },
                         ],
                       });
                     expect(body).toContain(document);
@@ -351,9 +360,9 @@ test("durable ACP reload resolves stored attachments without source files; denie
       id: permission.id,
       result: { outcome: { outcome: "selected", optionId: option.optionId } },
     });
-    expect((await h.response(pending)).result.stopReason).toBe("refusal");
+    expect((await h.response(pending)).result.stopReason).toBe("end_turn");
     await expect(access(join(cwd, "denied.txt"))).rejects.toThrow();
-    expect(completions).toBe(3);
+    expect(completions).toBe(4);
   } finally {
     await h.close();
     await rm(cwd, { recursive: true, force: true });

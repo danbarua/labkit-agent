@@ -100,9 +100,11 @@ and recovery. Error reports failed session status/admission.
 Severity must support a warning/error-only investigation. `permission.decided` stays Info for
 all valid choices; `permission.refused` is a separate Warning identifying the intervention:
 `decision=reject_once`, `reasonCode=permission_refused`, `operation=tool_execution`,
-`outcome=blocked`, tool name/kind, arguments, locations, blocked batch size, and correlation IDs.
-It reports a refusal received through the permission port, not a durable journal receipt or a
-claim that the tool ran. Refusals remain distinguishable from cancelled permission dialogs.
+`outcome=blocked`, tool name/kind, arguments, locations, and correlation IDs (session, turn,
+batch, call). It reports a refusal received through the permission port for one call, not a
+durable journal receipt or a claim that the tool ran; other calls in the same batch are logged
+independently and are unaffected. Refusals remain distinguishable from cancelled permission
+dialogs.
 
 `turn.settled` is Warning only for a failed agent turn. Completed, aborted, and exhausted turns
 are Info; expected negative test scenarios use the same production severity, not a test-specific

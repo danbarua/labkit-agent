@@ -93,11 +93,15 @@ input must become a separate turn. Abort does not discard already accepted queue
 
 ## Permission requests
 
-Set `permissions: "ask"` and supply `bindings.requestPermission`. Every call in a batch must receive
-approval before any call runs. `allow-session` remembers approval for the named tool and all its
-arguments until this live session closes or tool scope changes or permissions are explicitly reset; `allow-once` covers only this call. A refusal therefore blocks the entire batch, including
-calls approved earlier. The failure identifies the refused call; no tool result is invented for it.
-A cancelled dialog aborts the turn. Without the binding, this policy is rejected before execution.
+Set `permissions: "ask"` and supply `bindings.requestPermission`. Each call in a batch is decided
+independently, in order. `allow-session` remembers approval for the named tool and all its
+arguments until this live session closes or tool scope changes or permissions are explicitly reset;
+`allow-once` covers only this call. A refusal produces a permission-refused tool result for that
+call only; approved calls in the same batch run normally, and the turn continues to the next step
+so the model can ask the user what to do instead. An `allow-session` grant from the same batch
+installs even alongside a refused sibling call; only a cancelled dialog or a permission port
+failure discards uncommitted grants. A cancelled dialog stops asking about the rest of
+the batch and aborts the turn. Without the binding, this policy is rejected before execution.
 
 Use `bindings.toolUpdate` for display only. A pending card is not a permission request, and a completed
 card is not a durable result. The authoritative permission response and journal receipt both precede
@@ -112,11 +116,15 @@ journal to decide whether a user refused permission.
 
 | Outcome                             | Meaning for the caller                                                                                         |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Failed, `permission_refused`        | No tool in that batch ran. Ask for a new explicit action if appropriate.                                       |
 | Failed, `timeout`                   | The configured completion/tool deadline expired. The signal was aborted; an external effect may already exist. |
 | Aborted, with reason                | Cancellation ended the turn. Inspect the reason for its initiating operation.                                  |
 | Failed, `interrupted` after restore | Work was active when the saved execution stopped. Its external result may be unknown.                          |
 | Exhausted                           | The turn used its allowed model steps. This is a limit, not a provider failure.                                |
+
+A refused tool call does not fail the turn: it settles as a tool record whose raw result carries
+classification `permission_refused`, converted to a permission-refused result for the model. Read
+that classification on the tool record to distinguish a refusal from an ordinary tool failure; do
+not parse English messages.
 
 `completionTimeoutMs` and `toolTimeoutMs` are optional policy limits in positive integer milliseconds
 (maximum 2,147,483,647); null or omission disables them. Permission waiting is untimed. Deadlines

@@ -195,6 +195,8 @@ for (const mode of [
             });
           else if (mode === "configuration")
             expect(result).toMatchObject({ record: { outcome: { kind: "completed" } } });
+          else if (mode === "refusal")
+            expect(result).toMatchObject({ record: { outcome: { kind: "completed" } } });
           else {
             expect(result).toMatchObject({
               kind: "terminal",
@@ -202,12 +204,7 @@ for (const mode of [
                 outcome: {
                   kind: "failed",
                   error: {
-                    classification:
-                      mode === "refusal"
-                        ? "permission_refused"
-                        : mode === "timeout"
-                          ? "timeout"
-                          : "execution",
+                    classification: mode === "timeout" ? "timeout" : "execution",
                     operation: { toolName: "extract", callId: "extract-call" },
                   },
                 },
@@ -215,7 +212,7 @@ for (const mode of [
             });
           }
           if (mode === "refusal")
-            expect(counts).toEqual({ coordinator: 1, extraction: 0, tool: 0, permission: 1 });
+            expect(counts).toEqual({ coordinator: 2, extraction: 0, tool: 0, permission: 1 });
           await session.close();
           const beforeRestore = { ...counts };
           restored = await restoreSession(options, session.snapshot.durable.conversation.sessionId);

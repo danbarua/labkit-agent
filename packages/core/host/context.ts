@@ -48,13 +48,15 @@ export type PendingToolRelease = {
 };
 
 /**
- * A permission grant for one batch, tracking inputs, invalidInputs, and pending notifications.
+ * A permission grant for one batch, tracking inputs, invalidInputs, refused calls, and pending
+ * notifications.
  */
 export type PermissionGrant = {
   batchId: ActorId;
   approved: boolean;
   inputs: Map<string, unknown>;
   invalidInputs: Map<string, Failure>;
+  refused: Map<string, Failure>;
   pending: HostToolNotification[];
   remembered: Map<string, string>;
 };
@@ -119,6 +121,7 @@ export function createHostContext(
       approved: boolean;
       inputs: Map<string, unknown>;
       invalidInputs: Map<string, Failure>;
+      refused: Map<string, Failure>;
       pending: HostToolNotification[];
       remembered: Map<string, string>;
     }

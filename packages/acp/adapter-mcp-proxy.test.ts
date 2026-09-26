@@ -73,9 +73,7 @@ for (const decision of ["allow_once", "reject_once", "invalid_args"] as const) {
           id: permission.id,
           result: { outcome: { outcome: "selected", optionId: option.optionId } },
         });
-        expect((await h.response(turn)).result.stopReason).toBe(
-          decision === "allow_once" ? "end_turn" : "refusal",
-        );
+        expect((await h.response(turn)).result.stopReason).toBe("end_turn");
       }
       expect((await events()).filter((event) => event.method === "tools/call")).toHaveLength(
         decision === "allow_once" ? 1 : 0,
@@ -271,9 +269,7 @@ for (const type of ["http", "sse"] as const) {
         id: permission.id,
         result: { outcome: { outcome: "selected", optionId: option.optionId } },
       });
-      expect((await h.response(turn)).result.stopReason).toBe(
-        type === "http" ? "end_turn" : "refusal",
-      );
+      expect((await h.response(turn)).result.stopReason).toBe("end_turn");
       expect(peer.events.filter((event) => event.method === "tools/call")).toHaveLength(
         type === "http" ? 1 : 0,
       );
@@ -368,13 +364,17 @@ test("ACP-proxied MCP connects, gates calls with permissions, routes reverse req
 
 test("ACP MCP refusal sends no call and cancellation targets the outer request, ignoring late replies", async () => {
   const { mcpToolName } = await import("./mcp.ts");
+  let completions = 0;
   const h = harness(
     setup({
-      complete: () => ({
-        kind: "tools",
-        text: "Calling host tool",
-        calls: [{ id: "call", name: mcpToolName("host", "echo"), args: { text: "hello" } }],
-      }),
+      complete: () =>
+        ++completions % 2
+          ? {
+              kind: "tools",
+              text: "Calling host tool",
+              calls: [{ id: "call", name: mcpToolName("host", "echo"), args: { text: "hello" } }],
+            }
+          : answer,
     }).options,
   );
   const peer = proxiedMcpPeer(h);
@@ -385,7 +385,7 @@ test("ACP MCP refusal sends no call and cancellation targets the outer request, 
     await peer.reply(await peer.next("session/request_permission"), {
       outcome: { outcome: "selected", optionId: "reject-once" },
     });
-    expect((await h.response(turn)).result.stopReason).toBe("refusal");
+    expect((await h.response(turn)).result.stopReason).toBe("end_turn");
     expect(
       h.messages.some((m) => m.method === "mcp/message" && m.params?.method === "tools/call"),
     ).toBe(false);

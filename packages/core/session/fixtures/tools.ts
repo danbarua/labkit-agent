@@ -320,7 +320,8 @@ export const permissionRejectBatchV2: Scenario = {
   name: "permission-reject-batch",
   version: 2,
   group: "tools",
-  purpose: "Reject one tool permission and fail the whole batch without executing either tool.",
+  purpose:
+    "Reject one tool permission in a batch; the refused call gets a permission-refused result, the approved call runs, and the turn completes.",
   source: "packages/core/session/fixtures/tools.ts#permissionRejectBatchV2",
   dependencies: {
     format: 2,
@@ -362,6 +363,10 @@ export const permissionRejectBatchV2: Scenario = {
           },
         ],
       },
+      {
+        kind: "answer",
+        text: "Done",
+      },
     ],
   },
   async run(f) {
@@ -393,15 +398,15 @@ export const permissionRejectBatchV2: Scenario = {
     f.check(
       "root terminal outcomes",
       root.snapshot.durable.conversation.log.map((turn) => turn.outcome.kind),
-      ["failed"],
+      ["completed"],
     );
     f.check(
       "restored terminal outcomes",
       restored.snapshot.durable.conversation.log.map((turn) => turn.outcome.kind),
-      ["failed"],
+      ["completed"],
     );
-    f.check("Provider request count", f.requests.length, 1);
-    f.check("No tool executes without batch approval", f.toolRuns.length, 0);
+    f.check("Provider request count", f.requests.length, 2);
+    f.check("Only the approved call executes", f.toolRuns.length, 1);
   },
 };
 
