@@ -8,7 +8,7 @@ import {
 import { PreparedModelSchema } from "../agent/agent.ts";
 import { projectConversationPrompt } from "../agent/prompt.ts";
 import { completeResults } from "../agent/tool-batch.ts";
-import { ActorIdSchema, failure, MessagesSchema, type AgentMessage } from "../agent/types.ts";
+import { ActorIdSchema, failure, MessagesSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import {
   bindingPolicyFields,
@@ -26,6 +26,7 @@ import {
   matchingContinuations,
   type Continuation,
 } from "../providers/types.ts";
+import { decodeFailure, decodeRecord, encodeRecord } from "./journal/codec.ts";
 import {
   accepts,
   missingTarget,
@@ -40,24 +41,21 @@ import {
   RevisionSchema,
   type AppendId,
   type CommittedBatch,
-  type Revision,
 } from "./persistence.ts";
 import {
-  BodySchema,
   JournalRecordSchema,
   SeedSchema,
-  WireEventSchema,
-  type Configuration,
   type JournalBody,
   type JournalRecord,
   type Seed,
   type SessionInput,
-  type SystemVersionSchema,
   type WireEvent,
 } from "./types.ts";
 
 export type { ToolEntry, LastCompletionUsage, JournalState } from "./journal/state.ts";
 export { accepts, partialResults } from "./journal/shared.ts";
+export { wireEvent, encodeRecord, decodeRecord } from "./journal/codec.ts";
+export { journalJSONL, journalMarkdown } from "./journal/render.ts";
 
 /**
  * Builds the initial state of a new session from its seed under every commit-time rule: the turn
@@ -201,56 +199,6 @@ export function toSeed(state: JournalState, conversation = state.conversation): 
  *
  * @throws Error for a failed branch reply, which has no journaled form.
  */
-export function wireEvent(event: ConversationEvent): WireEvent {
-  if (event.type === "dispatch_failed") {
-    if (event.command.type !== "turn") throw new Error("Cannot journal a failed branch callback");
-    return WireEventSchema.parse({
-      type: "child",
-      turnId: event.command.turnId,
-      event: { type: "failed", child: event.command.command.child, error: event.error },
-    });
-  }
-  if (
-    event.type === "child" &&
-    event.event.type === "prepared" &&
-    event.event.result.kind === "succeeded"
-  ) {
-    const {
-      model,
-      messages,
-      tools,
-      temperature,
-      provider,
-      thinking,
-      thinkingBudgetTokens,
-      stream,
-      maxOutputTokens,
-      successors,
-      continuations,
-    } = event.event.result.value;
-    return WireEventSchema.parse({
-      ...event,
-      event: {
-        ...event.event,
-        result: {
-          kind: "succeeded",
-          value: {
-            model,
-            messages,
-            tools,
-            temperature,
-            ...(continuations ? { continuations } : {}),
-            ...(provider
-              ? { provider, thinking, thinkingBudgetTokens, stream, maxOutputTokens, successors }
-              : {}),
-          },
-        },
-      },
-    });
-  }
-  return WireEventSchema.parse(event);
-}
-
 function domainEvent(state: JournalState, event: WireEvent, fold: Fold): ConversationEvent {
   if (event.type !== "child") return event;
   const child = event.event;
@@ -709,54 +657,6 @@ function reduce(
 }
 
 /**
- * Serializes a record as a journal append stores it.
- *
- * @throws ZodError when the record is not a current-format journal record.
- */
-export function encodeRecord(record: JournalRecord): string {
-  return JSON.stringify(JournalRecordSchema.parse(record));
-}
-
-/**
- * Parses one stored record and deep-freezes it. Checks only the record format; journal integrity is
- * checked by {@link replay}, which reports a failure here as `record_decode`.
- *
- * @throws SyntaxError for invalid JSON; ZodError for anything else that is not a current-format
- *   record, including a newer `version` or an unknown body `kind`.
- */
-export function decodeRecord(serialized: string): JournalRecord {
-  return freeze(JournalRecordSchema.parse(JSON.parse(serialized)));
-}
-
-const recordKinds: ReadonlySet<string> = new Set(
-  BodySchema.options.map((option) => option.shape.kind.value),
-);
-
-const newerBuild =
-  "the journal was probably written by a newer Labkit build, so restart the launcher on current code";
-
-/** Why stored bytes do not decode, read from the raw JSON without validating it. */
-function decodeFailure(serialized: string): string {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(serialized);
-  } catch {
-    return "Record is not valid JSON";
-  }
-  const field = (value: unknown, key: string) =>
-    typeof value === "object" && value !== null
-      ? (value as Record<string, unknown>)[key]
-      : undefined;
-  const version = field(raw, "version");
-  if (typeof version === "number" && version > 1)
-    return `Record has version ${version}, but this Labkit build reads only version 1; ${newerBuild}`;
-  const kind = field(field(raw, "body"), "kind");
-  if (typeof kind === "string" && !recordKinds.has(kind))
-    return `Record has kind ${JSON.stringify(kind)}, which this Labkit build does not know; ${newerBuild}`;
-  return "Record does not decode as a version 1 journal record";
-}
-
-/**
  * Stages new work: folds `input` into `state` under every commit-time rule, checked against the
  * live `resolvers` (prompt projection, policy patches and versions, permissions, mid-turn input
  * policy, registry, continuations and tool-result correlation). Load ({@link replay}) never re-runs
@@ -1109,187 +1009,4 @@ export function replay(batches: readonly CommittedBatch[]): JournalState {
   }
   if (!state) throw new JournalIntegrityError("creation_first", "The journal has no records", {});
   return freeze(state);
-}
-
-/** The records as JSON Lines: one encoded record per line in revision order, newline-terminated. */
-export function journalJSONL(state: JournalState): string {
-  return `${state.records.map(encodeRecord).join("\n")}\n`;
-}
-/**
- * Renders the journal as a Markdown report for people: agent system prompts, standing instruction
- * history, context, turn log, any unfinished turn, permission decisions, recoveries and registry
- * adoptions. A readable view only; the journal remains the authoritative record.
- *
- * @param options.agentLabels Display names by agent ID.
- */
-export function journalMarkdown(
-  state: JournalState,
-  options: { agentLabels?: Readonly<Record<string, string>> } = {},
-): string {
-  const c = state.conversation;
-  const label = (id: string) =>
-    options.agentLabels?.[id] ? `${options.agentLabels[id]} (agent ID: ${id})` : `Agent ${id}`;
-  const block = (value: unknown) => {
-    const text = JSON.stringify(value, null, 2);
-    const fence = "`".repeat(
-      Math.max(3, ...Array.from(text.matchAll(/`+/g), (m) => m[0].length + 1)),
-    );
-    return `${fence}json\n${text}\n${fence}`;
-  };
-  const quote = (text: string) =>
-    text
-      .split("\n")
-      .map((line) => `> ${line}`)
-      .join("\n");
-  const message = (m: AgentMessage): string[] => {
-    const title =
-      m.role === "tool"
-        ? `Tool result — call ${m.callId}`
-        : m.role[0]!.toUpperCase() + m.role.slice(1);
-    let content = quote(m.text);
-    if (m.role === "tool") {
-      // Tool messages are text at this boundary. Pretty-print JSON when present, retaining literal text otherwise.
-      try {
-        const parsed: unknown = JSON.parse(m.text);
-        if (parsed !== null && typeof parsed === "object") content = block(parsed);
-      } catch {
-        /* Literal tool text is valid and is rendered unchanged. */
-      }
-    }
-    const lines = [`### ${title}`, "", ...(m.text ? [content, ""] : [])];
-    if (m.role === "assistant" && m.calls) {
-      for (const call of m.calls)
-        lines.push(`**Tool call: ${call.name}** (call ID: ${call.id})`, "", block(call.args), "");
-    }
-    if (m.role !== "tool") {
-      for (const part of m.parts ?? []) {
-        if (part.type === "blob")
-          lines.push(
-            `Attachment: **${part.ref.name ?? "Unnamed attachment"}** — ${part.ref.media}, ${part.ref.bytes} bytes.`,
-            "",
-            `Blob ID: \`${part.ref.id}\` (bytes are stored separately).`,
-            "",
-          );
-      }
-    }
-    return lines;
-  };
-  const lines = [
-    `# Session ${c.sessionId}`,
-    "",
-    `Revision: ${state.revision}. System instruction version: ${state.systemVersion}.`,
-    "",
-  ];
-  if (c.origin.kind === "root") lines.push("Origin: new root session.", "");
-  else
-    lines.push(
-      `Origin: ${c.origin.kind} of session \`${c.origin.parent}\` at parent sequence ${c.origin.sequence}.`,
-      "",
-    );
-  lines.push("## Agent system prompts", "");
-  for (const [id, agent] of state.configuration.agents)
-    lines.push(
-      `### ${label(id)}`,
-      "",
-      agent.systemPrompt ? quote(agent.systemPrompt) : "No configured system prompt.",
-      "",
-    );
-  const instructionRecords = state.records.flatMap((record) => {
-    const body = record.body;
-    if (body.kind === "created")
-      return [
-        {
-          revision: record.revision,
-          version: body.seed.systemVersion,
-          inputs: body.seed.systemInputs,
-        },
-      ];
-    if (body.kind === "system")
-      return [{ revision: record.revision, version: body.version, inputs: body.inputs }];
-    return [];
-  });
-  lines.push("## Session instruction history", "");
-  for (const entry of instructionRecords)
-    lines.push(
-      `### Revision ${entry.revision} — instruction version ${entry.version}`,
-      "",
-      ...(entry.inputs.length
-        ? entry.inputs.flatMap((text) => [quote(text), ""])
-        : ["No shared instructions.", ""]),
-    );
-  if (state.systemInputs.length)
-    lines.push(
-      "## Shared instructions",
-      "",
-      ...state.systemInputs.flatMap((text) => [quote(text), ""]),
-    );
-  if (c.context.length)
-    lines.push("## Inherited or replacement context", "", ...c.context.flatMap(message));
-  if (!c.log.length) lines.push("No terminal turns have been committed.", "");
-  c.log.forEach((record, index) => {
-    lines.push(
-      `## Turn ${index + 1} — ${record.outcome.kind}`,
-      "",
-      `Responsible agent: ${label(record.agent)}.`,
-      "",
-      ...record.messages.flatMap(message),
-    );
-    const outcome = record.outcome;
-    lines.push(
-      `**Outcome:** ${outcome.kind}${outcome.kind === "failed" ? ` — ${outcome.error.message}` : outcome.kind === "exhausted" ? " — model-step allowance reached" : outcome.kind === "aborted" ? " — turn cancelled" : ""}.`,
-      "",
-    );
-  });
-  if (c.turn.status !== "idle")
-    lines.push(
-      `## Unfinished turn — ${c.turn.status}`,
-      "",
-      ...c.turn.turn.messages.flatMap(message),
-      ...state.partial.flatMap((entry) => [
-        "Committed partial tool outcome:",
-        "",
-        block(entry),
-        "",
-      ]),
-    );
-  const permissions = state.records.flatMap(({ body }) => {
-    if (
-      body.kind !== "event" ||
-      body.event.type !== "child" ||
-      body.event.event.type !== "permission_settled"
-    )
-      return [];
-    const result = body.event.event.result;
-    return [
-      `Turn ID: \`${body.event.turnId}\``,
-      "",
-      ...(result.kind === "succeeded"
-        ? result.value.map(
-            (decision) =>
-              `- Call ${decision.callId}: **${decision.decision}**${decision.decision === "invalid_input" ? ` — ${decision.error.message}` : decision.approval ? ` — ${decision.approval.scope}, ${decision.approval.source}, grant ${decision.approval.grantId}` : ""}`,
-          )
-        : [
-            `Permission operation: ${result.kind}${result.kind === "failed" ? ` — ${result.error.message}` : ""}.`,
-          ]),
-      "",
-    ];
-  });
-  if (permissions.length) lines.push("## Recorded permission decisions", "", ...permissions);
-  for (const { body, revision } of state.records) {
-    if (body.kind === "recovery") lines.push("## Recovery", "", quote(body.reason), "");
-    if (body.kind === "configuration")
-      lines.push(
-        `## Registry adopted at revision ${revision}`,
-        "",
-        `Agents: ${body.configuration.agents.map(([id]) => id).join(", ")}.`,
-        "",
-        `Tools: ${body.configuration.tools.map(([name]) => name).join(", ") || "none"}.`,
-        "",
-        ...(body.agent ? [`Conversation continues with ${label(body.agent)}.`, ""] : []),
-        ...(body.policy
-          ? [`Tool permissions reconciled as policy version ${body.policy.version}.`, ""]
-          : []),
-      );
-  }
-  return `${lines.join("\n").trimEnd()}\n`;
 }
