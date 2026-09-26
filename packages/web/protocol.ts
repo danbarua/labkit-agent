@@ -80,11 +80,24 @@ export type HostInfo = {
   providers: ProviderOption[];
 };
 
+export type PolicyView = {
+  provider?: string;
+  model?: string;
+  thinking?: string;
+  thinkingBudgetTokens?: number | null;
+  maxOutputTokens?: number;
+  stream?: boolean;
+  permissions?: string;
+  completionTimeoutMs?: number | null;
+  toolTimeoutMs?: number | null;
+};
+
 export type SessionView = {
   sessionId: string;
   sessionStatus: string;
   phase: string;
   sessionError?: FailureView;
+  /** The model `policy` resolves to. */
   resolved?: {
     provider: string;
     model: string;
@@ -92,17 +105,10 @@ export type SessionView = {
     profile: string;
     stream: boolean;
   };
-  policy: {
-    provider?: string;
-    model?: string;
-    thinking?: string;
-    thinkingBudgetTokens?: number | null;
-    maxOutputTokens?: number;
-    stream?: boolean;
-    permissions?: string;
-    completionTimeoutMs?: number | null;
-    toolTimeoutMs?: number | null;
-  };
+  /** The configuration in force: the running turn and the transcript ran under it. */
+  policy: PolicyView;
+  /** The configuration the next turn runs under; differs from `policy` until the turn ends. */
+  selectedPolicy: PolicyView;
   log: TurnView[];
   live: MessageView[];
 };

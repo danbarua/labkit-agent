@@ -237,8 +237,9 @@ export function sessionUpdates(
     if (!entry.acceptingUpdates) return;
     entry.usage?.refresh();
     const id = snapshot.durable.conversation.sessionId;
-    // Pending registry adoption can reconcile the policy the next turn uses before it is journaled.
-    const policy = entry.runtime ? entry.runtime.policy : snapshot.durable.policy;
+    // Clients see the selected configuration: a selection made mid-turn, or a pending registry
+    // adoption's reconciled policy, before the journal records it.
+    const policy = entry.runtime ? entry.runtime.selectedPolicy : snapshot.durable.policy;
     project(entry, client, id, policy, snapshot.durable.revision);
     for (const record of snapshot.durable.records.slice(entry.revision)) {
       entry.revision = record.revision;

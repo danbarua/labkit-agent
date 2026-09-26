@@ -81,18 +81,22 @@ thinking off and a 32768-token output limit (lower if the model's limit is lower
 `LABKIT_ACP_MODEL` logs `acp.catalog.default_model_unresolved` and uses that default.
 `LABKIT_ACP_TERMINAL=1` enables the client terminal tool.
 
-## Derive UI configuration from committed policy
+## Derive UI configuration from the selected policy
 
-A selector's `current(policy)` must read the policy in effect; each option supplies a policy
+A selector's `current(policy)` must read the policy it is given; each option supplies a policy
 patch. Do not maintain a parallel selected-model or permission-mode variable. Otherwise a failed
-append or reload can leave the UI advertising a setting the runtime never accepted.
+store write or reload can leave the UI advertising a setting the runtime never accepted.
 
-A configuration request waits for an active prompt to settle, commits its patch, and then returns
-updated options. New prompts wait behind that commit. Core rejects unsupported model/settings
-combinations. Choices may depend on policy: `options` can be a function of the policy in effect,
-resolved and validated each time the adapter reports or applies configuration. If the value in effect is not one of a selector's choices, the adapter adds it as an
-extra choice named `<value> (saved)` and logs `acp.session.config.unlisted_value` (info). Choosing
-it again changes nothing; choosing another value commits the usual patch.
+A configuration request selects at once, even while a prompt runs: the adapter validates the value
+against the session's selected configuration, stores the selection through core, and returns the
+updated options. Core applies it as a "configuration applied" journal record at the next boundary
+between turns; a running prompt finishes under the settings it started with, and the next prompt
+runs with the selection. Options and `config_option_update` always show the selected configuration.
+Core rejects unsupported model/settings combinations. Choices may depend on policy: `options` can
+be a function of the selected policy, resolved and validated each time the adapter reports or
+selects configuration. If the selected value is not one of a selector's choices, the adapter adds
+it as an extra choice named `<value> (saved)` and logs `acp.session.config.unlisted_value` (info).
+Choosing it again changes nothing; choosing another value selects the usual patch.
 See [configuration binding details](protocol-reference.md#configuration-bindings).
 
 ## Reopen a session after the tool, agent or model registry changes
@@ -232,19 +236,19 @@ children. Remote/client resources have their own cleanup rules; consult the
 per connection, registers every handler on the SDK `agent()` app, then connects the stream. The
 handlers live in `rpc/`:
 
-| Module                                           | Responsibility                                                                                            |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| [rpc/core.ts](rpc/core.ts)                       | Connection identity and the ordered `session/update` outbox (`send`, `flushed`).                          |
-| [rpc/session.ts](rpc/session.ts)                 | The per-session record and configuration/prompt serialization (`afterPrompt`, `awaitConfigurationQuiet`). |
-| [rpc/connection.ts](rpc/connection.ts)           | `initialize`, `authenticate`, `logout`, the initialize/auth gate, and -32601 for unadvertised methods.    |
-| [rpc/sessions.ts](rpc/sessions.ts)               | The session registry and `session/new`, `load`, `resume`, `fork`, `delete`, `list`, `close`.              |
-| [rpc/open.ts](rpc/open.ts)                       | Opening a session: MCP, client resources, runtime creation or restore, replay and publication.            |
-| [rpc/permission.ts](rpc/permission.ts)           | Forwarding runtime permission requests as `session/request_permission` and validating the answer.         |
-| [rpc/updates.ts](rpc/updates.ts)                 | Projecting runtime snapshots, tool and stream events, and saved history to `session/update`.              |
-| [rpc/config.ts](rpc/config.ts)                   | `session/set_config_option`, `session/set_mode`, and config/mode projection.                              |
-| [rpc/prompt.ts](rpc/prompt.ts)                   | `session/prompt` and `session/cancel`: turn admission, settlement and stop reasons.                       |
-| [rpc/mcp.ts](rpc/mcp.ts)                         | `mcp/message` requests and notifications for ACP-transported MCP servers.                                 |
-| [rpc/unknown-methods.ts](rpc/unknown-methods.ts) | Logging `acp.method.unknown` for incoming methods no handler registers.                                   |
+| Module                                           | Responsibility                                                                                         |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| [rpc/core.ts](rpc/core.ts)                       | Connection identity and the ordered `session/update` outbox (`send`, `flushed`).                       |
+| [rpc/session.ts](rpc/session.ts)                 | The per-session record and fork/prompt serialization (`afterPrompt`, `awaitForksQuiet`).               |
+| [rpc/connection.ts](rpc/connection.ts)           | `initialize`, `authenticate`, `logout`, the initialize/auth gate, and -32601 for unadvertised methods. |
+| [rpc/sessions.ts](rpc/sessions.ts)               | The session registry and `session/new`, `load`, `resume`, `fork`, `delete`, `list`, `close`.           |
+| [rpc/open.ts](rpc/open.ts)                       | Opening a session: MCP, client resources, runtime creation or restore, replay and publication.         |
+| [rpc/permission.ts](rpc/permission.ts)           | Forwarding runtime permission requests as `session/request_permission` and validating the answer.      |
+| [rpc/updates.ts](rpc/updates.ts)                 | Projecting runtime snapshots, tool and stream events, and saved history to `session/update`.           |
+| [rpc/config.ts](rpc/config.ts)                   | `session/set_config_option`, `session/set_mode`, and config/mode projection.                           |
+| [rpc/prompt.ts](rpc/prompt.ts)                   | `session/prompt` and `session/cancel`: turn admission, settlement and stop reasons.                    |
+| [rpc/mcp.ts](rpc/mcp.ts)                         | `mcp/message` requests and notifications for ACP-transported MCP servers.                              |
+| [rpc/unknown-methods.ts](rpc/unknown-methods.ts) | Logging `acp.method.unknown` for incoming methods no handler registers.                                |
 
 Registration order: the -32601 handlers for unadvertised methods come first, so they answer before
 params, initialization, auth or session state are checked. Then come connection, MCP bridge, session

@@ -19,7 +19,7 @@ export type Session = {
   mcpServers: readonly McpServer[];
   busy: boolean;
   promptDone: Promise<void>;
-  configurationTail: Promise<void>;
+  forkTail: Promise<void>;
   config: readonly AcpConfigBinding[];
   commands: readonly AcpCommand[];
   configSignature: string;
@@ -34,7 +34,7 @@ export type Session = {
 };
 
 /**
- * Queue `work` after earlier configuration changes and the active prompt; the returned operation
+ * Queue `work` (a fork) after earlier queued forks and the active prompt; the returned operation
  * becomes the session's configuration tail. Callers race it against their own cancellation.
  */
 export function afterPrompt<T>(
@@ -42,23 +42,23 @@ export function afterPrompt<T>(
   cancellation: AbortSignal,
   work: () => Promise<T>,
 ): Promise<T> {
-  const operation = entry.configurationTail.then(async () => {
+  const operation = entry.forkTail.then(async () => {
     await waitForBoundary(entry.promptDone, cancellation);
     cancellation.throwIfAborted();
     return work();
   });
-  entry.configurationTail = operation.then(
+  entry.forkTail = operation.then(
     () => {},
     () => {},
   );
   return operation;
 }
 
-/** Wait until no configuration change is queued; rejects when `signal` aborts first. */
-export async function awaitConfigurationQuiet(entry: Session, signal: AbortSignal): Promise<void> {
+/** Wait until no fork is queued; rejects when `signal` aborts first. */
+export async function awaitForksQuiet(entry: Session, signal: AbortSignal): Promise<void> {
   let barrier: Promise<void>;
   do {
-    barrier = entry.configurationTail;
+    barrier = entry.forkTail;
     await waitForBoundary(barrier, signal);
-  } while (barrier !== entry.configurationTail);
+  } while (barrier !== entry.forkTail);
 }

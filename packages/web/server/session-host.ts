@@ -25,6 +25,7 @@ import {
   type EnvSettlement,
   type HostStreamNotification,
   type HostToolNotification,
+  type Policy,
   type SessionRuntime,
   type SessionState,
 } from "../../core/session/index.ts";
@@ -37,6 +38,7 @@ import type {
   MessageView,
   OutcomeView,
   PermissionPrompt,
+  PolicyView,
   ProviderOption,
   PublicReceipt,
   SessionView,
@@ -218,19 +220,29 @@ function outcomeView(outcome: {
   return { kind: outcome.kind, ...(failure ? { failure: failureView(failure) } : {}) };
 }
 
+function policyView(policy: Policy | undefined, model: string): PolicyView {
+  return {
+    provider: policy?.provider,
+    model: policy?.model ?? model,
+    thinking: policy?.thinking,
+    thinkingBudgetTokens: policy?.thinkingBudgetTokens,
+    maxOutputTokens: policy?.maxOutputTokens,
+    stream: policy?.stream,
+    permissions: policy?.permissions,
+    completionTimeoutMs: policy?.completionTimeoutMs,
+    toolTimeoutMs: policy?.toolTimeoutMs,
+  };
+}
+
 export function project(
   snapshot: SessionState,
   fallbackModel: string,
-  resolved?: {
-    provider: string;
-    model: string;
-    wireModel: string;
-    profile: string;
-    capabilities: { stream: boolean };
-  },
+  runtime: SessionRuntime | undefined,
 ): SessionView {
   const conversation = snapshot.durable.conversation;
-  const policy = snapshot.durable.policy;
+  const resolved = runtime?.model;
+  const inForce = runtime ? runtime.policy : snapshot.durable.policy;
+  const model = resolved?.model ?? fallbackModel;
   return {
     sessionId: conversation.sessionId,
     sessionStatus: snapshot.status,
@@ -247,17 +259,8 @@ export function project(
           },
         }
       : {}),
-    policy: {
-      provider: policy?.provider,
-      model: policy?.model ?? resolved?.model ?? fallbackModel,
-      thinking: policy?.thinking,
-      thinkingBudgetTokens: policy?.thinkingBudgetTokens,
-      maxOutputTokens: policy?.maxOutputTokens,
-      stream: policy?.stream,
-      permissions: policy?.permissions,
-      completionTimeoutMs: policy?.completionTimeoutMs,
-      toolTimeoutMs: policy?.toolTimeoutMs,
-    },
+    policy: policyView(inForce, model),
+    selectedPolicy: policyView(runtime ? runtime.selectedPolicy : inForce, model),
     log: conversation.log.map((turn) => ({
       agent: turn.agent,
       outcome: outcomeView(turn.outcome),
@@ -500,7 +503,7 @@ export async function openSession(input: CreateSessionBody = {}) {
     }
     publish(hosted, {
       kind: "snapshot",
-      view: project(snapshot, hosted.model, hosted.runtime?.model),
+      view: project(snapshot, hosted.model, hosted.runtime),
     });
   };
   const streamUpdate = (notification: HostStreamNotification) => {
@@ -587,7 +590,7 @@ export async function openSession(input: CreateSessionBody = {}) {
   sessions.set(sessionId, hosted);
   return {
     sessionId,
-    view: project(hosted.runtime.snapshot, model, hosted.runtime.model),
+    view: project(hosted.runtime.snapshot, model, hosted.runtime),
     host: await hostInfo(),
   };
 }
@@ -697,7 +700,7 @@ export function eventResponse(sessionId: string, signal: AbortSignal) {
       hosted.subscribers.add(subscriber);
       subscriber({
         kind: "snapshot",
-        view: project(hosted.runtime.snapshot, hosted.model, hosted.runtime.model),
+        view: project(hosted.runtime.snapshot, hosted.model, hosted.runtime),
       });
       for (const pending of hosted.pendingPermissions.values()) {
         subscriber({ kind: "permission", request: permissionPrompt(pending.request) });

@@ -22,8 +22,8 @@ with the variable names checked and the local URL tried.
 
 The example enables streaming and explicit permissions. Ordinary tool failures are returned to the
 model with their structured causes so it can recover; sibling calls finish. Tool failure handling
-can commit that behavior to an existing session without editing its journal. File access, Model,
-Thinking and output-limit selectors commit the same core policy contract.
+can select that behavior for an existing session without editing its journal. File access, Model,
+Thinking and output-limit selectors select the same core policy contract.
 
 The Model selector groups options by provider (group ID = provider ID, name = provider label); each
 value is `<provider>/<model>`, split at the first slash because local model IDs contain slashes.
@@ -415,7 +415,7 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
 - `session/resume`: available with `loadSession`; restores and recovers like load but emits no
   conversation replay. Duplicate live sessions remain rejected.
 - `session/fork`: experimental, opt-in via `forkSession: true` (requires `loadSession`). Forks a
-  live session at its next terminal boundary, serialized with pending configuration changes. Saved
+  live session at its next terminal boundary. Saved
   parents are restored privately with no history replay or display updates, then released after
   publication. Concurrent prompts, loads, and forks cannot take over that temporary parent.
   Core copies inherited blobs and commits the self-contained child creation before publication.
@@ -446,12 +446,14 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
   metadata. A filtered missing store returns an empty list and is never created by discovery.
 - `session/update`: tool lifecycle/content/locations, streamed agent text and thought chunks,
   committed nonstream assistant text, and optional persisted session-info updates. Stable completion message IDs prevent duplicate final text.
-- `session/set_config_option`: select a declared value and commit its policy patch before responding
-  with the full configuration list. Requests during a prompt wait for its terminal boundary; new
-  prompts wait for pending configuration commits. Cancellation before dispatch prevents the patch;
-  cancellation after persistence dispatch does not imply rollback. Failed patches publish no change.
+- `session/set_config_option`: select a declared value and respond at once with the full
+  configuration list showing the selection, also while a prompt runs. Choices are resolved against
+  the selected configuration. Core stores the selection and applies it as a journal record at the
+  next boundary between turns: a running prompt keeps its settings, and the next prompt runs with
+  the selection. Re-selecting the current value writes nothing. A rejected patch or failed store
+  write returns -32000 with the core receipt as `data` and publishes no change.
 - `session/set_mode`: alias for the first mode-category selector. Mode and config
-  notifications reflect the same committed policy. New/load/resume responses include current
+  notifications reflect the same selected policy. New/load/resume responses include current
   config options and legacy modes when bindings are provided. Boolean controls require the client's
   `session.configOptions.boolean` capability.
 - `session/request_permission`: `allow_once`, `allow_always` (named tool, all arguments, live session), and `reject_once` options, correlated through SDK requests. The core
@@ -591,7 +593,7 @@ notifications, which never delay execution.
 ## Session metadata notifications
 
 An optional `sessionInfo({ sessionId, cwd }, signal)` callback reads persisted display metadata.
-The adapter refreshes it after visible new/load/resume, prompt settlement, configuration commits,
+The adapter refreshes it after visible new/load/resume, prompt settlement, configuration selections,
 and fork publication. Results may include title, an ISO 8601 updatedAt timestamp, and JSON `_meta`.
 Omitted fields are unchanged; null explicitly clears title/timestamp. Identical consecutive results
 are suppressed. Invalid, failed, stale, or closed-session replies are dropped. Pending callbacks
@@ -609,17 +611,18 @@ restore a runtime or access blobs. Private fork-parent restoration emits no meta
 Each `AcpConfigBinding` declares `id`, `name`, optional `category`/`description`, and a pure
 `current(policy)` selector. Select bindings have `options` (`value`, `name`, optional `description`,
 and a `PolicyPatch`), or groups (`group`, `name`, `options`). `options` may instead be a function
-of the policy in effect that returns either form; it is resolved and validated whenever the adapter
-reports configuration or applies a choice, so choices can follow the current model. Values must be unique across
+of the selected policy that returns either form; it is resolved and validated whenever the adapter
+reports configuration or selects a choice, so choices can follow the selected model. Values must be unique across
 all groups; groups and individual values cannot be mixed. Group, value, and control `_meta` data
 is preserved. `selectChoices(binding, policy)` exposes flattened choices for application logic. Boolean bindings declare `type: "boolean"`, return a boolean from `current`,
 and provide `patches: { true: PolicyPatch, false: PolicyPatch }`.
-The selector must derive its value from the policy in effect (`SessionRuntime.policy`, which
-includes any pending registry reconciliation). If that value is not a declared option, the adapter
+The adapter passes `current` the selected policy (`SessionRuntime.selectedPolicy`: a pending
+selection, else the policy in effect, which includes any pending registry reconciliation). If the
+returned value is not a declared option, the adapter
 appends it as an extra choice, `{ value, name: "<value> (saved)", description }`, in a
 `labkit-saved` group for grouped selectors and in `availableModes` for the mode selector. It logs
 `acp.session.config.unlisted_value` (info) with `configId` and `value`. Selecting that value again
-is a no-op; any other choice commits its patch.
+is a no-op; any other choice selects its patch.
 Do not keep a separate mutable selection. Each patch must produce its corresponding selected value.
 Bindings are copied at session opening, while callbacks remain executable host resources. They are
 never written to the journal. Core validates tool/provider capability restrictions on each patch.
@@ -633,9 +636,10 @@ Boolean controls are exposed only when the client advertises
 does not reset its journaled value. Boolean controls have no legacy mode alias. The workspace example
 offers a Stream responses toggle to capable clients; its initial value remains enabled.
 
-The adapter sends `config_option_update` after committed state changes and `current_mode_update`
-when the selected mode changes. A response means the journal accepted the policy update, not merely
-that a display event was emitted. The initial agent manifest model remains unchanged by a policy
+The adapter sends `config_option_update` when the selected configuration changes and
+`current_mode_update` when the selected mode changes; both show the selection, not the settings a
+running prompt still uses. A response means core stored the selection: `session/prompt` requests
+sent after it run with it. The initial agent manifest model remains unchanged by a policy
 selection, so a session that selected an alternate model reverts to the live default only if the
 relaunched binding no longer serves that model.
 
@@ -733,8 +737,12 @@ Protocol references: [stdio](https://agentclientprotocol.com/protocol/v1/transpo
 ACP runtime diagnostics use the `labkit.acp` category. Session opening records carry a
 connection ID, initiating `rpcRequestId`, session ID, cwd, provider version, restored revision,
 registry state (`current` or `pending_adoption`), and elapsed time. `acp.prompt.*`
-joins incoming requests to admitted turns and terminal outcomes; `acp.config.*` distinguishes
-waiting for the active prompt from a committed policy revision. A failed load records its original
+joins incoming requests to admitted turns and terminal outcomes; `acp.config.selected` (info)
+records each configuration request with `rpcRequestId`, `configId`, `value` and `outcome`
+(`accepted` applied at once, `selected` waiting for the next boundary between turns, `ignored`,
+or `unchanged`), and `acp.config.failed` (warning) records its cause. Core's
+`configuration.selected` and `configuration.applied` carry the selection and the journal revision
+and turn it applies to. A failed load records its original
 error and cause chain, rather than only the translated RPC error. `acp.session.registry_pending`
 (info) records registry differences on open; core logs `session.registry.adopted` when the live
 registry commits.

@@ -7,13 +7,12 @@ import {
   configPatch,
   configState,
   unlistedValues,
-  waitForBoundary,
   type AcpConfigBinding,
   type ConfigState,
 } from "../session-config.ts";
 import type { ConnectionGate } from "./connection.ts";
 import type { AdapterCore } from "./core.ts";
-import { afterPrompt, type Session } from "./session.ts";
+import type { Session } from "./session.ts";
 import type { SessionRegistry } from "./sessions.ts";
 import type { SessionUpdates } from "./updates.ts";
 
@@ -96,12 +95,12 @@ export function registerConfiguration(
   const { core, gate, updates } = deps;
   const { connectionId } = core;
   const { lookup, isCurrent } = deps.registry;
-  function setConfig(
+  async function setConfig(
+    method: "session/set_config_option" | "session/set_mode",
     id: string,
     configId: string,
     value: unknown,
     client: AgentContext,
-    signal: AbortSignal,
     type?: string,
   ) {
     const started = performance.now();
@@ -109,85 +108,74 @@ export function registerConfiguration(
       connectionId,
       sessionId: id,
       rpcRequestId: String(client.requestId),
-      method: "session/set_config_option",
+      method,
       configId,
+      value: typeof value === "boolean" || typeof value === "string" ? value : undefined,
     };
-    const entry = lookup(id);
-    diagnostic("acp", "info", "acp.config.queued", {
-      ...trace,
-      reason: entry.busy ? "active_prompt" : "configuration_boundary",
-    });
-    const binding = entry.config.find((binding) => binding.id === configId);
-    const effective = entry.runtime.policy;
-    const offered = binding && effective && configPatch(binding, value, effective, type);
-    // An unlisted saved value is offered as a choice; re-selecting it changes nothing.
-    const keepsSaved =
-      binding?.type !== "boolean" && effective && binding?.current(effective) === value;
-    if (!binding || (!offered && !keepsSaved))
-      throw RequestError.invalidParams(undefined, "Unknown config option or value");
-    const cancellation = AbortSignal.any([signal, core.signal()]);
-    const operation = afterPrompt(entry, cancellation, async () => {
+    try {
+      const entry = lookup(id);
+      const binding = entry.config.find((binding) => binding.id === configId);
+      if (!binding) throw RequestError.invalidParams(undefined, "Unknown config option or value");
       if (core.isClosing() || !isCurrent(id, entry) || !entry.acceptingUpdates)
         throw new RequestError(-32000, "Session closed");
       gate.requireAccess();
-      const policy = entry.runtime.policy;
-      if (!policy) throw new RequestError(-32000, "Session has no journaled policy");
-      if (binding.current(policy) !== value) {
-        // Choices can depend on policy (for example the model); resolve against the policy in effect now.
-        const patch = configPatch(binding, value, policy, type);
+      // Choices can depend on the selected configuration (for example the model).
+      const selected = entry.runtime.selectedPolicy;
+      if (!selected) throw new RequestError(-32000, "Session has no journaled policy");
+      const patch = configPatch(binding, value, selected, type);
+      // An unlisted saved value is offered as a choice; re-selecting it changes nothing.
+      const unchanged =
+        (patch !== undefined || binding.type !== "boolean") && binding.current(selected) === value;
+      let outcome: "unchanged" | "accepted" | "selected" | "ignored" = "unchanged";
+      if (!unchanged) {
         if (!patch) throw RequestError.invalidParams(undefined, "Unknown config option or value");
         const receipt = await entry.runtime.updatePolicy(structuredClone(patch));
-        if (receipt.kind !== "accepted")
-          throw new RequestError(-32000, "Configuration change was not committed", receipt);
+        if (receipt.kind === "closed") throw new RequestError(-32000, "Session closed");
+        if (receipt.kind === "failed") throw new RequestError(-32000, receipt.message, receipt);
+        if (receipt.kind === "busy")
+          throw new RequestError(-32000, "Configuration change was not selected", receipt);
+        outcome = receipt.kind;
       }
-      diagnostic("acp", "info", "acp.config.committed", {
+      diagnostic("acp", "info", "acp.config.selected", {
         ...trace,
-        configValue: typeof value === "boolean" || typeof value === "string" ? value : undefined,
+        outcome,
         revision: entry.runtime.snapshot.durable.revision,
         durationMs: performance.now() - started,
       });
-      const state = configState(entry.config, entry.runtime.policy);
+      const state = configState(entry.config, entry.runtime.selectedPolicy);
       updates.observe(entry, client, entry.runtime.snapshot);
       updates.refreshInfo(entry, client);
       await core.flushed();
       return { configOptions: state.configOptions ?? [] };
-    });
-    return waitForBoundary(operation, cancellation)
-      .then(() => operation)
-      .catch((error) => {
-        diagnostic(
-          "acp",
-          cancellation.aborted ? "info" : "warning",
-          cancellation.aborted ? "acp.config.cancelled" : "acp.config.failed",
-          {
-            ...trace,
-            outcome: cancellation.aborted ? "cancelled" : "failed",
-            durationMs: performance.now() - started,
-            error: diagnosticError(error),
-          },
-        );
-        throw error;
+    } catch (error) {
+      diagnostic("acp", "warning", "acp.config.failed", {
+        ...trace,
+        outcome: "failed",
+        durationMs: performance.now() - started,
+        error: diagnosticError(error),
       });
+      throw error;
+    }
   }
 
   app
-    .onRequest("session/set_config_option", ({ params, client, signal }) =>
+    .onRequest("session/set_config_option", ({ params, client }) =>
       setConfig(
+        "session/set_config_option",
         params.sessionId,
         params.configId,
         params.value,
         client,
-        signal,
         "type" in params ? params.type : undefined,
       ),
     )
-    .onRequest("session/set_mode", async ({ params, client, signal }) => {
+    .onRequest("session/set_mode", async ({ params, client }) => {
       const entry = lookup(params.sessionId);
       const mode = entry.config.find(
         (binding) => binding.category === "mode" && binding.type !== "boolean",
       );
       if (!mode) throw RequestError.methodNotFound("session/set_mode");
-      await setConfig(params.sessionId, mode.id, params.modeId, client, signal);
+      await setConfig("session/set_mode", params.sessionId, mode.id, params.modeId, client);
       return {};
     });
   return ["session/set_config_option", "session/set_mode"];
