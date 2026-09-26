@@ -1,8 +1,8 @@
 import { z } from "zod";
 
 import type { ConversationCommand } from "../agent/agent-conversation.ts";
-import { admittedCompletionSchema, type TurnEvent } from "../agent/agent-fsm.ts";
-import { PreparedModelSchema, type PreparedModel } from "../agent/agent.ts";
+import type { TurnEvent } from "../agent/agent-fsm.ts";
+import type { PreparedModel } from "../agent/agent.ts";
 import type { BlobResolver } from "../agent/content.ts";
 import { PermissionDecisionsSchema, type PermissionDecisions } from "../agent/permissions.ts";
 import type { PromptInput } from "../agent/prompt.ts";
@@ -16,7 +16,6 @@ import {
   failure,
   MessagesSchema,
   ref,
-  ToolNameSchema,
   type ActorId,
   type Failure,
   type Result,
@@ -25,16 +24,9 @@ import {
 import { Actor, freeze } from "../fsm/fsm.ts";
 import { diagnostic, diagnosticError } from "../logging/index.ts";
 import { effectiveToolResult, type Policy } from "../policy/policy.ts";
-import {
-  ContinuationSchema,
-  matchingContinuations,
-  StreamDeltaSchema,
-  type Continuation,
-  type StreamDelta,
-} from "../providers/types.ts";
-import { CompletionUsageSchema } from "../providers/usage.ts";
+import type { Continuation, StreamDelta } from "../providers/types.ts";
+import { hostCommands, type HostCommandHandler } from "./commands/index.ts";
 import { createHostContext } from "./context.ts";
-import { notify } from "./notifications.ts";
 import {
   copyRegistries,
   PermissionResponseSchema,
@@ -267,220 +259,15 @@ export function createHost(
     });
     switch (command.type) {
       case "cancel":
-        ctx.cancel(command.child);
-        break;
-      case "prepare_model": {
-        const prompt = context.prompt;
-        if (!prompt) throw new Error("Host prepare_model requires prompt context");
-        const agent = prompt.agent;
-        ctx.spawn(
-          command.child,
-          {
-            failureContext: {
-              operation: {
-                id: command.child.id,
-                kind: command.child.kind,
-                sessionId: bindings.sessionId,
-                turnId,
-              },
-            },
-            input: null,
-            parseInput: z.null().parse,
-            run: async (_, signal) => {
-              const prepared = PreparedModelSchema.parse({
-                model: context.provider?.model ?? agent.model,
-                ...(context.provider?.provider
-                  ? {
-                      provider: context.provider.provider,
-                      thinking: context.provider.thinking,
-                      thinkingBudgetTokens: context.provider.thinkingBudgetTokens,
-                      stream: context.provider.stream,
-                      maxOutputTokens: context.provider.maxOutputTokens,
-                      successors: agent.successors ?? [...ctx.agents.keys()],
-                    }
-                  : {}),
-                messages: await context.projectPrompt(prompt, signal),
-                tools: agent.tools.map((name) => ({
-                  type: "function",
-                  function: {
-                    name,
-                    description: ctx.tools.get(ToolNameSchema.parse(name))!.description,
-                    parameters: ctx.tools.get(ToolNameSchema.parse(name))!.parameters,
-                  },
-                })),
-              });
-              await context.loadBlobs?.(prepared, signal);
-              return prepared;
-            },
-            parseOutput: (raw) => {
-              const prepared = PreparedModelSchema.parse(raw);
-              const continuations = matchingContinuations(
-                prepared.messages,
-                context.continuations ?? [],
-                prepared.provider,
-              );
-              return PreparedModelSchema.parse({
-                ...prepared,
-                ...(continuations.length ? { continuations } : {}),
-              });
-            },
-          },
-          (result) => ctx.post(turnId, { type: "prepared", child: command.child, result }),
-        );
-        break;
-      }
-      case "complete": {
-        const identity = {
-          ...(bindings.sessionId ? { sessionId: bindings.sessionId } : {}),
+      case "prepare_model":
+      case "complete":
+        (hostCommands[command.type] as HostCommandHandler<typeof command.type>)(
+          ctx,
           turnId,
-          completionId: command.child.id,
-          generation: command.turn.generation,
-        };
-        let status = "pending";
-        const notifyStream = (fields: Omit<HostStreamNotification, keyof typeof identity>) => {
-          if (!ctx.closed && command.request.stream)
-            notify(ctx.streamUpdate, { ...identity, ...fields });
-        };
-        notifyStream({ sessionUpdate: "completion", status: "pending" });
-        if (ctx.closed) break;
-        const admitted = admittedCompletionSchema(
-          new Set(
-            command.request.successors ??
-              ctx.agents.get(command.turn.agent)!.successors ??
-              ctx.agents.keys(),
-          ),
-          new Set(context.allowedTools ?? ctx.agents.get(command.turn.agent)!.tools),
+          command as never,
+          context,
         );
-        ctx.spawn(
-          command.child,
-          {
-            input: command.request,
-            timeoutMs: context.completionTimeoutMs,
-            failureContext: {
-              operation: {
-                id: command.child.id,
-                kind: "completion",
-                sessionId: bindings.sessionId,
-                turnId,
-              },
-            },
-            parseInput: PreparedModelSchema.parseAsync,
-            run: async (request, signal) => {
-              const blobs = await context.loadBlobs?.(request, signal, true);
-              signal.throwIfAborted();
-              diagnostic("provider", "info", "completion.system_prompt", {
-                sessionId: bindings.sessionId,
-                turnId,
-                childId: command.child.id,
-                agentId: command.turn.agent,
-                provider: request.provider,
-                model: request.model,
-                message: "System instructions supplied to this completion, in order",
-                systemMessages: request.messages.filter((message) => message.role === "system"),
-              });
-              const raw = await bindings.complete(
-                request,
-                signal,
-                blobs,
-                (delta) => {
-                  const parsed = StreamDeltaSchema.safeParse(delta);
-                  if (parsed.success && !signal.aborted && status === "in_progress")
-                    notifyStream({ ...parsed.data, sessionUpdate: "completion_update" });
-                },
-                {
-                  sessionId: bindings.sessionId,
-                  turnId,
-                  childId: command.child.id,
-                  generation: command.turn.generation,
-                },
-              );
-              signal.throwIfAborted();
-              const wrapped = raw !== null && typeof raw === "object" && "completion" in raw;
-              const output = wrapped
-                ? z
-                    .strictObject({
-                      completion: z.unknown(),
-                      continuationPayload: z.unknown().optional(),
-                      usage: CompletionUsageSchema.optional(),
-                    })
-                    .parse(raw)
-                : { completion: raw };
-              const completion = await admitted.parseAsync(output.completion);
-              const continuation =
-                output.continuationPayload === undefined
-                  ? undefined
-                  : await (
-                      context.storeContinuation ?? ((entry) => ContinuationSchema.parse(entry))
-                    )(
-                      {
-                        provider: z.string().parse(command.request.provider),
-                        owner: { turnId, generation: command.turn.generation },
-                        payload: output.continuationPayload,
-                      },
-                      signal,
-                    );
-              signal.throwIfAborted();
-              if (output.usage)
-                diagnostic("provider", "info", "completion.usage.received", {
-                  sessionId: bindings.sessionId,
-                  turnId,
-                  childId: command.child.id,
-                  model: request.model,
-                  usage: output.usage,
-                  message: "Completion response usage validated; awaiting runtime settlement",
-                });
-              return { completion, continuation, usage: output.usage };
-            },
-            parseOutput: z.strictObject({
-              completion: admitted,
-              continuation: ContinuationSchema.optional(),
-              usage: CompletionUsageSchema.optional(),
-            }).parseAsync,
-          },
-          (result) =>
-            ctx.post(turnId, {
-              type: "model_settled",
-              child: command.child,
-              ...(result.kind === "succeeded" && result.value.usage
-                ? { usage: result.value.usage }
-                : {}),
-              result:
-                result.kind === "succeeded"
-                  ? { kind: "succeeded", value: result.value.completion }
-                  : result,
-              ...(result.kind === "succeeded" &&
-              result.value.completion.kind === "tools" &&
-              context.permissions === "ask"
-                ? { permissionRequired: true as const }
-                : {}),
-              ...(result.kind === "succeeded" && result.value.continuation
-                ? { continuation: result.value.continuation }
-                : {}),
-            }),
-          (state) => {
-            const next =
-              state.status === "succeeded"
-                ? "completed"
-                : state.status === "failed" || state.status === "cancelled"
-                  ? "failed"
-                  : state.status === "running" || state.status === "validating_output"
-                    ? "in_progress"
-                    : "pending";
-            if (next === status) return;
-            status = next;
-            notifyStream({
-              sessionUpdate: "completion_update",
-              status: next,
-              ...(state.status === "failed"
-                ? { error: state.error.message }
-                : state.status === "cancelled"
-                  ? { error: "Completion cancelled" }
-                  : {}),
-            });
-          },
-        );
-        break;
-      }
+        return undefined;
       case "prepare_handoff": {
         const prompt = context.prompt;
         if (!prompt) throw new Error("Host prepare_handoff requires prompt context");
