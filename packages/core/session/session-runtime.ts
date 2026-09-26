@@ -1431,6 +1431,17 @@ export async function createSession(options: SessionOptions): Promise<SessionRun
   );
 }
 
+/** {@link restoreSession} found no saved journal for this session ID (never saved, or deleted). */
+export class SessionNotFoundError extends Error {
+  readonly sessionId: string;
+
+  constructor(sessionId: string) {
+    super("Session not found");
+    this.name = "SessionNotFoundError";
+    this.sessionId = sessionId;
+  }
+}
+
 /**
  * Reopens a saved session with the live configuration and bindings. Load checks journal integrity
  * only; a changed registry, model or policy never prevents reopening. Invokes no completion, tool
@@ -1443,7 +1454,8 @@ export async function createSession(options: SessionOptions): Promise<SessionRun
  * `pending_adoption` and {@link SessionRuntime.policy} shows the reconciled policy until the first
  * new work commits them in a `configuration` record.
  * @param rawSessionId ID of the saved session; `options.sessionId` is ignored.
- * @throws (rejects) when the session is not found, loading fails, the journal fails an integrity
+ * @throws (rejects) {@link SessionNotFoundError} when no journal is saved under the ID, and
+ * otherwise when loading fails, the journal fails an integrity
  * rule ({@link JournalIntegrityError}), the recovery record does not commit, no live provider
  * selection can replace the saved one, or the bindings are invalid. `session.restore_failed`
  * logs the stage.
@@ -1460,10 +1472,8 @@ export async function restoreSession(
     diagnostic("session", "info", "session.restoring", { sessionId });
     stage = "load_journal";
     const loaded = await loadSession(options.persistence, sessionId);
-    if (loaded.kind !== "loaded")
-      throw new Error(loaded.kind === "not_found" ? "Session not found" : loaded.message, {
-        cause: loaded.kind === "failed" ? loaded.error : undefined,
-      });
+    if (loaded.kind === "not_found") throw new SessionNotFoundError(sessionId);
+    if (loaded.kind !== "loaded") throw new Error(loaded.message, { cause: loaded.error });
     stage = "replay_journal";
     const journal = replay(loaded.batches);
     if (journal.conversation.sessionId !== sessionId || journal.revision !== loaded.revision) {
