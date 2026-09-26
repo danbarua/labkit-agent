@@ -9,12 +9,10 @@ import {
   type ClientCapabilities,
   type ListSessionsRequest,
   type ListSessionsResponse,
-  type McpServer,
   type NewSessionRequest,
   type SessionInfoUpdate,
   type SessionUpdate,
   type Stream,
-  type ToolCallStatus,
 } from "@agentclientprotocol/sdk";
 import {
   createSession,
@@ -22,7 +20,6 @@ import {
   SessionNotFoundError,
   type JournalState,
   type SessionOptions,
-  type SessionPersistence,
   type SessionRuntime,
   type SessionState,
 } from "@labkit-agent/core";
@@ -51,6 +48,7 @@ import {
   type AdvertisedPromptCapabilities,
 } from "./prompt-input.ts";
 import { adapterCore } from "./rpc/core.ts";
+import { afterPrompt, awaitConfigurationQuiet, type Session } from "./rpc/session.ts";
 import {
   bindConfig,
   configPatch,
@@ -120,32 +118,6 @@ export type AcpOptions = Readonly<{
   promptCapabilities?:
     AcpPromptCapabilities | (() => AcpPromptCapabilities | Promise<AcpPromptCapabilities>);
 }>;
-
-type Session = {
-  runtime: SessionRuntime;
-  usage?: ReturnType<typeof usageReporter>;
-  dispose: () => Promise<void>;
-  persistence: SessionPersistence;
-  promptController?: AbortController;
-  promptRpcRequestId?: string;
-  cwd: string;
-  additionalDirectories: readonly string[];
-  mcpServers: readonly McpServer[];
-  busy: boolean;
-  promptDone: Promise<void>;
-  configurationTail: Promise<void>;
-  config: readonly AcpConfigBinding[];
-  commands: readonly AcpCommand[];
-  configSignature: string;
-  infoSignature: string;
-  infoEpoch: number;
-  modeId?: string;
-  acceptingUpdates: boolean;
-  revision: number;
-  streamed: Map<string, string>;
-  terminals: Map<string, string[]>;
-  toolCards: Map<string, { baseTitle: string; title: string; status: ToolCallStatus }>;
-};
 
 function locatedTitle(title: string, locations?: readonly { path: string; line?: number }[]) {
   return locations?.length
@@ -1115,9 +1087,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     if (!binding || (!offered && !keepsSaved))
       throw RequestError.invalidParams(undefined, "Unknown config option or value");
     const cancellation = AbortSignal.any([signal, connection.signal]);
-    const operation = entry.configurationTail.then(async () => {
-      await waitForBoundary(entry.promptDone, cancellation);
-      cancellation.throwIfAborted();
+    return afterPrompt(entry, cancellation, async () => {
       if (closing || sessions.get(id) !== entry || !entry.acceptingUpdates)
         throw new RequestError(-32000, "Session closed");
       requireAccess();
@@ -1142,27 +1112,20 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       refreshInfo(entry, client);
       await core.flushed();
       return { configOptions: state.configOptions ?? [] };
+    }).catch((error) => {
+      diagnostic(
+        "acp",
+        cancellation.aborted ? "info" : "warning",
+        cancellation.aborted ? "acp.config.cancelled" : "acp.config.failed",
+        {
+          ...trace,
+          outcome: cancellation.aborted ? "cancelled" : "failed",
+          durationMs: performance.now() - started,
+          error: diagnosticError(error),
+        },
+      );
+      throw error;
     });
-    entry.configurationTail = operation.then(
-      () => {},
-      () => {},
-    );
-    return waitForBoundary(operation, cancellation)
-      .then(() => operation)
-      .catch((error) => {
-        diagnostic(
-          "acp",
-          cancellation.aborted ? "info" : "warning",
-          cancellation.aborted ? "acp.config.cancelled" : "acp.config.failed",
-          {
-            ...trace,
-            outcome: cancellation.aborted ? "cancelled" : "failed",
-            durationMs: performance.now() - started,
-            error: diagnosticError(error),
-          },
-        );
-        throw error;
-      });
   }
   const closeForAuth = async () => {
     authLifetime.abort();
@@ -1383,9 +1346,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
             undefined,
             "Fork must retain the parent's MCP server bindings",
           );
-        const operation = parent.configurationTail.then(async () => {
-          await waitForBoundary(parent.promptDone, cancellation);
-          cancellation.throwIfAborted();
+        return await afterPrompt(parent, cancellation, async () => {
           if (sessions.get(params.sessionId) !== parent || (!borrowed && !parent.acceptingUpdates))
             throw new RequestError(-32000, "Parent session closed");
           const child = await parent.runtime.fork();
@@ -1427,11 +1388,6 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
             });
           }
         });
-        parent.configurationTail = operation.then(
-          () => {},
-          () => {},
-        );
-        return await waitForBoundary(operation, cancellation);
       } finally {
         if (borrowed) {
           try {
@@ -1574,11 +1530,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       const entry = lookup(params.sessionId);
       requireAdvertisedContent(params.prompt, promptCapabilities, trace);
       if (entry.busy) throw new RequestError(-32000, "Session already has an active prompt");
-      let barrier: Promise<void>;
-      do {
-        barrier = entry.configurationTail;
-        await waitForBoundary(barrier, AbortSignal.any([signal, connection.signal]));
-      } while (barrier !== entry.configurationTail);
+      await awaitConfigurationQuiet(entry, AbortSignal.any([signal, connection.signal]));
       if (sessions.get(params.sessionId) !== entry || !entry.acceptingUpdates)
         throw new RequestError(-32000, "Session closed");
       if (entry.busy) throw new RequestError(-32000, "Session already has an active prompt");
