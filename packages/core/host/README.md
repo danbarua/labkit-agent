@@ -88,7 +88,8 @@ consumers call `resetPermissions` after applying a changed permission mode or to
 does not infer authorization changes from a general policy revision.
 An existing committed grant survives cancellation of a later turn; cancellation stops work rather
 than changing the user's authorization. To revoke remembered grants in ACP, switch Tool approvals to
-another mode and back; each applied change clears them.
+another mode and back. This revokes them even when both switches happen during one turn and the
+mode in force never changes (`configuration.unchanged` with `revokesGrants: true`).
 
 `toolUpdate` and `streamUpdate` are best-effort display subscribers. Their exceptions or pending
 promises cannot block execution. Use their operation IDs to update existing cards/chunks. Tool updates include the known tool name

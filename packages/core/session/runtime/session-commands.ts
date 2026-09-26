@@ -283,10 +283,91 @@ function stop(ctx: SessionInstance) {
   ctx.branchReplies.clear();
 }
 
+/** Logs a registered selection and, for a caller's selection, writes it to the configuration store. */
+function selected(ctx: SessionInstance, command: Command<"selected">) {
+  const { sessionId } = ctx;
+  const state = ctx.actor.snapshot;
+  const inForce = ctx.adoption.plan?.body.policy ?? state.durable.policy;
+  // An append in flight may be starting a turn; report the conversation as it will be.
+  const { turn, turnId } = ("pending" in state ? state.pending.next : state.durable).conversation;
+  diagnostic("session", "info", "configuration.selected", {
+    sessionId,
+    selectionId: command.id,
+    turnId,
+    version: command.policy.version,
+    inForceVersion: inForce?.version,
+    changedFields: inForce ? changedPolicyFields(inForce, command.policy) : [],
+    turnStatus: turn.status,
+    source: command.persist ? "caller" : "restore",
+    message:
+      turn.status === "idle"
+        ? "Configuration selected; applies at this idle boundary once stored"
+        : "Configuration selected; the running turn keeps its settings and this applies when it ends",
+  });
+  if (!command.persist) return;
+  const { id, policy } = command;
+  ctx.storing = ctx.storing.then(async () => {
+    try {
+      await ctx.configured.port.putConfig(sessionId, policy, new AbortController().signal);
+      void ctx.send({ type: "stored", id, policy });
+    } catch (error) {
+      const cause = failure(error, {
+        classification: "persistence",
+        operation: { id, kind: "admission", sessionId },
+        phase: "select",
+      });
+      diagnostic("session", "error", "configuration.store_failed", {
+        sessionId,
+        selectionId: id,
+        version: policy.version,
+        reason: cause.message,
+        error: cause,
+        consequence:
+          "Selection not stored or applied; the last stored selection, if any, stays pending",
+      });
+      void ctx.send({ type: "stored", id, policy, error: cause });
+    }
+  });
+}
+
+/** A selection matched the policy in force; revokes grants if a superseded one changed them. */
+function unchanged(ctx: SessionInstance, command: Command<"unchanged">) {
+  diagnostic("session", "info", "configuration.unchanged", {
+    sessionId: ctx.sessionId,
+    selectionId: command.id,
+    turnId: ctx.actor.snapshot.durable.conversation.turnId,
+    version: command.policy.version,
+    revokesGrants: command.revokesGrants,
+    message: "Selection matches the configuration in force; nothing recorded",
+  });
+  if (command.revokesGrants)
+    ctx.host.resetPermissions(
+      "Permission mode or tool scope was changed and changed back before the configuration applied; remembered tool approvals revoked",
+      { policyVersion: command.policy.version, selectionId: command.id },
+    );
+}
+
+function revokeGrants(ctx: SessionInstance, command: Command<"revokeGrants">) {
+  ctx.host.resetPermissions(
+    "Permission mode or tool scope was changed and changed back before the configuration applied; remembered tool approvals revoked",
+    { policyVersion: command.policyVersion, selectionId: command.id },
+  );
+}
+
 /** Handler for each command type the session actor emits. */
 const sessionCommandHandlers: {
   [K in SessionCommand["type"]]: (ctx: SessionInstance, command: Command<K>) => void;
-} = { append, load, dispatch: releaseCommitted, reply, drain, stop };
+} = {
+  append,
+  load,
+  dispatch: releaseCommitted,
+  reply,
+  drain,
+  stop,
+  selected,
+  unchanged,
+  revokeGrants,
+};
 
 /** Runs one session actor command; a synchronous throw makes the actor close the session. */
 export function executeSessionCommand<K extends SessionCommand["type"]>(

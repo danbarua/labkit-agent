@@ -62,6 +62,12 @@ export class SessionNotFoundError extends Error {
  * from the live bindings are not written yet: {@link SessionRuntime.registry} reports
  * `pending_adoption` and {@link SessionRuntime.policy} shows the reconciled policy until the first
  * new work commits them in a `configuration` record.
+ *
+ * A selection in the persistence port's configuration store that differs from the journaled policy
+ * was made before the process stopped and never applied. Restore applies it before resolving:
+ * after recovery, and after the `configuration` record it forces when adoption is pending. A
+ * stored selection that no longer validates logs `configuration.rejected` and is replaced in the
+ * store by the policy in force.
  * @param rawSessionId ID of the saved session; `options.sessionId` is ignored.
  * @throws (rejects) {@link SessionNotFoundError} when no journal is saved under the ID, and
  * otherwise when loading fails, the journal fails an integrity

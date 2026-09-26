@@ -4,8 +4,10 @@ import type { Decision } from "../fsm/fsm.ts";
 import {
   builtinResolvers,
   changedPolicyFields,
+  patchPolicy,
   PolicyVersionSchema,
   type Policy,
+  type PolicyPatch,
   type PolicyResolvers,
 } from "../policy/policy.ts";
 import { AppendIdSchema } from "./persistence.ts";
@@ -18,8 +20,10 @@ import { SystemVersionSchema, type SessionInput } from "./types.ts";
  *
  * - `accepted`: the staged records committed; `receipt` names the append and the revision it
  *   reached. The input's conversation commands are dispatched before this reply.
- * - `selected`: a configuration selection is pending because a turn is running or an append is in
- *   flight; it applies as a "configuration applied" record at the next boundary between turns.
+ * - `selected`: a configuration selection is stored and pending because a turn is running or
+ *   starting, or a later selection superseded it; `id` correlates it with the
+ *   `configuration.selected`/`configuration.applied` diagnostics. It applies as a "configuration
+ *   applied" record at the next boundary between turns.
  * - `ignored`: the input no longer applies (stale or uncorrelated, see `accepts`), or a selection
  *   matches the configuration in force; nothing was written.
  * - `busy`: a `system` change arrived while a turn is running or staged, or while queued inputs
@@ -31,7 +35,7 @@ import { SystemVersionSchema, type SessionInput } from "./types.ts";
  */
 export type CommandReceipt =
   | Readonly<{ kind: "accepted"; receipt: Receipt }>
-  | Readonly<{ kind: "selected"; policy: Policy }>
+  | Readonly<{ kind: "selected"; id: string; policy: Policy }>
   | Readonly<{ kind: "ignored" }>
   | Readonly<{ kind: "busy" }>
   | Readonly<{ kind: "failed"; message: string; error: Failure }>
@@ -59,10 +63,19 @@ type Pending = Readonly<{
 }>;
 
 /**
- * A configuration the user selected (already in the configuration store) and not yet applied. `id`
- * correlates the selection's reply, its diagnostics and the append that applies it.
+ * A configuration the user selected and not yet applied. `id` correlates the selection's reply,
+ * its diagnostics and the append that applies it. `stored` turns true once the configuration store
+ * holds it; the boundary waits for that. `revokesGrants` records that a superseded selection
+ * changed permissions or tools. `fallback` is the last stored selection this one superseded, kept
+ * pending again if storing this one fails.
  */
-type Selection = Readonly<{ id: string; policy: Policy }>;
+type Selection = Readonly<{
+  id: string;
+  policy: Policy;
+  stored: boolean;
+  revokesGrants: boolean;
+  fallback?: Selection | undefined;
+}>;
 
 type Base = Readonly<{
   durable: JournalState;
@@ -95,14 +108,17 @@ export type SessionState = Base &
 
 /**
  * Input to {@link decideSession}. `appended` and `loaded` report the storage operation for
- * `appendId`; they are ignored unless that append is in flight. `select` records a configuration
- * the caller already stored and applies it at once when the conversation is idle. `drain` applies a
- * pending selection at an idle boundary, then stages the next waiting submission or dequeues the
- * first queued input when no turn is running.
+ * `appendId`; they are ignored unless that append is in flight. `select` patches the pending
+ * selection (or the configuration the next boundary applies) and holds it until `stored` reports
+ * its write to the configuration store. `reselect` holds a selection the store already had when
+ * the session was restored. `drain` applies a stored selection at an idle boundary, then stages
+ * the next waiting submission or dequeues the first queued input when no turn is running.
  */
 export type SessionEvent =
   | { type: "submit"; submission: Submission }
-  | { type: "select"; id: string; policy: Policy }
+  | { type: "select"; id: string; patch: PolicyPatch }
+  | { type: "reselect"; id: string; policy: Policy }
+  | { type: "stored"; id: string; policy: Policy; error?: Failure }
   | { type: "appended"; appendId: AppendId; result: AppendResult }
   | { type: "loaded"; appendId: AppendId; result: LoadResult }
   | { type: "drain" }
@@ -118,6 +134,12 @@ export type SessionEvent =
  * - `reply`: answer submission `id`.
  * - `drain`: send a `drain` event.
  * - `stop`: the session failed or closed; stop owned work and storage operations.
+ * - `selected`: a selection was registered; when `persist`, write it to the configuration store
+ *   and report the outcome as a `stored` event.
+ * - `unchanged`: a selection matched the policy in force and was dropped; revoke remembered tool
+ *   approvals when `revokesGrants`.
+ * - `revokeGrants`: revoke remembered tool approvals before a record that does not itself change
+ *   permissions or tools applies.
  */
 export type SessionCommand =
   | { type: "append"; request: AppendRequest }
@@ -130,7 +152,10 @@ export type SessionCommand =
     }
   | { type: "reply"; id: string; result: CommandReceipt }
   | { type: "drain" }
-  | { type: "stop" };
+  | { type: "stop" }
+  | { type: "selected"; id: string; policy: Policy; persist: boolean }
+  | { type: "unchanged"; id: string; policy: Policy; revokesGrants: boolean }
+  | { type: "revokeGrants"; id: string; policyVersion: number };
 
 type D = Decision<SessionState, SessionCommand>;
 
@@ -172,7 +197,7 @@ function fail(
   const waiting = [
     ...("pending" in state ? [state.pending.submission.id] : []),
     ...state.queue.map((s) => s.id),
-    ...(state.selection ? [state.selection.id] : []),
+    ...(state.selection?.stored ? [state.selection.id] : []),
   ];
   return {
     state: { status: "failed", durable: state.durable, queue: [], message, error },
@@ -224,6 +249,33 @@ export function pendingSelection(state: SessionState): Policy | undefined {
 }
 
 /**
+ * Policy and registry the next boundary applies: the committed ones, as changed by the append in
+ * flight and the submissions waiting behind it (an applied configuration or a registry adoption).
+ */
+function nextConfiguration(state: SessionState) {
+  let { policy, configuration } = state.durable;
+  const inputs = [
+    ...("pending" in state ? [state.pending.submission.input] : []),
+    ...state.queue.map((submission) => submission.input),
+  ];
+  for (const input of inputs) {
+    if (input.kind === "policy") policy = input.policy;
+    if (input.kind === "configuration") {
+      configuration = input.configuration;
+      policy = input.policy ?? policy;
+    }
+  }
+  return { policy, configuration };
+}
+
+/** Whether applying `next` over `previous` must revoke remembered tool approvals. */
+function changesGrants(previous: Policy, next: Policy) {
+  return changedPolicyFields(previous, next).some(
+    (field) => field === "permissions" || field === "tools",
+  );
+}
+
+/**
  * Whether `input` must wait for a pending selection to apply first. The session's own boundary
  * records (creation, recovery, registry adoption, and the applied configuration itself) do not.
  */
@@ -239,10 +291,40 @@ function awaitsSelection(state: SessionState, input: SessionInput) {
 }
 
 /**
+ * A stored selection: applied at once when the session is ready and idle, otherwise answered
+ * `selected` while a turn runs or starts; an idle append in flight applies it on the next drain.
+ */
+function settleStored(
+  state: SessionState,
+  commands: readonly SessionCommand[],
+  resolvers: PolicyResolvers,
+): D {
+  if (state.status === "ready") {
+    const applied = applySelection(state, resolvers);
+    if (applied) return { ...applied, commands: [...commands, ...applied.commands] };
+  }
+  const { selection } = state;
+  const running =
+    state.durable.conversation.turn.status !== "idle" ||
+    ("pending" in state && state.pending.next.conversation.turn.status !== "idle");
+  return {
+    state,
+    commands: [
+      ...commands,
+      ...(selection && running
+        ? [reply(selection.id, { kind: "selected", id: selection.id, policy: selection.policy })]
+        : []),
+    ],
+  };
+}
+
+/**
  * At an idle boundary, applies the pending selection: stages a "configuration applied" record
  * stamped with the next policy version, or answers `ignored` when it matches the policy in force.
- * Leaves the selection pending (returns `undefined`) while a turn is running. A selection that no
- * longer validates is dropped with a `failed` reply; either way the drain continues.
+ * Holds the boundary (no commands) until the selection is stored, and leaves it pending (returns
+ * `undefined`) while a turn is running. A selection that no longer validates is dropped with a
+ * `failed` reply; either way the drain continues. A selection that superseded a permission or tool
+ * change revokes remembered approvals even when the record itself does not change them.
  */
 function applySelection(
   state: Extract<SessionState, { status: "ready" }>,
@@ -250,12 +332,27 @@ function applySelection(
 ): D | undefined {
   const { selection, ...cleared } = state;
   if (!selection || state.durable.conversation.turn.status !== "idle") return undefined;
+  if (!selection.stored) return { state, commands: [] };
   const inForce = state.durable.policy;
   if (inForce && !changedPolicyFields(inForce, selection.policy).length)
     return {
       state: cleared,
-      commands: [reply(selection.id, { kind: "ignored" }), { type: "drain" }],
+      commands: [
+        reply(selection.id, { kind: "ignored" }),
+        {
+          type: "unchanged",
+          id: selection.id,
+          policy: inForce,
+          revokesGrants: selection.revokesGrants,
+        },
+        { type: "drain" },
+      ],
     };
+  const version = PolicyVersionSchema.parse((inForce?.version ?? -1) + 1);
+  const revoke: SessionCommand[] =
+    selection.revokesGrants && (!inForce || !changesGrants(inForce, selection.policy))
+      ? [{ type: "revokeGrants", id: selection.id, policyVersion: version }]
+      : [];
   const decision = mergeQueue(
     decideSession(
       { ...cleared, queue: [] },
@@ -266,22 +363,21 @@ function applySelection(
           appendId: AppendIdSchema.parse(
             `${state.durable.conversation.sessionId}/configuration/${selection.id}`,
           ),
-          input: {
-            kind: "policy",
-            policy: {
-              ...selection.policy,
-              version: PolicyVersionSchema.parse((inForce?.version ?? -1) + 1),
-            },
-          },
+          input: { kind: "policy", policy: { ...selection.policy, version } },
         },
       },
       resolvers,
     ),
     state.queue,
   );
-  return decision.state.status === "ready"
-    ? { ...decision, commands: [...decision.commands, { type: "drain" }] }
-    : decision;
+  return {
+    ...decision,
+    commands: [
+      ...revoke,
+      ...decision.commands,
+      ...(decision.state.status === "ready" ? [{ type: "drain" } as const] : []),
+    ],
+  };
 }
 
 /**
@@ -298,9 +394,11 @@ function applySelection(
  * generates itself (tool results, child events, dequeues, recovery, registry adoption) it also
  * fails the session, so no waiting work is released under the old state.
  *
- * A configuration selection (`select`) is held in `selection` and never answered `busy`. It is
- * staged as a `policy` record whenever the session is ready and the conversation idle, before a
- * queued input dequeues or new input is admitted; a running or starting turn answers `selected`.
+ * A configuration selection (`select`) is held in `selection` from the moment it arrives, so later
+ * input at an idle boundary waits for it; it is never answered `busy`. The `selected` command
+ * stores it and a `stored` event reports the write. A stored selection is staged as a `policy`
+ * record whenever the session is ready and the conversation idle, before a queued input dequeues or
+ * new input is admitted; while a turn runs or starts, the caller is answered `selected`.
  */
 export function decideSession(
   state: SessionState,
@@ -311,7 +409,7 @@ export function decideSession(
     const waiting = [
       ...("pending" in state ? [state.pending.submission.id] : []),
       ...state.queue.map((s) => s.id),
-      ...(state.selection ? [state.selection.id] : []),
+      ...(state.selection?.stored ? [state.selection.id] : []),
     ];
     return {
       state: { status: "closed", durable: state.durable, queue: [] },
@@ -401,39 +499,110 @@ export function decideSession(
       return { state, commands: [reply(s.id, { kind: "failed", message, error: cause })] };
     }
   }
-  if (event.type === "select") {
-    const selection = { id: event.id, policy: event.policy };
+  if (event.type === "select" || event.type === "reselect") {
     if (state.status === "closed")
-      return { state, commands: [reply(selection.id, { kind: "closed" })] };
+      return { state, commands: [reply(event.id, { kind: "closed" })] };
     if (state.status === "failed")
       return {
         state,
-        commands: [
-          reply(selection.id, { kind: "failed", message: state.message, error: state.error }),
-        ],
+        commands: [reply(event.id, { kind: "failed", message: state.message, error: state.error })],
       };
-    const superseded = state.selection
-      ? [reply(state.selection.id, { kind: "selected", policy: state.selection.policy })]
-      : [];
-    const selected = { ...state, selection };
-    if (selected.status === "ready" && !selected.queue.length) {
-      const applied = applySelection(selected, resolvers);
-      if (applied) return { ...applied, commands: [...superseded, ...applied.commands] };
-    }
-    // A running or starting turn keeps its settings, so the caller learns now that this waits for
-    // it; otherwise the selection applies right after the append in flight and answers then.
-    const turnRunning =
-      selected.durable.conversation.turn.status !== "idle" ||
-      ("pending" in selected && selected.pending.next.conversation.turn.status !== "idle");
-    return {
-      state: selected,
-      commands: [
-        ...superseded,
-        ...(turnRunning
-          ? [reply(selection.id, { kind: "selected", policy: selection.policy })]
-          : []),
-      ],
+    const next = nextConfiguration(state);
+    let policy: Policy;
+    if (event.type === "reselect") policy = event.policy;
+    else
+      try {
+        const base = state.selection?.policy ?? next.policy;
+        if (!base) throw new Error("Session has no configuration to select against");
+        policy = patchPolicy(base, event.patch, next.configuration, resolvers);
+      } catch (error) {
+        const cause = failure(error, {
+          classification: "admission",
+          operation: {
+            id: event.id,
+            kind: "admission",
+            sessionId: state.durable.conversation.sessionId,
+            turnId: state.durable.conversation.turnId,
+          },
+          phase: "stage",
+          details: { inputKind: "policy" },
+        });
+        return {
+          state,
+          commands: [reply(event.id, { kind: "failed", message: cause.message, error: cause })],
+        };
+      }
+    const previous = state.selection;
+    const fallback = previous?.stored ? { ...previous, fallback: undefined } : previous?.fallback;
+    const selection: Selection = {
+      id: event.id,
+      policy,
+      stored: event.type === "reselect",
+      // Switching permissions or tools and back before the boundary still revokes grants.
+      revokesGrants:
+        previous !== undefined &&
+        (previous.revokesGrants ||
+          (next.policy !== undefined && changesGrants(next.policy, previous.policy))),
+      fallback,
     };
+    const commands: SessionCommand[] = [
+      ...(previous?.stored
+        ? [reply(previous.id, { kind: "selected", id: previous.id, policy: previous.policy })]
+        : []),
+      { type: "selected", id: selection.id, policy, persist: event.type === "select" },
+    ];
+    const selected = { ...state, selection };
+    return selection.stored
+      ? settleStored(selected, commands, resolvers)
+      : { state: selected, commands };
+  }
+  if (event.type === "stored") {
+    if (state.status === "closed")
+      return { state, commands: [reply(event.id, { kind: "closed" })] };
+    if (state.status === "failed")
+      return {
+        state,
+        commands: [reply(event.id, { kind: "failed", message: state.message, error: state.error })],
+      };
+    const current = state.selection;
+    if (current?.id !== event.id) {
+      // A superseded selection: the store held it until the current one is written.
+      if (event.error)
+        return {
+          state,
+          commands: [
+            reply(event.id, { kind: "failed", message: event.error.message, error: event.error }),
+          ],
+        };
+      return {
+        state: current
+          ? {
+              ...state,
+              selection: {
+                ...current,
+                fallback: {
+                  id: event.id,
+                  policy: event.policy,
+                  stored: true,
+                  revokesGrants: current.revokesGrants,
+                },
+              },
+            }
+          : state,
+        commands: [reply(event.id, { kind: "selected", id: event.id, policy: event.policy })],
+      };
+    }
+    if (event.error) {
+      // The store still holds the last selection written, so that one stays pending.
+      const commands = [
+        reply(event.id, { kind: "failed", message: event.error.message, error: event.error }),
+      ];
+      const reverted = { ...state, selection: current.fallback };
+      return current.fallback
+        ? settleStored(reverted, commands, resolvers)
+        : { state: reverted, commands: [...commands, { type: "drain" }] };
+    }
+    return settleStored({ ...state, selection: { ...current, stored: true } }, [], resolvers);
   }
   if (event.type === "drain") {
     if (state.status !== "ready") return { state, commands: [] };

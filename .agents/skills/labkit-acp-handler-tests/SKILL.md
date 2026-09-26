@@ -61,9 +61,13 @@ const scripted = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = new URL(String(input instanceof Request ? input.url : input));
   if (url.pathname.endsWith("/models")) throw new Error("connect ECONNREFUSED 127.0.0.1:8000"); // localhost offline
   requests.push({ host: url.host, body: JSON.parse(String(init?.body)) });
-  return streamResponse(streamVector(url.host.includes("anthropic") ? anthropicMessagesV3 : openaiResponsesV3));
+  return streamResponse(
+    streamVector(url.host.includes("anthropic") ? anthropicMessagesV3 : openaiResponsesV3),
+  );
 }) as unknown as typeof globalThis.fetch;
-const h = harness(workspaceAgent({ ANTHROPIC_API_KEY: "x", OPENAI_API_KEY: "y" }, undefined, { fetch: scripted }));
+const h = harness(
+  workspaceAgent({ ANTHROPIC_API_KEY: "x", OPENAI_API_KEY: "y" }, undefined, { fetch: scripted }),
+);
 ```
 
 - Never name the variable `fetch` and then write `typeof fetch`: tsc fails with TS7022, and Bun
@@ -81,10 +85,10 @@ const h = harness(workspaceAgent({ ANTHROPIC_API_KEY: "x", OPENAI_API_KEY: "y" }
   - everything else (openai): openaiResponsesV3.
 - Observed hosts and request bodies:
 
-  | Host                | Body fields                                                             |
-  | ------------------- | ----------------------------------------------------------------------- |
-  | `api.anthropic.com` | `{ model, thinking: { type: "adaptive" }, max_tokens }`                  |
-  | `api.openai.com`    | `{ model, reasoning: { effort }, max_output_tokens }` (Responses API)    |
+  | Host                | Body fields                                                           |
+  | ------------------- | --------------------------------------------------------------------- |
+  | `api.anthropic.com` | `{ model, thinking: { type: "adaptive" }, max_tokens }`               |
+  | `api.openai.com`    | `{ model, reasoning: { effort }, max_output_tokens }` (Responses API) |
 
 - With Anthropic and OpenAI keys and localhost offline, the initial model is
   `anthropic/claude-sonnet-4-6` with thinking off, and `initialize` advertises
@@ -127,15 +131,17 @@ AGENTS.md requires tests to assert the real diagnostic events.
 - Assert the correlation fields (`connectionId`, `sessionId`, `rpcRequestId`), not only the event
   name.
 - Useful events:
-  - `acp.config.queued`, `acp.config.committed` (with `configId`, `configValue`, `revision`),
-    `acp.config.cancelled`, `acp.config.failed`;
+  - `acp.config.selected` (with `configId`, `value`, `outcome` accepted|selected|ignored|unchanged,
+    `selectionId` or `appendId`, `revision`) and `acp.config.failed`; configuration changes answer
+    at once and apply at the next boundary between turns, where core logs `configuration.applied`
+    with the same `selectionId`/`appendId`;
   - `acp.prompt.received`;
   - `acp.method.unknown`, `acp.method.not_advertised`;
   - `acp.capabilities.advertised`;
   - `acp.catalog.loaded`, `acp.catalog.localhost_unavailable`.
-- Cancellation-race tests: wait for the handler's event (`acp.prompt.received`,
-  `acp.config.queued`) before sending `$/cancel_request`. Otherwise the request is rejected
-  synchronously and the race is never exercised.
+- Cancellation-race tests: wait for the handler's event (for example `acp.prompt.received`) before
+  sending `$/cancel_request`. Otherwise the request is rejected synchronously and the race is never
+  exercised. Configuration requests no longer wait behind a prompt, so they have no such race.
 
 ## Real stdio process
 

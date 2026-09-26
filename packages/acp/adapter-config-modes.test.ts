@@ -226,6 +226,7 @@ test("set_config_option during a running prompt selects at once; the running req
         configId: "model",
         value: "openai/gpt-5.4",
         outcome: "selected",
+        selectionId: expect.any(String),
         revision: expect.any(Number),
         durationMs: expect.any(Number),
       }),
@@ -237,6 +238,7 @@ test("set_config_option during a running prompt selects at once; the running req
       expect.objectContaining({
         sessionId,
         turnId: settled(second),
+        selectionId: event("acp.config.selected")[0]!.selectionId,
         version: expect.any(Number),
         revision: expect.any(Number),
         changedFields: expect.arrayContaining(["model"]),
@@ -457,7 +459,8 @@ test("set_config_option switches the workspace launcher between providers; the n
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
-    expect(logs.filter((line) => line.event === "acp.config.selected")).toContainEqual(
+    const selected = logs.filter((line) => line.event === "acp.config.selected");
+    expect(selected).toContainEqual(
       expect.objectContaining({
         configId: "model",
         value: "openai/gpt-5.4",
@@ -466,9 +469,16 @@ test("set_config_option switches the workspace launcher between providers; the n
         connectionId: expect.any(String),
         sessionId: expect.any(String),
         rpcRequestId: expect.any(String),
+        appendId: expect.any(String),
         revision: expect.any(Number),
       }),
     );
+    const switched = selected.find((line) => line.value === "openai/gpt-5.4");
+    expect(
+      logs.filter(
+        (line) => line.event === "configuration.applied" && line.appendId === switched?.appendId,
+      ),
+    ).toHaveLength(1);
   } finally {
     rmSync(directory, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });

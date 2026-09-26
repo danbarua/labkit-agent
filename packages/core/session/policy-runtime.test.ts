@@ -564,6 +564,55 @@ test("a selection pending when the session stopped survives restart and applies 
   }
 });
 
+test("input sent right after updatePolicy, without awaiting it, runs under the selection", async () => {
+  const options = boundOptions();
+  const offered: string[][] = [];
+  const session = await createSession({
+    ...options,
+    bindings: {
+      ...options.bindings,
+      complete: (request) => {
+        offered.push(request.tools?.map((tool) => tool.function.name) ?? []);
+        return { kind: "answer", text: "ok" };
+      },
+    },
+  });
+  try {
+    const selecting = session.updatePolicy({ tools: { a: [] } });
+    const turn = session.input("Go");
+    expect((await selecting).kind).toBe("accepted");
+    await turn.settled;
+    expect(offered).toEqual([[]]);
+    expect(session.snapshot.durable.records.map((record) => record.body.kind).slice(0, 3)).toEqual([
+      "created",
+      "policy",
+      "event",
+    ]);
+  } finally {
+    await session.close();
+  }
+});
+
+test("a closed session answers a selection without storing it, so restore does not apply it", async () => {
+  const options = boundOptions();
+  const session = await createSession(options);
+  const sessionId = session.snapshot.durable.conversation.sessionId;
+  await session.close();
+  expect((await session.updatePolicy({ tools: { a: [] } })).kind).toBe("closed");
+  expect(
+    await options.persistence.getConfig(sessionId, new AbortController().signal),
+  ).toBeUndefined();
+  const restored = await restoreSession(options, sessionId);
+  try {
+    expect(restored.snapshot.durable.records.map((record) => record.body.kind)).toEqual([
+      "created",
+    ]);
+    expect(restored.policy?.tools.a).toHaveLength(1);
+  } finally {
+    await restored.close();
+  }
+});
+
 test("restore binds historical resolvers without requiring unrelated creation defaults", async () => {
   const options = boundOptions();
   const policies = {

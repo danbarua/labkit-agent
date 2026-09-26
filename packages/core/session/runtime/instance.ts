@@ -1,20 +1,13 @@
 import type { TurnEvent } from "../../agent/agent-fsm.ts";
 import type { PromptInput } from "../../agent/prompt.ts";
-import { failure, type ActorId, type SessionId, type TurnData } from "../../agent/types.ts";
+import type { ActorId, SessionId, TurnData } from "../../agent/types.ts";
 import { Actor } from "../../fsm/fsm.ts";
 import { createHost } from "../../host/host.ts";
 import { diagnostic } from "../../logging/index.ts";
-import {
-  changedPolicyFields,
-  patchPolicy,
-  validatePolicy,
-  type Policy,
-  type PolicyPatch,
-} from "../../policy/policy.ts";
+import { validatePolicy, type Policy, type PolicyPatch } from "../../policy/policy.ts";
 import { AppendIdSchema, type AppendId } from "../persistence.ts";
 import {
   decideSession,
-  pendingSelection,
   type CommandReceipt,
   type SessionCommand,
   type SessionEvent,
@@ -59,10 +52,10 @@ export type SessionInstance = {
   /** Storage operations and blob copies that closing the session cancels. */
   readonly storage: Set<{ cancel(): Promise<unknown> }>;
   /**
-   * Tail of the configuration selections in progress. Each selection patches the one before it, so
-   * they store and reach the session actor one at a time, in call order.
+   * Tail of the configuration-store writes in progress, so selections reach the store in the order
+   * the session actor registered them.
    */
-  selecting: Promise<unknown>;
+  storing: Promise<unknown>;
   readonly send: (event: SessionEvent) => Promise<SessionState>;
   readonly submit: (
     input: SessionInput,
@@ -133,7 +126,7 @@ export function openInstance(
     storage: new Set(),
     dispatchBoundary: initial,
     observed: { transition: "", usage: initial.lastCompletionUsage?.operationId },
-    selecting: Promise.resolve(),
+    storing: Promise.resolve(),
     send: (event) => send(ctx, event),
     promptInput: (turn) => promptInput(ctx, turn),
     post: (turnId, event) => post(ctx, turnId, event),
@@ -170,7 +163,13 @@ export function openInstance(
     ctx.adoption.plan = plan;
   };
   /** Restore-only: applies a selection stored before the session last closed. */
-  const reselect = (policy: Policy) => select(ctx, policy, "restore");
+  const reselect = (policy: Policy) => {
+    const id = ctx.configured.id();
+    const { promise, resolve } = Promise.withResolvers<CommandReceipt>();
+    ctx.receipts.set(id, resolve);
+    void ctx.send({ type: "reselect", id, policy });
+    return promise;
+  };
   return { runtime, submit: ctx.submit, pend, adopt: () => adopt(ctx), reselect };
 }
 
@@ -258,98 +257,41 @@ function post(ctx: SessionInstance, turnId: ActorId, event: TurnEvent) {
 }
 
 /**
- * Sends a stored configuration selection to the session actor, which applies it at once when the
- * conversation is idle and otherwise at the next boundary between turns. `source` says whether the
- * caller selected it now or restore found it in the configuration store.
- */
-function select(
-  ctx: SessionInstance,
-  policy: Policy,
-  source: "caller" | "restore",
-): Promise<CommandReceipt> {
-  const id = ctx.configured.id();
-  const state = ctx.actor.snapshot;
-  const inForce = ctx.adoption.plan?.body.policy ?? state.durable.policy;
-  // An append in flight may be starting a turn; report the conversation as it will be.
-  const { turn, turnId } = ("pending" in state ? state.pending.next : state.durable).conversation;
-  diagnostic("session", "info", "configuration.selected", {
-    sessionId: ctx.sessionId,
-    selectionId: id,
-    turnId,
-    version: policy.version,
-    inForceVersion: inForce?.version,
-    changedFields: inForce ? changedPolicyFields(inForce, policy) : [],
-    turnStatus: turn.status,
-    source,
-    message:
-      turn.status === "idle"
-        ? "Configuration stored; applies at this idle boundary"
-        : "Configuration stored; the running turn keeps its settings and this applies when it ends",
-  });
-  const { promise, resolve } = Promise.withResolvers<CommandReceipt>();
-  ctx.receipts.set(id, resolve);
-  void ctx.send({ type: "select", id, policy });
-  return promise;
-}
-
-/**
- * Selects a configuration change (D6): applies `patch` to the configuration the next turn runs
- * under, validates it against the live registry, stores it in the persistence port's
- * configuration store and hands it to the session actor — at any time, including mid-turn. Never
- * `busy`.
+ * Selects a configuration change (D6). The session actor registers the selection at once, so any
+ * input sent afterwards waits for it at an idle boundary; it applies `patch` to the configuration
+ * the next turn runs under, validates it against the live registry, stores it in the persistence
+ * port's configuration store and applies it at the next boundary between turns. Never `busy`.
  */
 export function selectConfiguration(
   ctx: SessionInstance,
   patch: PolicyPatch,
 ): Promise<CommandReceipt> {
-  const selected = ctx.selecting.then(async (): Promise<CommandReceipt> => {
-    const { durable } = ctx.actor.snapshot;
-    const operation = {
-      id: ctx.configured.id(),
-      kind: "admission" as const,
+  const id = ctx.configured.id();
+  const { promise, resolve } = Promise.withResolvers<CommandReceipt>();
+  ctx.receipts.set(id, resolve);
+  void ctx.send({ type: "select", id, patch });
+  return promise.then((receipt) => {
+    if (receipt.kind !== "failed" || receipt.error.classification !== "admission") return receipt;
+    const { details } = receipt.error;
+    // Staging at the boundary names its append; a rejected patch never reached the store.
+    const staged =
+      typeof details === "object" &&
+      details !== null &&
+      !Array.isArray(details) &&
+      details.appendId !== undefined;
+    diagnostic("session", "warning", "configuration.rejected", {
       sessionId: ctx.sessionId,
-    };
-    const base =
-      pendingSelection(ctx.actor.snapshot) ?? ctx.adoption.plan?.body.policy ?? durable.policy;
-    let next: Policy;
-    try {
-      if (!base) throw new Error("Session has no configuration to select against");
-      next = patchPolicy(base, patch, ctx.configured.configuration, ctx.configured.resolvers);
-    } catch (error) {
-      const cause = failure(error, {
-        classification: "admission",
-        operation,
-        phase: "stage",
-        details: { inputKind: "policy" },
-      });
-      diagnostic("session", "warning", "configuration.rejected", {
-        sessionId: ctx.sessionId,
-        turnId: durable.conversation.turnId,
-        fields: Object.keys(patch),
-        reason: cause.message,
-        error: cause,
-        consequence: "Nothing stored; the selected configuration is unchanged",
-      });
-      return { kind: "failed", message: cause.message, error: cause };
-    }
-    try {
-      await ctx.configured.port.putConfig(ctx.sessionId, next, new AbortController().signal);
-    } catch (error) {
-      const cause = failure(error, { classification: "persistence", operation, phase: "select" });
-      diagnostic("session", "error", "configuration.store_failed", {
-        sessionId: ctx.sessionId,
-        turnId: durable.conversation.turnId,
-        version: next.version,
-        reason: cause.message,
-        error: cause,
-        consequence: "Selection not stored or applied; the selected configuration is unchanged",
-      });
-      return { kind: "failed", message: cause.message, error: cause };
-    }
-    return select(ctx, next, "caller");
+      selectionId: id,
+      turnId: ctx.actor.snapshot.durable.conversation.turnId,
+      fields: Object.keys(patch),
+      reason: receipt.message,
+      error: receipt.error,
+      consequence: staged
+        ? "The stored selection no longer validates at the boundary; the configuration in force is unchanged"
+        : "Nothing stored; the selected configuration is unchanged",
+    });
+    return receipt;
   });
-  ctx.selecting = selected;
-  return selected;
 }
 
 function submit(

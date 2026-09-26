@@ -740,9 +740,10 @@ registry state (`current` or `pending_adoption`), and elapsed time. `acp.prompt.
 joins incoming requests to admitted turns and terminal outcomes; `acp.config.selected` (info)
 records each configuration request with `rpcRequestId`, `configId`, `value` and `outcome`
 (`accepted` applied at once, `selected` waiting for the next boundary between turns, `ignored`,
-or `unchanged`), and `acp.config.failed` (warning) records its cause. Core's
-`configuration.selected` and `configuration.applied` carry the selection and the journal revision
-and turn it applies to. A failed load records its original
+or `unchanged`), plus `appendId` for `accepted` and `selectionId` for `selected`, which equal the
+`appendId`/`selectionId` of core's `configuration.applied`; `acp.config.failed` (warning) records
+its cause. Core's `configuration.selected` and `configuration.applied` carry the selection and the
+journal revision and turn it applies to. A failed load records its original
 error and cause chain, rather than only the translated RPC error. `acp.session.registry_pending`
 (info) records registry differences on open; core logs `session.registry.adopted` when the live
 registry commits.

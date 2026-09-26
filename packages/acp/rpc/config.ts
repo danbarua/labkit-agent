@@ -127,6 +127,7 @@ export function registerConfiguration(
       const unchanged =
         (patch !== undefined || binding.type !== "boolean") && binding.current(selected) === value;
       let outcome: "unchanged" | "accepted" | "selected" | "ignored" = "unchanged";
+      let correlation: { selectionId?: string; appendId?: string } = {};
       if (!unchanged) {
         if (!patch) throw RequestError.invalidParams(undefined, "Unknown config option or value");
         const receipt = await entry.runtime.updatePolicy(structuredClone(patch));
@@ -135,10 +136,13 @@ export function registerConfiguration(
         if (receipt.kind === "busy")
           throw new RequestError(-32000, "Configuration change was not selected", receipt);
         outcome = receipt.kind;
+        if (receipt.kind === "selected") correlation = { selectionId: receipt.id };
+        if (receipt.kind === "accepted") correlation = { appendId: receipt.receipt.appendId };
       }
       diagnostic("acp", "info", "acp.config.selected", {
         ...trace,
         outcome,
+        ...correlation,
         revision: entry.runtime.snapshot.durable.revision,
         durationMs: performance.now() - started,
       });

@@ -698,3 +698,54 @@ test("tolerant validation failures commit tool errors without permission or exec
   expect(rejected.error.message).toContain("path");
   expect(rejected.consequence).toContain("will not execute or request approval");
 });
+
+test("switching the permission mode away and back during a turn still revokes remembered approvals", async () => {
+  const { withFixtureDiagnostics } = await import("../logging/fixture-capture.ts");
+  const directory = `.session-artifacts/permission-toggle/${crypto.randomUUID()}`;
+  const fixture = setup(() => ({ outcome: { outcome: "selected", optionId: "allow-session" } }));
+  const held = deferred<unknown>();
+  let completions = 0;
+  await withFixtureDiagnostics(directory, {}, async () => {
+    const session = await createSession({
+      ...fixture.options,
+      bindings: {
+        ...fixture.options.bindings,
+        complete: () => {
+          const call = ++completions;
+          if (call === 3) return held.promise;
+          return call === 1 || call === 4 ? calls : { kind: "answer", text: "Done" };
+        },
+      },
+    });
+    try {
+      await session.input("Read both files").settled;
+      expect(fixture.requests).toHaveLength(1);
+      const second = session.input("Think");
+      await until(() => completions === 3);
+      expect((await session.updatePolicy({ permissions: "off" })).kind).toBe("selected");
+      expect((await session.updatePolicy({ permissions: "ask" })).kind).toBe("selected");
+      held.resolve({ kind: "answer", text: "Done" });
+      await second.settled;
+      await session.input("Read them again").settled;
+      expect(fixture.requests).toHaveLength(2);
+      expect(
+        session.snapshot.durable.records.filter((record) => record.body.kind === "policy"),
+      ).toEqual([]);
+    } finally {
+      held.resolve({ kind: "answer", text: "Done" });
+      await session.close();
+    }
+  });
+  const logs = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const unchanged = logs.find((entry) => entry.event === "configuration.unchanged");
+  expect(unchanged).toMatchObject({ level: "info", revokesGrants: true });
+  expect(
+    logs.find(
+      (entry) =>
+        entry.event === "permission.grants_cleared" && entry.selectionId === unchanged.selectionId,
+    ),
+  ).toMatchObject({ toolNames: ["echo"] });
+});
