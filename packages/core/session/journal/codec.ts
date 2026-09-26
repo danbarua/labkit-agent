@@ -103,10 +103,10 @@ export function decodeFailure(serialized: string): string {
       ? (value as Record<string, unknown>)[key]
       : undefined;
   const version = field(raw, "version");
-  if (typeof version === "number" && version > 1)
-    return `Record has version ${version}, but this Labkit build reads only version 1; ${newerBuild}`;
+  if (typeof version === "number" && version > 2)
+    return `Record has version ${version}, but this Labkit build reads only version 2; ${newerBuild}`;
   const kind = field(field(raw, "body"), "kind");
   if (typeof kind === "string" && !recordKinds.has(kind))
     return `Record has kind ${JSON.stringify(kind)}, which this Labkit build does not know; ${newerBuild}`;
-  return "Record does not decode as a version 1 journal record";
+  return "Record does not decode as a version 2 journal record";
 }

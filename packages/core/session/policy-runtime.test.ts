@@ -28,7 +28,7 @@ test("v2 policy changes allowance and tools only after idle commit, restores and
       },
     },
   });
-  expect(session.snapshot.durable.records[0]?.version).toBe(1);
+  expect(session.snapshot.durable.records[0]?.version).toBe(2);
   const before = session.snapshot;
   expect((await session.updatePolicy({ steps: 1, tools: { a: [] } })).kind).toBe("accepted");
   const turn = session.input("Go");
@@ -78,7 +78,7 @@ test("queue-user persists admission and settles each input with its own turn", a
   const b = session.input("second");
   expect((await b.accepted).kind).toBe("accepted");
   expect(session.snapshot.durable.pendingInputs).toHaveLength(1);
-  expect((await session.updatePolicy({ steps: 7 })).kind).toBe("busy");
+  expect((await session.updatePolicy({ steps: 7 })).kind).toBe("selected");
   first.resolve({ kind: "answer", text: "first" });
   const one = await a.settled;
   const two = await b.settled;
@@ -413,7 +413,7 @@ test("observer reentrancy enters the mailbox and sees frozen snapshots", async (
   expect(seen).toEqual([...seen].sort((a, b) => a - b));
 });
 
-test("policy changes during a staged active turn are busy before its receipt arrives", async () => {
+test("a configuration change selects immediately even while its own turn's append is still in flight (D6: never busy)", async () => {
   const options = boundOptions();
   const release = deferred<void>();
   let writing = false;
@@ -433,7 +433,7 @@ test("policy changes during a staged active turn are busy before its receipt arr
   });
   const turn = session.input("Go");
   await until(() => writing);
-  expect((await session.updatePolicy({ steps: 0 })).kind).toBe("busy");
+  expect((await session.updatePolicy({ steps: 0 })).kind).toBe("selected");
   release.resolve();
   await turn.settled;
 });

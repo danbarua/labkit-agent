@@ -8,7 +8,7 @@ import { AppendIdSchema } from "../persistence.ts";
 import { wireEvent } from "../session-log.ts";
 import type { EnvCommandHandle, SessionRuntime, TerminalResult } from "../session-runtime.ts";
 import { SystemVersionSchema, type SessionInput } from "../types.ts";
-import type { SessionInstance } from "./instance.ts";
+import { selectConfiguration, type SessionInstance } from "./instance.ts";
 
 /** A validated public event. */
 type ParsedEvent = z.output<typeof EnvEventSchema>;
@@ -118,7 +118,7 @@ function close(ctx: SessionInstance): EnvCommandHandle {
 
 function submitAcknowledged(
   ctx: SessionInstance,
-  event: Event<"system" | "policy" | "abort">,
+  event: Event<"system" | "abort">,
 ): EnvCommandHandle {
   const input: SessionInput =
     event.type === "system"
@@ -127,10 +127,18 @@ function submitAcknowledged(
           inputs: event.inputs,
           version: SystemVersionSchema.parse(ctx.actor.snapshot.durable.systemVersion + 1),
         }
-      : event.type === "policy"
-        ? { kind: "policy", patch: event.patch }
-        : { kind: "event", event, systemVersion: ctx.actor.snapshot.durable.systemVersion };
+      : { kind: "event", event, systemVersion: ctx.actor.snapshot.durable.systemVersion };
   const accepted = ctx.submit(input);
+  return { accepted, settled: accepted.then((receipt) => ({ kind: "acknowledged", receipt })) };
+}
+
+/**
+ * A configuration change (D6): selects immediately into the session's configuration store,
+ * regardless of turn status, and applies it to the journal right away if the conversation is
+ * idle. Never `busy`.
+ */
+function policyEvent(ctx: SessionInstance, event: Event<"policy">): EnvCommandHandle {
+  const accepted = selectConfiguration(ctx, event.patch);
   return { accepted, settled: accepted.then((receipt) => ({ kind: "acknowledged", receipt })) };
 }
 
@@ -143,7 +151,7 @@ const envEventHandlers: {
   compact: branchEvent,
   close,
   system: submitAcknowledged,
-  policy: submitAcknowledged,
+  policy: policyEvent,
   abort: submitAcknowledged,
 };
 

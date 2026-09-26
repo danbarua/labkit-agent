@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { BlobId, BlobMeta, MediaKind } from "../agent/content.ts";
 import { FailureSchema, SessionIdSchema } from "../agent/types.ts";
+import type { Policy } from "../policy/policy.ts";
 
 export * from "../agent/content.ts";
 
@@ -100,17 +101,18 @@ export const AppendResultSchema = z
 export type AppendResult = z.infer<typeof AppendResultSchema>;
 
 /**
- * Journal and blob store a session writes to, supplied and owned by the caller. A conforming port
- * loads a consistent committed prefix and appends an entire batch atomically.
- * Revisions count records. Revision zero creates an absent stream; records are never overwritten.
- * Append IDs are scoped to a session and retained for the advertised storage lifetime. An identical
- * retry (including expectedRevision) returns its original receipt, even after subsequent writes.
- * Reuse with different bytes/metadata is rejected before revision checking. Conflicts and rejected
- * results certify no write by this request. A lost receipt or cancellation after dispatch must be
- * indeterminate unless the adapter can prove a committed or uncommitted result. A load after append
- * settlement must observe any committed write. Adapters must settle cancellation so reconciliation
- * is possible; they must not commit later after reporting an uncommitted/indeterminate result and
- * completing a subsequent consistent load. Thrown append errors are treated as indeterminate.
+ * Journal, blob store and per-session configuration store a session writes to, supplied and owned
+ * by the caller. A conforming port loads a consistent committed prefix and appends an entire batch
+ * atomically. Revisions count records. Revision zero creates an absent stream; records are never
+ * overwritten. Append IDs are scoped to a session and retained for the advertised storage lifetime.
+ * An identical retry (including expectedRevision) returns its original receipt, even after
+ * subsequent writes. Reuse with different bytes/metadata is rejected before revision checking.
+ * Conflicts and rejected results certify no write by this request. A lost receipt or cancellation
+ * after dispatch must be indeterminate unless the adapter can prove a committed or uncommitted
+ * result. A load after append settlement must observe any committed write. Adapters must settle
+ * cancellation so reconciliation is possible; they must not commit later after reporting an
+ * uncommitted/indeterminate result and completing a subsequent consistent load. Thrown append
+ * errors are treated as indeterminate.
  * No close operation: storage lifetime and ownership belong to the caller.
  */
 export interface SessionPersistence {
@@ -140,4 +142,21 @@ export interface SessionPersistence {
    * {@link AppendResultSchema}. A thrown error counts as `indeterminate`.
    */
   append(request: AppendRequest, signal: AbortSignal): Promise<AppendResult>;
+  /**
+   * Reads the session's selected configuration: the user's most recent choice, which may be ahead
+   * of the policy in force. `undefined` when nothing has ever diverged from the journaled policy
+   * (a fresh session, or one whose selection was already applied). Does not advance the journal
+   * revision and is never itself journaled.
+   */
+  getConfig(sessionId: z.infer<typeof SessionIdSchema>, signal: AbortSignal): Promise<Policy | undefined>;
+  /**
+   * Stores the session's selected configuration immediately, independent of journal boundaries and
+   * of any turn in progress. Applying a selection to the journal (a "configuration applied" fact)
+   * is a separate step the runtime takes at the next idle boundary.
+   */
+  putConfig(
+    sessionId: z.infer<typeof SessionIdSchema>,
+    policy: Policy,
+    signal: AbortSignal,
+  ): Promise<void>;
 }

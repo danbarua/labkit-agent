@@ -17,7 +17,7 @@ import {
   ToolNameSchema,
   TurnRecordSchema,
 } from "../agent/types.ts";
-import { PolicyPatchSchema, PolicySchema, PolicyVersionSchema } from "../policy/policy.ts";
+import { PolicySchema, PolicyVersionSchema } from "../policy/policy.ts";
 import { ContinuationSchema, ProviderSettingsSchema } from "../providers/types.ts";
 import { CompletionUsageSchema } from "../providers/usage.ts";
 import { AppendIdSchema, RevisionSchema } from "./persistence.ts";
@@ -278,7 +278,7 @@ export type WireEvent = z.infer<typeof WireEventSchema>;
 /** Schema of {@link JournalBody}. */
 export const BodySchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("created"), seed: SeedSchema }),
-  z.strictObject({ kind: z.literal("policy"), patch: PolicyPatchSchema, policy: PolicySchema }),
+  z.strictObject({ kind: z.literal("policy"), policy: PolicySchema }),
   z.strictObject({
     kind: z.literal("configuration"),
     /** Live registry adopted from this record on. */
@@ -314,8 +314,6 @@ export const BodySchema = z.discriminatedUnion("kind", [
     event: WireEventSchema,
     /** Version of `systemInputs` the event was staged against. */
     systemVersion: SystemVersionSchema,
-    /** Policy version the event was staged against; `stage` fills it in. */
-    policyVersion: PolicyVersionSchema.optional(),
   }),
   z.strictObject({
     kind: z.literal("system"),
@@ -341,9 +339,9 @@ export const BodySchema = z.discriminatedUnion("kind", [
  * The content of one journal record, discriminated by `kind`:
  *
  * - `created`: the session's {@link Seed}; the first record, and only there.
- * - `policy`: a configuration change (the user-selectable settings): the caller's `patch` and the
- *   resulting `policy`. Staged only at an idle boundary with no queued inputs; applies from the
- *   next turn.
+ * - `policy`: a "configuration applied" fact holding the resulting settings the session runs
+ *   under from the next turn. Staged only at an idle boundary; a running turn keeps the settings
+ *   it started with.
  * - `configuration`: registry adoption on reopen, committed before the first new work.
  * - `queued`: a queued input, held until the current turn ends (policy `queue-user`, or
  *   `abort-tools-on-user` during tools or permission waiting).
@@ -365,8 +363,8 @@ export type JournalBody = z.infer<typeof BodySchema>;
 /** Schema of {@link JournalRecord}. */
 export const JournalRecordSchema = z
   .strictObject({
-    /** Record format. This build reads and writes only version 1. */
-    version: z.literal(1),
+    /** Record format. This build reads and writes only version 2 (D1: clean-break bump, no migration). */
+    version: z.literal(2),
     sessionId: SessionIdSchema,
     /** Position in the session's journal: 1 for the creation record, then one more per record. */
     revision: RevisionSchema,
@@ -386,8 +384,6 @@ export type JournalRecord = z.infer<typeof JournalRecordSchema>;
 
 /**
  * What `stage` in session-log.ts accepts: any journal body except `terminal`, which staging
- * derives. A `policy` change carries only the patch; staging computes the resulting policy.
+ * derives.
  */
-export type SessionInput =
-  | Exclude<JournalBody, { kind: "terminal" | "policy" }>
-  | Readonly<{ kind: "policy"; patch: z.input<typeof PolicyPatchSchema> }>;
+export type SessionInput = Exclude<JournalBody, { kind: "terminal" }>;

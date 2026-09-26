@@ -1,10 +1,10 @@
 import type { TurnEvent } from "../../agent/agent-fsm.ts";
 import type { PromptInput } from "../../agent/prompt.ts";
-import type { ActorId, SessionId, TurnData } from "../../agent/types.ts";
+import { failure, type ActorId, type SessionId, type TurnData } from "../../agent/types.ts";
 import { Actor } from "../../fsm/fsm.ts";
 import { createHost } from "../../host/host.ts";
 import { diagnostic } from "../../logging/index.ts";
-import { validatePolicy } from "../../policy/policy.ts";
+import { patchPolicy, validatePolicy, type Policy, type PolicyPatch } from "../../policy/policy.ts";
 import { AppendIdSchema, type AppendId } from "../persistence.ts";
 import {
   decideSession,
@@ -50,6 +50,15 @@ export type SessionInstance = {
   >;
   /** Storage operations and blob copies that closing the session cancels. */
   readonly storage: Set<{ cancel(): Promise<unknown> }>;
+  /**
+   * The session's selected configuration (D6): the user's most recent choice, committed to the
+   * configuration store immediately. Undefined when the selection matches the policy in force
+   * (nothing pending to apply). Never journaled directly; {@link applyPendingConfiguration} stages
+   * it as a "configuration applied" fact once the conversation is idle.
+   */
+  selection: Policy | undefined;
+  /** Guards against a concurrent or re-entrant apply while one is already in flight. */
+  applyingSelection: boolean;
   readonly send: (event: SessionEvent) => Promise<SessionState>;
   readonly submit: (
     input: SessionInput,
@@ -87,11 +96,15 @@ export async function initializeSession(
 /**
  * Opens one session over the committed state `initial`: its actor, host and runtime facade.
  * `restoring` skips the checks that a restore replaces with a registry adoption plan.
+ * `selectedConfiguration` seeds a configuration selection read from the persistence port's
+ * configuration store ahead of time (restore only), so a selection made before the process last
+ * exited applies at the first idle boundary instead of being silently dropped.
  */
 export function openInstance(
   configured: ConfiguredSession,
   initial: JournalState,
   restoring = false,
+  selectedConfiguration?: Policy,
 ) {
   const { resolvers, configuration } = configured;
   const sessionId = initial.conversation.sessionId;
@@ -120,6 +133,11 @@ export function openInstance(
     storage: new Set(),
     dispatchBoundary: initial,
     observed: { transition: "", usage: initial.lastCompletionUsage?.operationId },
+    selection:
+      selectedConfiguration && selectedConfiguration.version !== initial.policy?.version
+        ? selectedConfiguration
+        : undefined,
+    applyingSelection: false,
     send: (event) => send(ctx, event),
     promptInput: (turn) => promptInput(ctx, turn),
     post: (turnId, event) => post(ctx, turnId, event),
@@ -241,6 +259,90 @@ function post(ctx: SessionInstance, turnId: ActorId, event: TurnEvent) {
   });
 }
 
+/**
+ * Applies a pending configuration selection (D6) as a "configuration applied" journal fact, if
+ * one is pending and the conversation is idle. A no-op when there is nothing to apply or a turn
+ * is running; the next call at an idle boundary (the next submission, or the drain after a turn
+ * ends) applies it. Returns the resulting receipt when it staged one, so a caller waiting on the
+ * selection itself can report the real journal outcome.
+ */
+export function applyPendingConfiguration(ctx: SessionInstance): Promise<CommandReceipt | undefined> {
+  const durable = ctx.actor.snapshot.durable;
+  if (
+    !ctx.selection ||
+    ctx.applyingSelection ||
+    // An in-flight append (status other than "ready") means `durable` is a stale pre-commit
+    // snapshot; submitting now would only queue behind it. Selection must never wait for that,
+    // so this defers to the next opportunity (the drain the append's own commit triggers).
+    ctx.actor.snapshot.status !== "ready" ||
+    durable.conversation.turn.status !== "idle" ||
+    ctx.selection.version === durable.policy?.version
+  )
+    return Promise.resolve(undefined);
+  ctx.applyingSelection = true;
+  const policy = ctx.selection;
+  return submit(ctx, { kind: "policy", policy }).then((receipt) => {
+    ctx.applyingSelection = false;
+    if (receipt.kind === "accepted")
+      diagnostic("session", "info", "configuration.applied", {
+        sessionId: ctx.sessionId,
+        turnId: ctx.actor.snapshot.durable.conversation.turnId,
+        version: policy.version,
+        revision: receipt.receipt.revision,
+      });
+    return receipt;
+  });
+}
+
+/**
+ * Selects a configuration change (D6): validates `patch` against the current selection (or the
+ * policy in force, if nothing is yet selected), commits the result to the persistence port's
+ * configuration store immediately — regardless of turn status or queued inputs — and applies it
+ * right away if the conversation happens to be idle. Never returns `busy`.
+ */
+export async function selectConfiguration(
+  ctx: SessionInstance,
+  patch: PolicyPatch,
+): Promise<CommandReceipt> {
+  const durable = ctx.actor.snapshot.durable;
+  const operation = { id: ctx.configured.id(), kind: "admission" as const, sessionId: ctx.sessionId };
+  if (!durable.policy) {
+    const cause = failure("Session has no journaled policy to select against", {
+      classification: "admission",
+      operation,
+      phase: "select",
+      details: { inputKind: "policy" },
+    });
+    return { kind: "failed", message: cause.message, error: cause };
+  }
+  let next: Policy;
+  try {
+    next = patchPolicy(ctx.selection ?? durable.policy, patch, durable.configuration, ctx.configured.resolvers);
+  } catch (error) {
+    const cause = failure(error, {
+      classification: "admission",
+      operation,
+      phase: "stage",
+      details: { inputKind: "policy" },
+    });
+    return { kind: "failed", message: cause.message, error: cause };
+  }
+  try {
+    await ctx.configured.port.putConfig(ctx.sessionId, next, new AbortController().signal);
+  } catch (error) {
+    const cause = failure(error, { classification: "persistence", operation, phase: "select" });
+    return { kind: "failed", message: cause.message, error: cause };
+  }
+  ctx.selection = next;
+  diagnostic("session", "info", "configuration.selected", {
+    sessionId: ctx.sessionId,
+    version: next.version,
+    inForceVersion: durable.policy.version,
+  });
+  const applied = await applyPendingConfiguration(ctx);
+  return applied ?? { kind: "selected", policy: next };
+}
+
 function submit(
   ctx: SessionInstance,
   input: SessionInput,
@@ -248,18 +350,24 @@ function submit(
   settlement?: (result: TerminalResult) => void,
   stableAppendId?: AppendId,
 ): Promise<CommandReceipt> {
-  const requestId = stableAppendId ?? ctx.configured.id();
-  return new Promise((resolve) => {
-    ctx.receipts.set(requestId, resolve);
-    if (committed) ctx.afterCommit.set(requestId, committed);
-    if (settlement) ctx.admissions.set(requestId, settlement);
-    void ctx.send({
-      type: "submit",
-      submission: {
-        id: requestId,
-        appendId: stableAppendId ?? AppendIdSchema.parse(`${ctx.sessionId}/append/${requestId}`),
-        input,
-      },
+  const submitNow = (): Promise<CommandReceipt> => {
+    const requestId = stableAppendId ?? ctx.configured.id();
+    return new Promise((resolve) => {
+      ctx.receipts.set(requestId, resolve);
+      if (committed) ctx.afterCommit.set(requestId, committed);
+      if (settlement) ctx.admissions.set(requestId, settlement);
+      void ctx.send({
+        type: "submit",
+        submission: {
+          id: requestId,
+          appendId: stableAppendId ?? AppendIdSchema.parse(`${ctx.sessionId}/append/${requestId}`),
+          input,
+        },
+      });
     });
-  });
+  };
+  // Every submission except the internal configuration-apply record itself and session creation
+  // first applies a pending selection while idle, so it never races the boundary it depends on.
+  if (input.kind === "policy" || input.kind === "created") return submitNow();
+  return applyPendingConfiguration(ctx).then(submitNow);
 }

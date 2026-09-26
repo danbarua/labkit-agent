@@ -102,6 +102,8 @@ function serving(options: SessionOptions, batches: readonly CommittedBatch[]): S
       putBlob: port.putBlob.bind(port),
       getBlob: port.getBlob.bind(port),
       append: port.append.bind(port),
+      getConfig: port.getConfig.bind(port),
+      putConfig: port.putConfig.bind(port),
       async load(sessionId, signal) {
         const loaded = await port.load(sessionId, signal);
         return loaded.kind === "loaded" ? { ...loaded, batches } : loaded;
@@ -240,7 +242,7 @@ const violations: readonly (readonly [
   ],
   [
     "an unsupported record version",
-    (batches) => rewrite(batches, position(batches, "user"), [[["version"], 2]]),
+    (batches) => rewrite(batches, position(batches, "user"), [[["version"], 3]]),
     "record_decode",
     (batches) => located(batches, position(batches, "user")),
   ],
@@ -405,7 +407,7 @@ test("a restore that fails integrity logs the rule and the offending record", as
 
 const newerBuild: readonly (readonly [name: string, edits: readonly Edit[], named: string])[] = [
   ["an unknown record kind", [[["body"], { kind: "future_kind" }]], 'kind "future_kind"'],
-  ["a newer record version", [[["version"], 2]], "version 2"],
+  ["a newer record version", [[["version"], 3]], "version 3"],
 ];
 
 for (const [name, edits, named] of newerBuild)

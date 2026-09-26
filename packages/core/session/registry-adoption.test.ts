@@ -79,6 +79,8 @@ function recording(port: SessionPersistence, reject?: (appendId: string) => bool
     putBlob: port.putBlob.bind(port),
     getBlob: port.getBlob.bind(port),
     load: port.load.bind(port),
+    getConfig: port.getConfig.bind(port),
+    putConfig: port.putConfig.bind(port),
     async append(request, signal) {
       appends.push(request.appendId);
       if (reject?.(request.appendId))

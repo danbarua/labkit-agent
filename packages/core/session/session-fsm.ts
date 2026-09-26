@@ -4,6 +4,7 @@ import type { Decision } from "../fsm/fsm.ts";
 import { builtinResolvers, type PolicyResolvers } from "../policy/policy.ts";
 import { AppendIdSchema } from "./persistence.ts";
 import type { AppendId, AppendRequest, AppendResult, LoadResult, Receipt } from "./persistence.ts";
+import type { Policy } from "../policy/policy.ts";
 import { accepts, replay, stage, type JournalState } from "./session-log.ts";
 import { SystemVersionSchema, type SessionInput } from "./types.ts";
 
@@ -12,10 +13,13 @@ import { SystemVersionSchema, type SessionInput } from "./types.ts";
  *
  * - `accepted`: the staged records committed; `receipt` names the append and the revision it
  *   reached. The input's conversation commands are dispatched before this reply.
+ * - `selected`: a configuration change committed to the session's configuration store, but a
+ *   turn was running (or queued input waiting) so it was not journaled; it applies as a
+ *   "configuration applied" fact at the next idle boundary.
  * - `ignored`: the input no longer applies (stale or uncorrelated, see `accepts`); nothing was
  *   written.
- * - `busy`: a `system` or `policy` change arrived while a turn is running or staged, or while
- *   queued inputs wait; nothing was written.
+ * - `busy`: a `system` change arrived while a turn is running or staged, or while queued inputs
+ *   wait; nothing was written. Configuration changes are never `busy`; see `selected`.
  * - `failed`: staging rejected the input (classification `admission`), or the session has failed;
  *   `error` says which.
  * - `closed`: the session closed before the input committed. An append already dispatched may
@@ -23,6 +27,7 @@ import { SystemVersionSchema, type SessionInput } from "./types.ts";
  */
 export type CommandReceipt =
   | Readonly<{ kind: "accepted"; receipt: Receipt }>
+  | Readonly<{ kind: "selected"; policy: Policy }>
   | Readonly<{ kind: "ignored" }>
   | Readonly<{ kind: "busy" }>
   | Readonly<{ kind: "failed"; message: string; error: Failure }>
@@ -214,9 +219,10 @@ export function decideSession(
         state,
         commands: [reply(s.id, { kind: "failed", message: state.message, error: state.error })],
       };
-    // Busy is evaluated at admission, including a staged active turn.
+    // Busy is evaluated at admission, including a staged active turn. Configuration changes are
+    // never busy: selection happens outside this machine and applies at the next idle boundary.
     if (
-      (s.input.kind === "system" || s.input.kind === "policy") &&
+      s.input.kind === "system" &&
       (Boolean(state.durable.pendingInputs?.length) ||
         state.durable.conversation.turn.status !== "idle" ||
         ("pending" in state && state.pending.next.conversation.turn.status !== "idle"))

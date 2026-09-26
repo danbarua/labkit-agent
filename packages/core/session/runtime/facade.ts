@@ -46,6 +46,11 @@ export function createFacade(ctx: SessionInstance): SessionRuntime {
     get policy() {
       return ctx.adoption.plan?.body.policy ?? ctx.actor.snapshot.durable.policy;
     },
+    get selectedPolicy() {
+      // The user's most recent choice (D6); falls back to the policy in force (including a
+      // pending registry adoption's reconciled policy) when nothing has diverged from it yet.
+      return ctx.selection ?? runtime.policy;
+    },
     get model() {
       const { conversation } = ctx.actor.snapshot.durable;
       const policy = runtime.policy;

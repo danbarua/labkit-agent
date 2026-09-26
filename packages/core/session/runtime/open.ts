@@ -92,11 +92,17 @@ export async function restoreSession(
         { revision: last?.revision, appendId: last?.appendId, entryId: last?.entryId },
       );
     }
+    stage = "load_selected_configuration";
+    const selectedConfiguration = await configured.port.getConfig(
+      sessionId,
+      new AbortController().signal,
+    );
     stage = "open_session";
     const built = openInstance(
       configured,
       freeze({ ...journal, conversation: { ...journal.conversation, pending: [] } }),
       true,
+      selectedConfiguration,
     );
     if (journal.conversation.turn.status !== "idle" || journal.pendingInputs?.length) {
       stage = "recover_interrupted_turn";

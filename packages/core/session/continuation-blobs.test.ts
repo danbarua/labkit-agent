@@ -227,7 +227,7 @@ for (const profile of [googleGenerateV2, openaiResponsesV2])
         record.body.event.event.type === "model_settled" &&
         record.body.event.event.continuation,
     )!;
-    expect(settled.version).toBe(1);
+    expect(settled.version).toBe(2);
     expect(() => decodeRecord(JSON.stringify({ ...settled, version: 4 }))).toThrow();
     const prepared = durable.records.findLast(
       (record) =>

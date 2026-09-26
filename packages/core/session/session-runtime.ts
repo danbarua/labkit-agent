@@ -214,8 +214,18 @@ export type SessionRuntime = {
   readonly lastCompletionUsage?: LastCompletionUsage;
   /** Whether the live registry has been journaled; see {@link SessionRegistry}. */
   readonly registry: SessionRegistry;
-  /** Policy the next turn uses: a pending adoption's reconciled policy, else the durable one. */
+  /**
+   * Policy the transcript ran under / the next turn uses if nothing is newly selected: a pending
+   * adoption's reconciled policy, else the durable one.
+   */
   readonly policy?: Policy;
+  /**
+   * The session's selected configuration (D6): the user's most recent choice, which may be ahead
+   * of {@link SessionRuntime.policy} while a turn is running. Falls back to `policy` when nothing
+   * has diverged from it. Views that show "what will apply next" should read this; views that show
+   * "what this transcript ran under" should read `policy`.
+   */
+  readonly selectedPolicy?: Policy;
   /** Dispatches `event` and returns only its `accepted` promise. */
   fire(event: unknown): Promise<EnvReceipt>;
   /**
@@ -242,10 +252,14 @@ export type SessionRuntime = {
    */
   updateSystem(inputs: readonly string[]): Promise<CommandReceipt>;
   /**
-   * Commits a policy record that applies `patch` to the effective policy, validated against the live
-   * bindings; the change applies from the next turn. Resolves with `busy` while a turn is active or
-   * queued inputs are waiting, and `failed` when the patch is rejected. Committing a `permissions`
-   * patch or a change of allowed tools revokes remembered `allow-session` approvals.
+   * Selects `patch` applied to {@link SessionRuntime.selectedPolicy}, validated against the live
+   * bindings, and commits it to the session's configuration store immediately — at any time,
+   * including mid-turn or with queued inputs waiting. Never resolves `busy`. When the conversation
+   * is already idle the selection also applies right away and resolves `accepted`; otherwise it
+   * resolves `selected` and applies as a "configuration applied" fact at the next idle boundary,
+   * after which a running turn still finishes under the settings it started with. Resolves
+   * `failed` when the patch is rejected. Applying a changed `permissions` value or a change of
+   * allowed tools revokes remembered `allow-session` approvals.
    * @throws when `patch` does not match the policy patch schema.
    */
   updatePolicy(patch: PolicyPatch): Promise<CommandReceipt>;

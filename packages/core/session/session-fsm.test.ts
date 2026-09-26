@@ -1,5 +1,6 @@
 import { expect, test } from "@logtape/testing-bun/autoload";
 
+import { PolicyVersionSchema } from "../policy/policy.ts";
 import { AppendIdSchema, RevisionSchema } from "./persistence.ts";
 import { decideSession, type SessionEvent, type SessionState } from "./session-fsm.ts";
 import { createSession } from "./session-runtime.ts";
@@ -231,7 +232,7 @@ test("invalid internal event drained from a queue fails and settles remaining qu
   ).toEqual(["bad", "next"]);
 });
 
-test("idle boundaries with accepted queued inputs keep policy and system updates busy", async () => {
+test("idle boundary with accepted queued inputs keeps system updates busy", async () => {
   const before = await initial();
   const state: SessionState = {
     status: "ready",
@@ -241,16 +242,36 @@ test("idle boundaries with accepted queued inputs keep policy and system updates
       pendingInputs: [{ inputId: before.durable.conversation.turnId, text: "accepted" }],
     },
   };
-  const inputs = [
-    { kind: "policy" as const, patch: { steps: 0 } },
-    { kind: "system" as const, inputs: ["replacement"], version: before.durable.systemVersion },
-  ];
-  for (const input of inputs) {
-    const decision = decideSession(state, {
-      type: "submit",
-      submission: { id: "change", appendId: AppendIdSchema.parse("change"), input },
-    });
-    expect(decision.state).toBe(state);
-    expect(decision.commands).toEqual([{ type: "reply", id: "change", result: { kind: "busy" } }]);
-  }
+  const decision = decideSession(state, {
+    type: "submit",
+    submission: {
+      id: "change",
+      appendId: AppendIdSchema.parse("change"),
+      input: { kind: "system", inputs: ["replacement"], version: before.durable.systemVersion },
+    },
+  });
+  expect(decision.state).toBe(state);
+  expect(decision.commands).toEqual([{ type: "reply", id: "change", result: { kind: "busy" } }]);
+});
+test("a configuration-applied record stages at an idle boundary even with accepted queued inputs, so it lands before the queued dequeue (D6)", async () => {
+  const before = await initial();
+  const state: SessionState = {
+    status: "ready",
+    queue: [],
+    durable: {
+      ...before.durable,
+      pendingInputs: [{ inputId: before.durable.conversation.turnId, text: "accepted" }],
+    },
+  };
+  const policy = {
+    ...state.durable.policy!,
+    permissions: state.durable.policy!.permissions === "ask" ? ("off" as const) : ("ask" as const),
+    version: PolicyVersionSchema.parse(state.durable.policy!.version + 1),
+  };
+  const decision = decideSession(state, {
+    type: "submit",
+    submission: { id: "change", appendId: AppendIdSchema.parse("change"), input: { kind: "policy", policy } },
+  });
+  expect(decision.commands).not.toEqual([{ type: "reply", id: "change", result: { kind: "busy" } }]);
+  expect(decision.state.status).not.toBe("failed");
 });

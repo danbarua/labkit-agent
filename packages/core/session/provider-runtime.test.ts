@@ -87,7 +87,7 @@ for (const profile of [openaiChat, openaiResponses, anthropicMessages, googleGen
     const session = await createSession(opts);
     const result = await session.input("hello").settled;
     expect(result.kind === "terminal" && result.record.outcome.kind).toBe("completed");
-    expect(session.snapshot.durable.records.every((record) => record.version === 1)).toBe(true);
+    expect(session.snapshot.durable.records.every((record) => record.version === 2)).toBe(true);
     const before = calls.length;
     const restored = await restoreSession(opts, session.snapshot.durable.conversation.sessionId);
     expect(calls).toHaveLength(before);
@@ -133,7 +133,7 @@ test("provider and model patches commit at idle; missing bindings fail admission
   });
   await Promise.all([session.close(), restored.close()]);
 });
-test("active completion sees frozen selection and a mid-turn policy change is busy", async () => {
+test("active completion sees frozen selection and a mid-turn policy change selects without blocking it (D6)", async () => {
   const opts = options();
   const pending = deferred<Response>();
   let body: unknown;
@@ -151,9 +151,9 @@ test("active completion sees frozen selection and a mid-turn policy change is bu
   const session = await createSession({ ...opts, bindings: { ...opts.bindings, providers } });
   const handle = session.input("hello");
   await until(() => body !== undefined);
-  expect(await session.updatePolicy({ provider: anthropicMessages.id, model: "other" })).toEqual({
-    kind: "busy",
-  });
+  expect(
+    await session.updatePolicy({ provider: anthropicMessages.id, model: "other" }),
+  ).toMatchObject({ kind: "selected" });
   expect(body).toMatchObject({ model: "default-model" });
   pending.resolve(Response.json(answer(openaiChat)));
   await handle.settled;
@@ -168,6 +168,8 @@ test("rejected policy append never starts dependent work or changes durable sele
     putBlob: backing.putBlob.bind(backing),
     getBlob: backing.getBlob.bind(backing),
     load: backing.load.bind(backing),
+    getConfig: backing.getConfig.bind(backing),
+    putConfig: backing.putConfig.bind(backing),
     append: (request, signal) =>
       reject
         ? Promise.resolve({ kind: "rejected", message: "offline" })
@@ -200,17 +202,17 @@ test("provider configuration changes retain format; staging rejects a tampered p
   );
   const terminal = await restored.input("new turn").settled;
   expect(terminal.kind === "terminal" && terminal.record.outcome.kind).toBe("completed");
-  expect(restored.snapshot.durable.records.map((record) => record.version)).toContain(1);
-  expect(restored.snapshot.durable.records.map((record) => record.version)).toContain(1);
-  expect(restored.snapshot.durable.records.at(-1)?.version).toBe(1);
+  expect(restored.snapshot.durable.records.map((record) => record.version)).toContain(2);
+  expect(restored.snapshot.durable.records.map((record) => record.version)).toContain(2);
+  expect(restored.snapshot.durable.records.at(-1)?.version).toBe(2);
   const loaded = await legacy.persistence.load(
     restored.snapshot.durable.conversation.sessionId,
     new AbortController().signal,
   );
   if (loaded.kind !== "loaded") throw new Error("missing journal");
   expect(replay(loaded.batches)).toEqual(restored.snapshot.durable);
-  const record = restored.snapshot.durable.records.find((r) => r.version === 1)!;
-  expect(() => decodeRecord(JSON.stringify({ ...record, version: 2 }))).toThrow();
+  const record = restored.snapshot.durable.records.find((r) => r.version === 2)!;
+  expect(() => decodeRecord(JSON.stringify({ ...record, version: 3 }))).toThrow();
   const at = loaded.batches.findLastIndex((batch) =>
     batch.records.some(
       (serialized) => JSON.parse(serialized).body.event?.event?.type === "prepared",
@@ -368,6 +370,8 @@ test("lost policy acknowledgement reconciles the same v3 selection exactly once"
     putBlob: backing.putBlob.bind(backing),
     getBlob: backing.getBlob.bind(backing),
     load: backing.load.bind(backing),
+    getConfig: backing.getConfig.bind(backing),
+    putConfig: backing.putConfig.bind(backing),
     async append(request, signal) {
       const result = await backing.append(request, signal);
       if (!lost && request.records.some((record) => JSON.parse(record).body.kind === "policy")) {

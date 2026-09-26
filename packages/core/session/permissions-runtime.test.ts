@@ -129,7 +129,7 @@ test("intent and permission receipts gate prompts and the entire batch; parsed i
       "completed",
     ]);
   }
-  expect(session.snapshot.durable.records.every((record) => record.version === 1)).toBe(true);
+  expect(session.snapshot.durable.records.every((record) => record.version === 2)).toBe(true);
   expect(journalJSONL(session.snapshot.durable)).toContain('"decision":"allow_once"');
   expect(journalJSONL(session.snapshot.durable)).not.toContain('"locations"');
   const restored = await restoreSession(options, session.snapshot.durable.conversation.sessionId);
@@ -362,11 +362,11 @@ test("permission mode changes only at idle policy boundaries; off keeps existing
   await session.input("Read").settled;
   expect(requests).toHaveLength(0);
   expect(ran).toHaveLength(2);
-  expect(session.snapshot.durable.records[0]?.version).toBe(1);
+  expect(session.snapshot.durable.records[0]?.version).toBe(2);
   await session.updatePolicy({ permissions: "ask" });
   await session.input("Ask").settled;
   expect(requests).toHaveLength(2);
-  expect(session.snapshot.durable.records.at(-1)?.version).toBe(1);
+  expect(session.snapshot.durable.records.at(-1)?.version).toBe(2);
   await session.updatePolicy({ permissions: "off" });
   await session.input("Off").settled;
   expect(requests).toHaveLength(2);
@@ -450,7 +450,7 @@ test("session tool approval is committed before reuse, retained across model cha
           if (
             request.records.some((raw) => {
               const body = JSON.parse(raw).body;
-              return body.kind === "policy" && body.patch.permissions === "ask";
+              return body.kind === "policy" && body.policy.permissions === "ask";
             })
           ) {
             awaitingReset = true;

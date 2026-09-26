@@ -4,7 +4,7 @@ import type { SessionCommand } from "../session-fsm.ts";
 import { appendOperation, loadOperation } from "../session-operation.ts";
 import type { TerminalResult } from "../session-runtime.ts";
 import { executeConversationCommand } from "./conversation-effects.ts";
-import type { SessionInstance } from "./instance.ts";
+import { applyPendingConfiguration, type SessionInstance } from "./instance.ts";
 
 /** The session actor command of type `K`. */
 type Command<K extends SessionCommand["type"]> = Extract<SessionCommand, { type: K }>;
@@ -62,10 +62,11 @@ function releaseCommitted(ctx: SessionInstance, command: Command<"dispatch">) {
           previous.some((tool) => !tools.includes(tool))
         );
       });
-      if (body.patch.permissions !== undefined || toolsChanged)
+      const permissionsChanged = previousPolicy?.permissions !== body.policy.permissions;
+      if (permissionsChanged || toolsChanged)
         ctx.host.resetPermissions(
-          body.patch.permissions !== undefined
-            ? "Permission mode explicitly committed; remembered tool approvals revoked"
+          permissionsChanged
+            ? "Permission mode changed by an applied configuration; remembered tool approvals revoked"
             : "Allowed tool scope changed; remembered tool approvals revoked",
           { policyVersion: body.policy.version, appendId: command.submission.appendId },
         );
@@ -236,7 +237,9 @@ function reply(ctx: SessionInstance, command: Command<"reply">) {
 }
 
 function drain(ctx: SessionInstance) {
-  void ctx.send({ type: "drain" });
+  // A pending configuration selection applies before any queued input dequeues, so the dequeued
+  // turn always starts under the settings selected while it waited.
+  void applyPendingConfiguration(ctx).then(() => ctx.send({ type: "drain" }));
 }
 
 function stop(ctx: SessionInstance) {

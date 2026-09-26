@@ -110,7 +110,7 @@ test("markdown refs commit without bytes, restore does not read blobs, fork and 
   const v5 = session.snapshot.durable.records.find(
     (r) => r.body.kind === "event" && r.body.event.type === "user",
   )!;
-  expect(v5.version).toBe(1);
+  expect(v5.version).toBe(2);
   expect(() => decodeRecord(JSON.stringify({ ...v5, version: 4 }))).toThrow();
   const before = reads();
   const restored = await restoreSession(opts, id);
@@ -362,7 +362,7 @@ test("attachment admission retains the single format without rewriting prior rec
   );
   await session.input({ attachments: [ref] }).settled;
   expect(journalJSONL(session.snapshot.durable).startsWith(old)).toBe(true);
-  expect(session.snapshot.durable.records.slice(0, 3).map((r) => r.version)).toEqual([1, 1, 1]);
+  expect(session.snapshot.durable.records.slice(0, 3).map((r) => r.version)).toEqual([2, 2, 2]);
   const restored = await restoreSession(opts, session.snapshot.durable.conversation.sessionId);
   expect(restored.snapshot.durable).toEqual(session.snapshot.durable);
   await Promise.all([session.close(), restored.close()]);
@@ -437,7 +437,7 @@ test("attachment queued while aborting tools keeps both records in v5", async ()
   const queued = session.snapshot.durable.records.find((r) => r.body.kind === "queued")!;
   const batch = session.snapshot.durable.records.filter((r) => r.appendId === queued.appendId);
   expect(batch).toHaveLength(2);
-  expect(batch.map((r) => r.version)).toEqual([1, 1]);
+  expect(batch.map((r) => r.version)).toEqual([2, 2]);
   const restored = await restoreSession(
     configured,
     session.snapshot.durable.conversation.sessionId,
@@ -454,7 +454,7 @@ test("public user input requires content, accepts empty attachment lists with te
   expect(() => session.dispatch({ type: "user", attachments: [bytes] })).toThrow();
   const result = await session.input({ text: "Text only", attachments: [] }).settled;
   expect(result.kind === "terminal" && result.record.outcome.kind).toBe("completed");
-  expect(session.snapshot.durable.records.every((record) => record.version === 1)).toBe(true);
+  expect(session.snapshot.durable.records.every((record) => record.version === 2)).toBe(true);
   await session.close();
 });
 

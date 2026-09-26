@@ -8,8 +8,10 @@ import type { Fold, JournalState, ReducibleBody, Reduction } from "./state.ts";
 /**
  * Reduces an event record: processes a domain event (user input, completion, tool batch,
  * permission decision, system notice, or child operation result), updates conversation
- * state, and collects usage and continuation data if applicable. Stage validates system
- * and policy versions, barge-in policy, and continuation consistency.
+ * state, and collects usage and continuation data if applicable. Stage validates the system
+ * version, barge-in policy, and continuation consistency. The policy in force cannot change
+ * mid-turn (configuration only applies at an idle boundary), so events carry no policy stamp
+ * to re-derive.
  */
 function reduceEvent(
   state: JournalState,
@@ -19,8 +21,6 @@ function reduceEvent(
   if (fold.mode === "stage") {
     if (input.systemVersion !== state.systemVersion)
       throw new Error("Turn system version mismatch");
-    if (input.policyVersion !== state.policy?.version)
-      throw new Error("Turn policy version mismatch");
     if (
       input.event.type === "user" &&
       state.policy &&

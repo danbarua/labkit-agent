@@ -1,12 +1,7 @@
 import type { ConversationCommand } from "../../agent/agent-conversation.ts";
 import { ActorIdSchema } from "../../agent/types.ts";
 import { freeze } from "../../fsm/fsm.ts";
-import {
-  builtinResolvers,
-  patchPolicy,
-  PolicyPatchSchema,
-  type PolicyResolvers,
-} from "../../policy/policy.ts";
+import { builtinResolvers, type PolicyResolvers } from "../../policy/policy.ts";
 import { RevisionSchema, type AppendId } from "../persistence.ts";
 import { JournalRecordSchema, type JournalBody, type Seed, type SessionInput } from "../types.ts";
 import { encodeRecord } from "./codec.ts";
@@ -69,11 +64,7 @@ export function stage(
       });
   };
   if (input.kind === "policy") {
-    apply({
-      kind: "policy",
-      patch: PolicyPatchSchema.parse(input.patch),
-      policy: patchPolicy(next.policy!, input.patch, next.configuration, resolvers),
-    });
+    apply({ kind: "policy", policy: input.policy });
   } else if (
     input.kind === "event" &&
     input.event.type === "user" &&
@@ -100,14 +91,9 @@ export function stage(
         kind: "event",
         event: { type: "abort" },
         systemVersion: next.systemVersion,
-        policyVersion: next.policy!.version,
       });
   } else {
-    apply(
-      input.kind === "event" && next.policy
-        ? { ...input, policyVersion: next.policy.version }
-        : input,
-    );
+    apply(input);
   }
   if (input.kind === "recovery")
     for (const pending of next.pendingInputs ?? [])
@@ -124,7 +110,7 @@ function packageRecords(
 ) {
   const records = bodies.map((body, index) => {
     return JournalRecordSchema.parse({
-      version: 1,
+      version: 2,
       sessionId: previous.conversation.sessionId,
       revision: previous.revision + index + 1,
       entryId: `${appendId}/${index}`,

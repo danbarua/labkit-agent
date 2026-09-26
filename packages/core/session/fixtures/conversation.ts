@@ -405,11 +405,11 @@ export const queueUserV2: Scenario = {
     const admission3 = await turn3.accepted;
     f.record({ op: "input", session: "root", accepted: admission3 });
     f.check("Input admission is accepted", admission3.kind, "accepted");
-    f.action("Update root policy; expect busy.");
+    f.action("Update root policy; expect selected (commits immediately, applies at the next idle boundary).");
     const receipt4 = await root.updatePolicy({
       steps: 9,
     });
-    f.check("Policy update admission", receipt4.kind, "busy");
+    f.check("Policy update admission", receipt4.kind, "selected");
     f.record({ op: "policy", session: "root", receipt: receipt4 });
     f.action("Release deferred first work.");
     await f.release("first");
