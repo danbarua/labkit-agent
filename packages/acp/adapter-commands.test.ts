@@ -63,6 +63,11 @@ test("commands are discovered on new/load and expand once before journal admissi
       sessionUpdate: "available_commands_update",
       availableCommands: [
         { name: "review", description: "Review contents", input: { hint: "focus" } },
+        {
+          name: "export",
+          description:
+            "Write this session's history to a Markdown file under .labkit/exports and reply with its path.",
+        },
       ],
     });
     commands[0]!.prompt = "REVIEW_TEMPLATE_REVISED";
@@ -168,7 +173,15 @@ test("live command catalogs update and clear without changing admitted prompts o
       expect(admittedText).toContain("Replacement instructions");
       publish!([]);
       await until(() => catalogs().length === 3);
-      expect(catalogs().at(-1)!.update).toMatchObject({ availableCommands: [] });
+      expect(catalogs().at(-1)!.update).toMatchObject({
+        availableCommands: [
+          {
+            name: "export",
+            description:
+              "Write this session's history to a Markdown file under .labkit/exports and reply with its path.",
+          },
+        ],
+      });
       await h.request("session/close", { sessionId });
       expect(() => publish!([])).toThrow("closed ACP session");
       expect(catalogs()).toHaveLength(3);
@@ -182,8 +195,8 @@ test("live command catalogs update and clear without changing admitted prompts o
     .split("\n")
     .map((line) => JSON.parse(line));
   const updated = records.filter((record) => record.event === "acp.commands.updated");
-  expect(updated.map((record) => record.count)).toEqual([1, 0]);
-  expect(updated[0]).toMatchObject({ level: "info", names: ["review"] });
+  expect(updated.map((record) => record.count)).toEqual([2, 1]);
+  expect(updated[0]).toMatchObject({ level: "info", names: ["review", "export"] });
   expect(updated[0].sessionId).toBeString();
   expect(records.filter((record) => record.event === "acp.commands.rejected")).toHaveLength(2);
 });

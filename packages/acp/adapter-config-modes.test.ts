@@ -91,7 +91,9 @@ test("an idle config change answers once applied, shows the selection at once, r
       value: "m2",
     });
     await until(() => entered);
-    await until(() => h.updates().length > 0);
+    await until(() =>
+      h.updates().some(({ update }) => update.sessionUpdate === "config_option_update"),
+    );
     expect(
       h
         .updates()
@@ -100,7 +102,7 @@ test("an idle config change answers once applied, shows the selection at once, r
             ? update.configOptions[0]?.currentValue
             : update.sessionUpdate,
         ),
-    ).toEqual(["m2"]);
+    ).toEqual(["available_commands_update", "m2"]);
     const turn = await h.start("session/prompt", prompt(id));
     await Bun.sleep(5);
     expect(models).toEqual([]);
@@ -290,7 +292,7 @@ test("invalid policy patches return errors without publishing a configuration ch
         })
       ).error?.code,
     ).toBe(-32000);
-    expect(h.updates()).toHaveLength(0);
+    expect(h.updates()).toHaveLength(1);
     const same = await h.request("session/set_config_option", {
       sessionId: id,
       configId: "model",
@@ -691,6 +693,7 @@ test("reopening under a different launcher model uses the live model and lists u
       expect(h.updates().map(({ update }) => update.sessionUpdate)).toEqual([
         "user_message_chunk",
         "agent_message_chunk",
+        "available_commands_update",
       ]);
       expect(bodies).toHaveLength(1);
       expect((await h.request("session/prompt", prompt(sessionId))).result.stopReason).toBe(

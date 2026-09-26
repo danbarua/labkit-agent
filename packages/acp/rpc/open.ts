@@ -3,6 +3,7 @@ import { isAbsolute } from "node:path";
 import { RequestError, type AgentContext, type NewSessionRequest } from "@agentclientprotocol/sdk";
 import {
   createSession,
+  projectConversation,
   restoreSession,
   SessionNotFoundError,
   type SessionOptions,
@@ -354,18 +355,11 @@ export function opener(deps: OpenDeps): OpenSession {
       entry.revision = runtime.snapshot.durable.revision;
       if (id && replay) {
         const durable = runtime.snapshot.durable;
-        const state = durable.conversation;
+        const view = projectConversation(durable);
         const evidence = toolEvidence(durable);
-        updates.replay(client, id, state.context, `${id}/context`, evidence, renderers);
-        state.log.forEach((record, index) => {
-          updates.replay(
-            client,
-            id,
-            record.messages,
-            `${id}/history/${index}`,
-            evidence,
-            renderers,
-          );
+        updates.replay(client, id, view.context, `${id}/context`, evidence, renderers);
+        view.log.forEach((turn, index) => {
+          updates.replay(client, id, turn.messages, `${id}/history/${index}`, evidence, renderers);
         });
       }
       const registry = runtime.registry;

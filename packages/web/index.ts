@@ -6,6 +6,7 @@ import {
   admit,
   answerPermission,
   eventResponse,
+  exportSession,
   hostInfo,
   openSession,
   readBlob,
@@ -107,6 +108,22 @@ const server = serve({
         } catch {
           return new Response("Not found", { status: 404 });
         }
+      },
+    },
+
+    "/api/session/:id/export.md": {
+      GET(req) {
+        const result = exportSession(req.params.id, "markdown");
+        if (!result) return new Response("Not found", { status: 404 });
+        return new Response(result.body, { headers: { "Content-Type": result.contentType } });
+      },
+    },
+
+    "/api/session/:id/export.jsonl": {
+      GET(req) {
+        const result = exportSession(req.params.id, "jsonl");
+        if (!result) return new Response("Not found", { status: 404 });
+        return new Response(result.body, { headers: { "Content-Type": result.contentType } });
       },
     },
 

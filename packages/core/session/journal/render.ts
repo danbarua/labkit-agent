@@ -1,4 +1,5 @@
 import type { AgentMessage } from "../../agent/types.ts";
+import { projectMessage } from "../views.ts";
 import { encodeRecord } from "./codec.ts";
 import type { JournalState } from "./state.ts";
 
@@ -34,36 +35,33 @@ export function journalMarkdown(
       .map((line) => `> ${line}`)
       .join("\n");
   const message = (m: AgentMessage): string[] => {
+    const view = projectMessage(m);
     const title =
-      m.role === "tool"
-        ? `Tool result — call ${m.callId}`
-        : m.role[0]!.toUpperCase() + m.role.slice(1);
-    let content = quote(m.text);
-    if (m.role === "tool") {
+      view.role === "tool"
+        ? `Tool result — call ${view.callId}`
+        : view.role[0]!.toUpperCase() + view.role.slice(1);
+    let content = quote(view.text);
+    if (view.role === "tool") {
       // Tool messages are text at this boundary. Pretty-print JSON when present, retaining literal text otherwise.
       try {
-        const parsed: unknown = JSON.parse(m.text);
+        const parsed: unknown = JSON.parse(view.text);
         if (parsed !== null && typeof parsed === "object") content = block(parsed);
       } catch {
         /* Literal tool text is valid and is rendered unchanged. */
       }
     }
-    const lines = [`### ${title}`, "", ...(m.text ? [content, ""] : [])];
-    if (m.role === "assistant" && m.calls) {
-      for (const call of m.calls)
+    const lines = [`### ${title}`, "", ...(view.text ? [content, ""] : [])];
+    if (view.role === "assistant" && view.calls) {
+      for (const call of view.calls)
         lines.push(`**Tool call: ${call.name}** (call ID: ${call.id})`, "", block(call.args), "");
     }
-    if (m.role !== "tool") {
-      for (const part of m.parts ?? []) {
-        if (part.type === "blob")
-          lines.push(
-            `Attachment: **${part.ref.name ?? "Unnamed attachment"}** — ${part.ref.media}, ${part.ref.bytes} bytes.`,
-            "",
-            `Blob ID: \`${part.ref.id}\` (bytes are stored separately).`,
-            "",
-          );
-      }
-    }
+    for (const blob of view.blobs)
+      lines.push(
+        `Attachment: **${blob.name ?? "Unnamed attachment"}** — ${blob.media}, ${blob.bytes} bytes.`,
+        "",
+        `Blob URI: \`${blob.uri}\` (bytes are stored separately).`,
+        "",
+      );
     return lines;
   };
   const lines = [

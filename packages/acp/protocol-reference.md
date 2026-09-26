@@ -175,19 +175,29 @@ asks for planning without implementation; execution still follows the normal mod
 
 `AcpSessionOptions.commands` accepts `AcpCommand` entries with `name`, `description`, optional
 `input: { hint }`, and a `prompt` template string. Bindings are validated and copied at session
-opening (at most 64 unique command names). The adapter sends `available_commands_update` on
-new/load/resume when commands exist. Metadata excludes the prompt template. Names use lowercase
-letters, digits, underscores, and hyphens, beginning with a letter; omit the leading slash.
+opening (at most 64 unique command names). Metadata excludes the prompt template. Names use
+lowercase letters, digits, underscores, and hyphens, beginning with a letter; omit the leading
+slash.
 
 A declared `/name` prefix in the first text block expands to the template plus the remaining
 unstructured argument text. Other blocks keep their order. Unknown command prefixes and ordinary
 slash-containing text are left unchanged. The expanded user text, including the command name,
-is journaled once; restore replays it without re-expanding against changed templates. `SessionOptionsContext.publishCommands(commands)` replaces the complete catalog for the live
-session and sends `available_commands_update`; an empty array clears it. Updates during opening
-are staged until publication. Invalid catalogs and updates after close are rejected without
-changing the active catalog. Already-admitted prompts retain their expanded text. Catalogs are
-environment resources rebound on load/resume, not journal data. Commands with direct session
-lifecycle effects are not implemented.
+is journaled once; restore replays it without re-expanding against changed templates.
+`SessionOptionsContext.publishCommands(commands)` replaces the complete catalog for the live
+session and sends `available_commands_update`; an empty array clears every launcher-supplied
+command (the built-in `/export` below is never affected). Updates during opening are staged until
+publication. Invalid catalogs and updates after close are rejected without changing the active
+catalog. Already-admitted prompts retain their expanded text. Catalogs are environment resources
+rebound on load/resume, not journal data.
+
+`/export` is built in: `bindCommands` always appends it, a launcher-supplied command named
+`export` is dropped in its favor, and `expandCommand` never expands it into a model prompt. The
+adapter therefore always sends `available_commands_update` on new/load/resume (the catalog is
+never empty). `session/prompt` intercepts a leading `/export` before turn admission: it renders
+the session's journal as Markdown (`journalMarkdown`, facts only; blob parts render as their
+`blob://` URI), writes it to `<cwd>/.labkit/exports/<sessionId>.md`, replies with an
+`agent_message_chunk` naming the path, and returns `stopReason: "end_turn"` without dispatching a
+completion. Trailing argument text after `/export` is accepted and ignored.
 
 ## Plans
 

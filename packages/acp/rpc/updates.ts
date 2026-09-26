@@ -2,13 +2,13 @@ import type { AgentContext, SessionUpdate } from "@agentclientprotocol/sdk";
 import { blobUri } from "@labkit-agent/core";
 import type {
   JournalState,
+  MessageView,
   SessionBindings,
   SessionRuntime,
   SessionState,
 } from "@labkit-agent/core";
 import type { HostToolNotification } from "@labkit-agent/core/host";
 import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
-import type { AgentMessage } from "@labkit-agent/core/types";
 
 import type { AcpOptions } from "../adapter.ts";
 import { parseSessionInfo } from "../session-info.ts";
@@ -31,7 +31,7 @@ export type SessionUpdates = Readonly<{
   replay(
     client: AgentContext,
     id: string,
-    messages: readonly AgentMessage[],
+    messages: readonly MessageView[],
     prefix: string,
     evidence: Map<string, "completed" | "failed">,
     renderers: ReadonlyMap<string, AcpToolContent>,
@@ -282,7 +282,7 @@ export function sessionUpdates(
   const replay = (
     client: AgentContext,
     id: string,
-    messages: readonly AgentMessage[],
+    messages: readonly MessageView[],
     prefix: string,
     evidence: Map<string, "completed" | "failed">,
     renderers: ReadonlyMap<string, AcpToolContent>,
@@ -303,19 +303,18 @@ export function sessionUpdates(
             messageId,
             content: { type: "text", text: message.text },
           });
-        for (const part of message.parts ?? [])
-          if (part.type === "blob")
-            core.send(client, id, {
-              sessionUpdate: message.role === "user" ? "user_message_chunk" : "agent_message_chunk",
-              messageId,
-              content: {
-                type: "resource_link",
-                uri: `labkit-blob:${part.ref.id}`,
-                name: part.ref.name ?? part.ref.id,
-                mimeType: part.ref.media,
-                size: part.ref.bytes,
-              },
-            });
+        for (const blob of message.blobs)
+          core.send(client, id, {
+            sessionUpdate: message.role === "user" ? "user_message_chunk" : "agent_message_chunk",
+            messageId,
+            content: {
+              type: "resource_link",
+              uri: blob.uri,
+              name: blob.name ?? blob.id,
+              mimeType: blob.media,
+              size: blob.bytes,
+            },
+          });
       }
       if (message.role === "assistant")
         for (const call of message.calls ?? []) {
@@ -352,22 +351,16 @@ export function sessionUpdates(
               ),
               ...(renderers.has(toolName)
                 ? []
-                : (message.parts ?? []).flatMap((part) =>
-                    part.type === "blob"
-                      ? [
-                          {
-                            type: "content" as const,
-                            content: {
-                              type: "resource_link" as const,
-                              uri: blobUri(part.ref),
-                              name: part.ref.name ?? part.ref.media,
-                              mimeType: part.ref.media,
-                              size: part.ref.bytes,
-                            },
-                          },
-                        ]
-                      : [],
-                  )),
+                : message.blobs.map((blob) => ({
+                    type: "content" as const,
+                    content: {
+                      type: "resource_link" as const,
+                      uri: blob.uri,
+                      name: blob.name ?? blob.media,
+                      mimeType: blob.media,
+                      size: blob.bytes,
+                    },
+                  }))),
             ],
           });
           calls.delete(message.callId);

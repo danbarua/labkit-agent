@@ -99,6 +99,16 @@ it as an extra choice named `<value> (saved)` and logs `acp.session.config.unlis
 Choosing it again changes nothing; choosing another value selects the usual patch.
 See [configuration binding details](protocol-reference.md#configuration-bindings).
 
+## Slash commands and `/export`
+
+`AcpSessionOptions.commands` advertises launcher-defined `/name` prompt templates (see
+[the protocol reference](protocol-reference.md#slash-commands)). `/export` is built in and always
+advertised alongside them, under a reserved name a launcher cannot redefine: `session/prompt`
+intercepts it before turn admission, writes the session's committed history as Markdown to
+`<cwd>/.labkit/exports/<sessionId>.md`, and replies with the path — without calling the model.
+Because the catalog is never empty, every session now sends `available_commands_update` on
+new/load/resume.
+
 ## Reopen a session after the tool, agent or model registry changes
 
 Your factory may change the tool, agent or model registry between runs. A saved session still opens

@@ -2,6 +2,7 @@ import { RequestError, type AgentApp } from "@agentclientprotocol/sdk";
 import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
 
 import { expandCommand } from "../commands.ts";
+import { isExportCommand, writeSessionExport } from "../export.ts";
 import { promptInput, requireAdvertisedContent } from "../prompt-input.ts";
 import type { ConnectionGate } from "./connection.ts";
 import type { AdapterCore } from "./core.ts";
@@ -59,6 +60,37 @@ export function registerPrompt(
       await awaitForksQuiet(entry, AbortSignal.any([signal, core.signal()]));
       if (!isCurrent(params.sessionId, entry) || !entry.acceptingUpdates)
         throw new RequestError(-32000, "Session closed");
+      if (isExportCommand(params.prompt)) {
+        const sessionId = entry.runtime.snapshot.durable.conversation.sessionId;
+        try {
+          const path = await writeSessionExport(
+            entry.cwd,
+            sessionId,
+            entry.runtime.snapshot.durable,
+          );
+          core.send(client, sessionId, {
+            sessionUpdate: "agent_message_chunk",
+            messageId: `${sessionId}/export/${trace.rpcRequestId}`,
+            content: { type: "text", text: `Exported session history to \`${path}\`.` },
+          });
+          await core.flushed();
+          diagnostic("acp", "info", "acp.prompt.export.completed", {
+            ...trace,
+            path,
+            durationMs: performance.now() - started,
+          });
+          return { stopReason: "end_turn" };
+        } catch (error) {
+          diagnostic("acp", "error", "acp.prompt.export.failed", {
+            ...trace,
+            error: diagnosticError(error),
+          });
+          throw new RequestError(
+            -32000,
+            `Session export failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
       if (entry.busy) throw new RequestError(-32000, "Session already has an active prompt");
       entry.busy = true;
       let finishPrompt!: () => void;
