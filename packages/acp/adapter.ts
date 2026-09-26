@@ -50,6 +50,7 @@ import {
   type AcpPromptCapabilities,
   type AdvertisedPromptCapabilities,
 } from "./prompt-input.ts";
+import { adapterCore } from "./rpc/core.ts";
 import {
   bindConfig,
   configPatch,
@@ -322,21 +323,12 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
   let closing = false;
   let connection: AgentConnection;
   const mcpBridge = acpMcpBridge(() => connection.signal);
-  let writes: Promise<void> = Promise.resolve();
-  const send = (client: AgentContext, sessionId: string, update: SessionUpdate) => {
-    if (closing) return;
-    writes = writes
-      .then(() => client.notify("session/update", { sessionId, update }))
-      .catch((error) => {
-        diagnostic("acp", "error", "acp.notification.failed", {
-          connectionId,
-          sessionId,
-          method: "session/update",
-          error: diagnosticError(error),
-        });
-        connection.close(error);
-      });
-  };
+  const core = adapterCore({
+    connectionId,
+    signal: () => connection.signal,
+    isClosing: () => closing,
+    close: (e) => connection.close(e),
+  });
   const refreshInfo = (entry: Session, client: AgentContext) => {
     if (!options.sessionInfo || !entry.acceptingUpdates || closing) return;
     const sessionId = entry.runtime.snapshot.durable.conversation.sessionId;
@@ -359,7 +351,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           const signature = JSON.stringify(info);
           if (signature === entry.infoSignature) return;
           entry.infoSignature = signature;
-          send(client, sessionId, { sessionUpdate: "session_info_update", ...info });
+          core.send(client, sessionId, { sessionUpdate: "session_info_update", ...info });
         })
         .catch((error) =>
           diagnostic("acp", "warning", "acp.session.metadata.failed", {
@@ -426,7 +418,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     thought = false,
   ) => {
     if (value)
-      send(client, id, {
+      core.send(client, id, {
         sessionUpdate: thought ? "agent_thought_chunk" : "agent_message_chunk",
         messageId,
         content: { type: "text", text: value },
@@ -466,13 +458,16 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         revision: snapshot.durable.revision,
       });
       if (configuration.configOptions)
-        send(client, id, {
+        core.send(client, id, {
           sessionUpdate: "config_option_update",
           configOptions: configuration.configOptions,
         });
       if (configuration.modes && configuration.modes.currentModeId !== entry.modeId) {
         entry.modeId = configuration.modes.currentModeId;
-        send(client, id, { sessionUpdate: "current_mode_update", currentModeId: entry.modeId });
+        core.send(client, id, {
+          sessionUpdate: "current_mode_update",
+          currentModeId: entry.modeId,
+        });
       }
     }
     for (const record of snapshot.durable.records.slice(entry.revision)) {
@@ -508,14 +503,14 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           : `${prefix}/${index}`;
       if (message.role === "user" || message.role === "assistant") {
         if (message.text)
-          send(client, id, {
+          core.send(client, id, {
             sessionUpdate: message.role === "user" ? "user_message_chunk" : "agent_message_chunk",
             messageId,
             content: { type: "text", text: message.text },
           });
         for (const part of message.parts ?? [])
           if (part.type === "blob")
-            send(client, id, {
+            core.send(client, id, {
               sessionUpdate: message.role === "user" ? "user_message_chunk" : "agent_message_chunk",
               messageId,
               content: {
@@ -535,7 +530,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
             toolName: call.name,
             status: evidence.get(`${messageId}/${call.id}`),
           });
-          send(client, id, {
+          core.send(client, id, {
             sessionUpdate: "tool_call",
             toolCallId,
             title: call.name,
@@ -548,7 +543,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         const call = calls.get(message.callId);
         if (call) {
           const { toolCallId, toolName, status } = call;
-          send(client, id, {
+          core.send(client, id, {
             sessionUpdate: "tool_call_update",
             toolCallId,
             ...(status ? { status } : {}),
@@ -565,7 +560,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       }
     });
     for (const { toolCallId } of calls.values())
-      send(client, id, { sessionUpdate: "tool_call_update", toolCallId, status: "failed" });
+      core.send(client, id, { sessionUpdate: "tool_call_update", toolCallId, status: "failed" });
   };
   async function open(
     params: NewSessionRequest & { sessionId?: string },
@@ -692,7 +687,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
                 const ids = active.terminals.get(toolCallId) ?? [];
                 if (!ids.includes(terminalId)) ids.push(terminalId);
                 active.terminals.set(toolCallId, ids);
-                send(client, sessionId, {
+                core.send(client, sessionId, {
                   sessionUpdate: "tool_call_update",
                   toolCallId,
                   content: ids.map((terminalId) => ({ type: "terminal", terminalId })),
@@ -720,7 +715,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
             if (sessions.get(sessionId) !== commandEntry || !commandEntry.acceptingUpdates)
               throw new Error("Cannot update commands for an unpublished ACP session");
             commandEntry.commands = next;
-            send(client, sessionId, {
+            core.send(client, sessionId, {
               sessionUpdate: "available_commands_update",
               availableCommands: availableCommands(next),
             });
@@ -744,7 +739,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           if (operationSignal.aborted || connection.signal.aborted) return;
           const sessionId = sessionIdentity();
           if (!sessions.get(sessionId)?.acceptingUpdates) return;
-          send(client, sessionId, {
+          core.send(client, sessionId, {
             sessionUpdate: "plan",
             entries: PlanEntriesSchema.parse(entries),
           });
@@ -833,7 +828,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
               if (event.status) card.status = event.status;
             }
             if (entry.acceptingUpdates && event.sessionId)
-              send(client, event.sessionId, {
+              core.send(client, event.sessionId, {
                 ...toolUpdate(event, entry.terminals.get(event.toolCallId), renderers),
                 ...(card ? { title: card.title, status: card.status } : {}),
               });
@@ -875,7 +870,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
             });
           },
           requestPermission: async (request, permissionSignal) => {
-            await writes;
+            await core.flushed();
             if (permissionSignal.aborted || closing) return { outcome: { outcome: "cancelled" } };
             const started = performance.now();
             const trace = {
@@ -1040,18 +1035,18 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           }),
           (update) => {
             if (sessions.get(sessionId) === commandEntry && commandEntry?.acceptingUpdates)
-              send(client, sessionId, update);
+              core.send(client, sessionId, update);
           },
           connectionId,
         );
       }
       if (visible) refreshInfo(sessions.get(sessionId)!, client);
       if (visible && entry.commands.length)
-        send(client, sessionId, {
+        core.send(client, sessionId, {
           sessionUpdate: "available_commands_update",
           availableCommands: availableCommands(entry.commands),
         });
-      await writes;
+      await core.flushed();
       diagnostic("acp", "info", "acp.session.open.completed", {
         ...trace,
         sessionId,
@@ -1145,7 +1140,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       const state = configState(entry.config, entry.runtime.policy);
       observe(entry, client, entry.runtime.snapshot);
       refreshInfo(entry, client);
-      await writes;
+      await core.flushed();
       return { configOptions: state.configOptions ?? [] };
     });
     entry.configurationTail = operation.then(
@@ -1644,7 +1639,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         );
         observe(entry, client, entry.runtime.snapshot);
         refreshInfo(entry, client);
-        await writes;
+        await core.flushed();
         if (aborted || result.kind === "closed") return { stopReason: "cancelled" };
         if (result.kind !== "terminal")
           throw new RequestError(-32000, result.error.message, result.error);
@@ -1713,7 +1708,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         await entry.dispose();
       }
       sessions.delete(params.sessionId);
-      await writes;
+      await core.flushed();
       return {};
     });
   connection = app.connect(stream);
