@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { expect, test } from "@logtape/testing-bun/autoload";
 
-test("Bun stdio launcher exchanges ACP JSON lines and exits on EOF with stdout reserved", async () => {
+test("Bun stdio launcher exchanges ACP JSON lines, answers a malformed line and exits on EOF with stdout reserved", async () => {
   const directory = await mkdtemp(join(tmpdir(), "labkit-acp-"));
   const config = join(directory, "config.ts");
   const core = new URL("../core/index.ts", import.meta.url).href;
@@ -53,7 +53,7 @@ test("Bun stdio launcher exchanges ACP JSON lines and exits on EOF with stdout r
 
   const send = (value: unknown) => child.stdin.write(`${JSON.stringify(value)}\n`);
 
-  async function waitForResponse(id: number) {
+  async function waitForResponse(id: number | null) {
     const deadline = performance.now() + 5000;
     while (!messages.some((message) => message.id === id)) {
       if (child.exitCode !== null) {
@@ -76,6 +76,10 @@ test("Bun stdio launcher exchanges ACP JSON lines and exits on EOF with stdout r
     child.stdin.write('ialize","params":{"protocolVersion":1,"clientCapabilities":{}}}\n');
     await waitForResponse(1);
     expect(messages.find((m) => m.id === 1).result.protocolVersion).toBe(1);
+    // A malformed line gets a parse error and the connection keeps serving.
+    child.stdin.write("{broken\n");
+    await waitForResponse(null);
+    expect(messages.find((m) => m.id === null).error.code).toBe(-32700);
     send({
       jsonrpc: "2.0",
       id: 2,

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createSession, defineTool, type SessionPersistence } from "@labkit-agent/core";
-import { openaiChat } from "@labkit-agent/core/providers";
+import { anthropicMessagesV3, openaiChat, openaiResponsesV3 } from "@labkit-agent/core/providers";
 import { createMemoryPersistence } from "@labkit-agent/core/testing";
 import { SessionIdSchema } from "@labkit-agent/core/types";
 import { getLogger } from "@logtape/logtape";
@@ -12,6 +12,7 @@ import { z } from "zod";
 
 import { deferred, until } from "../core/agent/test-support.ts";
 import { withFixtureDiagnostics } from "../core/logging/fixture-capture.ts";
+import { streamResponse, streamVector } from "../core/providers/testing/stream-vectors.ts";
 import type { AcpOptions } from "./adapter.ts";
 import { workspaceAgent } from "./examples/vscode-workspace.ts";
 import { selectChoices } from "./session-config.ts";
@@ -458,6 +459,115 @@ test("a workspace session saved on anthropic/claude-sonnet-5 with adaptive think
       await h.close();
     }
   } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("set_config_option switches the workspace launcher between providers; the next completion and prompt media follow the selected model", async () => {
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "labkit-acp-provider-switch-")));
+  const directory = `.session-artifacts/acp-provider-switch/${crypto.randomUUID()}`;
+  const image = Buffer.from("IMAGE_CONTENT_SENTINEL").toString("base64");
+  const requests: { host: string; body: any }[] = [];
+  const scripted = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input instanceof Request ? input.url : input));
+    if (url.pathname.endsWith("/models")) throw new Error("connect ECONNREFUSED 127.0.0.1:8000");
+    requests.push({ host: url.host, body: JSON.parse(String(init?.body)) });
+    return streamResponse(
+      streamVector(url.host.includes("anthropic") ? anthropicMessagesV3 : openaiResponsesV3),
+    );
+  }) as unknown as typeof globalThis.fetch;
+  try {
+    await withFixtureDiagnostics(directory, {}, async () => {
+      const h = harness(
+        workspaceAgent(
+          { ANTHROPIC_API_KEY: "switch-anthropic", OPENAI_API_KEY: "switch-openai" },
+          undefined,
+          { fetch: scripted },
+        ),
+      );
+      try {
+        const init = await h.initialize();
+        expect(init.result.agentCapabilities.promptCapabilities.image).toBe(true);
+        const sessionId = (await h.request("session/new", { cwd, mcpServers: [] })).result
+          .sessionId as string;
+        const set = async (configId: string, value: string) => {
+          const response = await h.request("session/set_config_option", {
+            sessionId,
+            configId,
+            value,
+          });
+          expect(response.error).toBeUndefined();
+          const options = response.result.configOptions as {
+            id: string;
+            currentValue: string;
+            options: { options?: { value: string }[]; value?: string }[];
+          }[];
+          return (id: string) => {
+            const option = options.find((entry) => entry.id === id)!;
+            return {
+              current: option.currentValue,
+              values: option.options.flatMap((entry) =>
+                entry.options ? entry.options.map((choice) => choice.value) : [entry.value],
+              ),
+            };
+          };
+        };
+        const ask = (content: unknown[]) =>
+          h.request("session/prompt", { sessionId, prompt: content });
+        const text = [{ type: "text", text: "Go" }];
+        const withImage = [...text, { type: "image", mimeType: "image/png", data: image }];
+
+        await set("model", "anthropic/claude-sonnet-5");
+        await set("thinking", "adaptive");
+        await set("max_output_tokens", "16384");
+        expect((await ask(text)).result).toEqual({ stopReason: "end_turn" });
+        expect(requests.at(-1)).toMatchObject({
+          host: "api.anthropic.com",
+          body: { model: "claude-sonnet-5", thinking: { type: "adaptive" }, max_tokens: 16384 },
+        });
+
+        const openai = await set("model", "openai/gpt-5.4");
+        expect(openai("model").current).toBe("openai/gpt-5.4");
+        expect(openai("thinking").values).not.toContain("adaptive");
+        expect(openai("thinking").values).toContain("high");
+        await set("thinking", "high");
+        expect((await ask(text)).result).toEqual({ stopReason: "end_turn" });
+        expect(requests.at(-1)).toMatchObject({
+          host: "api.openai.com",
+          body: { model: "gpt-5.4", reasoning: { effort: "high" }, max_output_tokens: 16384 },
+        });
+
+        // The selected OpenAI model reads no images: refused before any provider request.
+        const sent = requests.length;
+        const refused = await ask(withImage);
+        expect(refused.error?.code).toBe(-32602);
+        expect(refused.error?.message).toContain(
+          "Provider does not support attachment media: image/png",
+        );
+        expect(requests).toHaveLength(sent);
+
+        await set("model", "anthropic/claude-sonnet-5");
+        expect((await ask(withImage)).result).toEqual({ stopReason: "end_turn" });
+        expect(requests.at(-1)?.host).toBe("api.anthropic.com");
+        expect(JSON.stringify(requests.at(-1)?.body)).toContain(image);
+      } finally {
+        await h.close();
+      }
+    });
+    const logs = (await Bun.file(`${directory}/diagnostics.jsonl`).text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(logs.filter((line) => line.event === "acp.config.committed")).toContainEqual(
+      expect.objectContaining({
+        configId: "model",
+        configValue: "openai/gpt-5.4",
+        connectionId: expect.any(String),
+        sessionId: expect.any(String),
+      }),
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
   }
 });
