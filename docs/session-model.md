@@ -168,16 +168,20 @@ session never requires today's models, tools or settings to match those of the p
 
 ## Code today
 
-The correction work tracks these divergences:
+The remaining divergences:
 
 - Token usage (with its HTTP provenance) is the only recorded effect: core stages it as an `effect`
   record in the step's append whenever the completion reports it; the environment cannot yet choose
   which effects to record, and cost and stop details are not recorded.
-- Projection does not know the target model; media support is checked over the whole history after
-  projection and again when input arrives. Capability is per provider profile and yes/no only.
-- Tool results are text only, so binary MCP results are refused.
-- A refused permission fails the turn.
-- Effects are logged with `diagnostic()` at scattered sites; provider capture exists but no launcher
-  binds it.
-- Consumers derive history separately. `journalMarkdown` and `journalJSONL`
-  (`session/journal/render.ts`) exist but only the fixture runner uses them.
+- Media capability has no source for `unknown`: `mediaCapability()` marks every media kind a bound
+  profile declares as supported and every other kind as unsupported, because the committed model
+  catalog carries no per-model modality data. The projection already renders `unknown` as a pointer,
+  and there is no replaceable policy for it.
+- There is no decision point before a step is dispatched (no budget veto or provider selector).
+- The core defaults differ from the table above: the default policy pack rejects input while tools
+  run (`reject-during-tools`) instead of queueing it, and fails the turn on a tool failure
+  (`fail-turn`); `queued@1` and `tolerant@1` select the other behaviours.
+- Journal appends, loads and session lifecycle (`session/runtime/`, `session-operation.ts`) still
+  log with direct `diagnostic()` calls instead of emitting typed effect events through the bound
+  emitter, and there is no "fact committed" event: live views observe session snapshots. The ACP
+  client ports (files, terminal, elicitation, MCP) also log directly.
