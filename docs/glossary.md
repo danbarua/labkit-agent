@@ -64,11 +64,13 @@ step.
 ## Configuration and history
 
 **Configuration.** The user-selectable settings of a session: provider, model, thinking, output limit,
-streaming, permissions, tool scope and tool-failure handling. Configuration can change at runtime. A
-change is committed to the journal and applies from the next turn. A turn already in progress keeps
-the settings it started with. Users choose providers and models by name. Adapter profile versions
-(such as `anthropic-messages@4`) are internal and are never offered as choices.
-Code today: journaled as `policy` records and changed by policy patches.
+streaming, permissions, tool scope and tool-failure handling. Changing it is two transitions:
+selecting a value commits it to the session's configuration store immediately, at any time; applying
+it records a "configuration applied" fact at the next boundary between turns. A turn already in
+progress keeps the settings it started with. Users choose providers and models by name. Adapter
+profile versions (such as `anthropic-messages@4`) are internal and are never offered as choices.
+Code today: journaled as `policy` records and changed by policy patches; a change during a turn is
+refused as `busy`, and there is no configuration store.
 
 **Model catalog.** The list of providers and models the environment can use, together with each
 model's thinking choices and output limit. It is built from the committed models.dev snapshot, plus a
@@ -86,13 +88,44 @@ today's models, tools or settings to match those of the past.
 for journal integrity only: schema, batch and revision continuity, append and entry identifiers,
 session identity, the creation record first, and terminal records where a turn ended. A record must
 also name a turn, operation or queued input that exists in the folded state. Commit-time rules are
-not re-run, and where a stored record and today's derivation disagree, the stored record wins.
+not re-run, and no projection is recomputed.
 Code today: `replay()` in `session-log.ts`; a failure is a `JournalIntegrityError` naming the rule
-and the offending record.
+and the offending record. Stored copies of derived values (the captured prompt, the terminal record's
+messages, the policy in a policy record) override what the fold derives.
 
 **Recovery.** Closing a turn that was interrupted by process exit when the session is reloaded. External
 effects are not repeated. Do not confuse it with **reconciliation**, which resolves a storage append
 whose outcome was uncertain.
+
+## Facts, projections and effects
+
+See [session model](session-model.md) for the full reference.
+
+**Fact.** Something that happened in the conversation, recorded once in the session journal: user
+input, model output, a tool result, a permission decision, a configuration being applied, a turn
+ending. The journal holds facts and nothing else.
+
+**Projection.** A view computed from facts, never stored as history: the next LLM prompt, a transcript,
+ACP replay, `/export`. The prompt projection also takes the target model's capabilities, and renders
+any part the target cannot read, or might not read, as a pointer.
+Code today: every step's prompt is journaled and checked against a fresh projection.
+
+**Effect.** An interaction with the outside world: an HTTP request and response, token usage and
+cost, raw tool output, a permission request. Effects are emitted as events where they happen and
+consumed by logging, capture, accounting and hooks. The journal may record chosen effects (such as
+per-step usage) as records typed separately from facts; the conversation fold ignores them.
+Code today: effects are logged with `diagnostic()` at scattered sites, and token usage is stored
+inside the model output fact.
+
+**Decision point.** A named seam where a policy chooses what happens next, for example tool
+permission, provider selection or a budget veto. A policy may read facts, configuration and data
+gathered from effects. An outcome that changes the conversation is recorded as a fact.
+
+**Blob URI.** `blob://<sha256>.<ext>`, the reference form of stored binary content. The harness resolves
+it against whatever store holds the bytes; a model that reads it with a tool receives the content.
+
+**Session journal / session log.** The journal holds facts. "Session log" means the effect log.
+Code today: `session-log.ts` is the journal module.
 
 ## Words with more than one meaning in code today
 
@@ -105,7 +138,8 @@ Qualify these words, or rename them in new code:
 - **settle(d):** operation, tool batch, turn, and append receipt.
 - **pending / queue:** durable queued inputs, the in-memory submissions awaiting a storage receipt, and
   staged appends.
-- **projection:** the prompt projection, and the web UI's view of a session.
+- **projection:** now one concept (any view computed from facts). Name which projection: the prompt
+  projection, the web console view, ACP replay.
 - **continuation:** a provider continuation payload (thinking signatures), the next step of a turn,
   and continuing after a tool error.
 - **system:** standing session instructions (`systemInputs`), an agent's `systemPrompt`, and the

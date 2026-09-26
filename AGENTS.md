@@ -31,6 +31,10 @@ Read `docs/glossary.md` before writing plans, docs or code that name runtime con
 (turn, step, interjection, barge-in, configuration, load). Its definitions are canonical; code
 that uses those words differently is naming debt.
 
+Read `docs/session-model.md` before changing what the journal records, how prompts or views
+are built, or where effects are logged. It defines facts, projections, effects and decision
+points; where code or other docs disagree with it, the code is the divergence.
+
 Use `docs/core-runtime.md` and `docs/agent-flow-diagrams.md` for the underlying agent
 runtime. Use `docs/session-runtime.md` for persistence and session flows.
 `docs/host-protocol.md` is a design document with explicit implementation gaps; do not
