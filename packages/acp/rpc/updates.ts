@@ -5,7 +5,6 @@ import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
 import type { Policy } from "@labkit-agent/core/policy";
 import type { AgentMessage } from "@labkit-agent/core/types";
 
-import { configState, unlistedValues, type AcpConfigBinding } from "../session-config.ts";
 import { parseSessionInfo } from "../session-info.ts";
 import { renderToolContent, type AcpToolContent } from "../tool-content.ts";
 import type { AdapterCore } from "./core.ts";
@@ -172,6 +171,13 @@ export function sessionUpdates(
     params: { sessionId: string; cwd: string },
     signal: AbortSignal,
   ) => unknown | Promise<unknown>,
+  configProject?: (
+    entry: Omit<Session, "runtime"> & { runtime?: SessionRuntime },
+    client: AgentContext,
+    id: string,
+    policy: Policy | undefined,
+    revision: number,
+  ) => void,
 ): SessionUpdates {
   const text = (
     client: AgentContext,
@@ -240,40 +246,8 @@ export function sessionUpdates(
     entry.usage?.refresh();
     const id = snapshot.durable.conversation.sessionId;
     const policy = entry.runtime ? entry.runtime.policy : snapshot.durable.policy;
-    const configuration = configState(entry.config, policy);
-    const signature = JSON.stringify(configuration);
-    if (signature !== entry.configSignature) {
-      entry.configSignature = signature;
-      const logUnlisted = (
-        config: readonly AcpConfigBinding[],
-        policy: Policy | undefined,
-        fields: Record<string, unknown>,
-      ) => {
-        for (const { configId, value } of unlistedValues(config, policy))
-          diagnostic("acp", "info", "acp.session.config.unlisted_value", {
-            ...fields,
-            configId,
-            value,
-            consequence:
-              "selector shows the value as an extra saved choice; choosing another value patches policy",
-          });
-      };
-      logUnlisted(entry.config, policy, {
-        sessionId: id,
-        revision: snapshot.durable.revision,
-      });
-      if (configuration.configOptions)
-        core.send(client, id, {
-          sessionUpdate: "config_option_update",
-          configOptions: configuration.configOptions,
-        });
-      if (configuration.modes && configuration.modes.currentModeId !== entry.modeId) {
-        entry.modeId = configuration.modes.currentModeId;
-        core.send(client, id, {
-          sessionUpdate: "current_mode_update",
-          currentModeId: entry.modeId,
-        });
-      }
+    if (configProject) {
+      configProject(entry, client, id, policy, snapshot.durable.revision);
     }
     for (const record of snapshot.durable.records.slice(entry.revision)) {
       entry.revision = record.revision;

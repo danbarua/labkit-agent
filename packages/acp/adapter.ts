@@ -13,10 +13,14 @@ import {
   type SessionInfoUpdate,
   type Stream,
 } from "@agentclientprotocol/sdk";
-import { createSession, restoreSession, SessionNotFoundError } from "@labkit-agent/core";
+import {
+  createSession,
+  restoreSession,
+  SessionNotFoundError,
+  type SessionOptions,
+} from "@labkit-agent/core";
 import type { Tool } from "@labkit-agent/core/host";
 import { diagnostic, diagnosticError } from "@labkit-agent/core/logging";
-import type { Policy } from "@labkit-agent/core/policy";
 
 import { bindAuth, type AcpAuth } from "./auth.ts";
 import {
@@ -37,6 +41,7 @@ import {
   type AcpPromptCapabilities,
   type AdvertisedPromptCapabilities,
 } from "./prompt-input.ts";
+import { configProjection, logUnlisted, registerConfiguration } from "./rpc/config.ts";
 import { adapterCore } from "./rpc/core.ts";
 import { afterPrompt, awaitConfigurationQuiet, type Session } from "./rpc/session.ts";
 import { locatedTitle, sessionUpdates, toolEvidence } from "./rpc/updates.ts";
@@ -44,7 +49,6 @@ import {
   bindConfig,
   configPatch,
   configState,
-  unlistedValues,
   waitForBoundary,
   type AcpConfigBinding,
 } from "./session-config.ts";
@@ -183,12 +187,14 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     if (!initialized) throw new RequestError(-32002, "Initialize the connection first");
     if (closing) throw new RequestError(-32000, "Connection closed");
   };
+  const config = configProjection(core);
   const updates = sessionUpdates(
     core,
     () => connection.signal,
     () => closing,
     (id) => sessions.get(id),
     options.sessionInfo,
+    config.project,
   );
   const requireAccess = () => {
     requireInitialized();
@@ -225,20 +231,6 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       { capability: "sessionCapabilities.additionalDirectories" },
       "additionalDirectories was refused because this agent does not advertise sessionCapabilities.additionalDirectories; resend without additionalDirectories to use cwd as the only workspace root",
     );
-  };
-  const logUnlisted = (
-    config: readonly AcpConfigBinding[],
-    policy: Policy | undefined,
-    fields: Record<string, unknown>,
-  ) => {
-    for (const { configId, value } of unlistedValues(config, policy))
-      diagnostic("acp", "info", "acp.session.config.unlisted_value", {
-        ...fields,
-        configId,
-        value,
-        consequence:
-          "selector shows the value as an extra saved choice; choosing another value patches policy",
-      });
   };
   async function open(
     params: NewSessionRequest & { sessionId?: string },
@@ -590,8 +582,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         throw error;
       }
       entry.commands = pendingCommands ?? entry.commands;
-      entry.configSignature = JSON.stringify(configuration);
-      entry.modeId = configuration.modes?.currentModeId;
+      config.prime(entry, configuration);
       logUnlisted(entry.config, runtime.policy, {
         ...trace,
         sessionId,
@@ -689,14 +680,14 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       if (initializedId) opening.delete(initializedId);
     }
   }
-  function setConfig(
+  const setConfig = (
     id: string,
     configId: string,
     value: unknown,
     client: AgentContext,
     signal: AbortSignal,
     type?: string,
-  ) {
+  ) => {
     const started = performance.now();
     const trace = {
       connectionId,
@@ -758,7 +749,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
       );
       throw error;
     });
-  }
+  };
   const closeForAuth = async () => {
     authLifetime.abort();
     authLifetime = new AbortController();
@@ -809,6 +800,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
           );
         },
       );
+  registerConfiguration(app, { lookup, setConfig });
   app
     .onRequest("initialize", async ({ params, client }) => {
       if (initialized || initializing)
@@ -1130,25 +1122,6 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         });
         throw error;
       }
-    })
-    .onRequest("session/set_config_option", ({ params, client, signal }) =>
-      setConfig(
-        params.sessionId,
-        params.configId,
-        params.value,
-        client,
-        signal,
-        "type" in params ? params.type : undefined,
-      ),
-    )
-    .onRequest("session/set_mode", async ({ params, client, signal }) => {
-      const entry = lookup(params.sessionId);
-      const mode = entry.config.find(
-        (binding) => binding.category === "mode" && binding.type !== "boolean",
-      );
-      if (!mode) throw RequestError.methodNotFound("session/set_mode");
-      await setConfig(params.sessionId, mode.id, params.modeId, client, signal);
-      return {};
     })
     .onRequest("session/prompt", async ({ params, client, signal }) => {
       const started = performance.now();
