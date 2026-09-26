@@ -215,15 +215,13 @@ export type SessionRuntime = {
   /** Whether the live registry has been journaled; see {@link SessionRegistry}. */
   readonly registry: SessionRegistry;
   /**
-   * Policy the transcript ran under / the next turn uses if nothing is newly selected: a pending
-   * adoption's reconciled policy, else the durable one.
+   * Configuration in force: the policy the transcript ran under and a running turn uses. A pending
+   * registry adoption's reconciled policy, else the durable one.
    */
   readonly policy?: Policy;
   /**
-   * The session's selected configuration (D6): the user's most recent choice, which may be ahead
-   * of {@link SessionRuntime.policy} while a turn is running. Falls back to `policy` when nothing
-   * has diverged from it. Views that show "what will apply next" should read this; views that show
-   * "what this transcript ran under" should read `policy`.
+   * Configuration the next turn runs under: a pending selection (or one being applied), else
+   * {@link SessionRuntime.policy}. Ahead of `policy` while a turn runs with an older selection.
    */
   readonly selectedPolicy?: Policy;
   /** Dispatches `event` and returns only its `accepted` promise. */
@@ -253,13 +251,13 @@ export type SessionRuntime = {
   updateSystem(inputs: readonly string[]): Promise<CommandReceipt>;
   /**
    * Selects `patch` applied to {@link SessionRuntime.selectedPolicy}, validated against the live
-   * bindings, and commits it to the session's configuration store immediately — at any time,
-   * including mid-turn or with queued inputs waiting. Never resolves `busy`. When the conversation
-   * is already idle the selection also applies right away and resolves `accepted`; otherwise it
-   * resolves `selected` and applies as a "configuration applied" fact at the next idle boundary,
-   * after which a running turn still finishes under the settings it started with. Resolves
-   * `failed` when the patch is rejected. Applying a changed `permissions` value or a change of
-   * allowed tools revokes remembered `allow-session` approvals.
+   * bindings, and stores it in the persistence port's configuration store at once, at any time.
+   * Never resolves `busy`. The selection applies as a "configuration applied" record at the next
+   * boundary between turns, before any queued input starts; a running turn keeps its settings.
+   * Resolves `accepted` when the conversation was idle and the record committed, `selected` when a
+   * turn is running or starting, `ignored` when the selection matches the policy in force, and
+   * `failed` when the patch is rejected or cannot be stored. Applying a changed `permissions`
+   * value or a change of allowed tools revokes remembered `allow-session` approvals.
    * @throws when `patch` does not match the policy patch schema.
    */
   updatePolicy(patch: PolicyPatch): Promise<CommandReceipt>;

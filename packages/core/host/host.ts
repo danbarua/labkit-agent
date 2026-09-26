@@ -255,8 +255,8 @@ export function createHost(
     dispatch,
     /**
      * Forgets all remembered `allow-session` grants, so later calls of those tools ask again. Call
-     * it after committing an explicit permission mode or a changed tool scope; dispatch never
-     * infers this from a configuration change. Grants from a settled permission request whose tool
+     * it after applying a changed permission mode or tool scope; dispatch never infers this from a
+     * configuration change. Grants from a settled permission request whose tool
      * batch has not started yet are installed when it starts. `reason` and `correlation` only label
      * the log.
      */

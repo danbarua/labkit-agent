@@ -143,19 +143,19 @@ export interface SessionPersistence {
    */
   append(request: AppendRequest, signal: AbortSignal): Promise<AppendResult>;
   /**
-   * Reads the session's selected configuration: the user's most recent choice, which may be ahead
-   * of the policy in force. `undefined` when nothing has ever diverged from the journaled policy
-   * (a fresh session, or one whose selection was already applied). Does not advance the journal
-   * revision and is never itself journaled.
+   * Reads the session's selected configuration: the latest value stored by `putConfig`, applied or
+   * not, or `undefined` when nothing was ever selected. Restore applies it when it differs from the
+   * journaled policy. Does not advance the journal revision and is never itself journaled.
    */
   getConfig(
     sessionId: z.infer<typeof SessionIdSchema>,
     signal: AbortSignal,
   ): Promise<Policy | undefined>;
   /**
-   * Stores the session's selected configuration immediately, independent of journal boundaries and
-   * of any turn in progress. Applying a selection to the journal (a "configuration applied" fact)
-   * is a separate step the runtime takes at the next idle boundary.
+   * Stores the session's selected configuration, replacing the previous one, independent of
+   * journal boundaries and of any turn in progress; later reads observe it. Applying a selection
+   * (a "configuration applied" journal record) is a separate step the runtime takes at the next
+   * boundary between turns. Rejects without writing when `signal` is already aborted.
    */
   putConfig(
     sessionId: z.infer<typeof SessionIdSchema>,

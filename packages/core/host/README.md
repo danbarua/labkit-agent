@@ -80,13 +80,15 @@ failure fails closed; cancellation discards uncommitted grants, and late approva
 installs that grant only when the committed permission outcome releases the batch. Later calls
 still validate inputs and commit permission outcomes, with the original grant ID and `remembered`
 source. Other tools still need approval. Rejection/cancellation discards uncommitted grants.
-Closing the host, explicitly committing permission mode, or changing allowed tools clears remembered grants; restore does not resurrect
-them. `permission.granted`, `permission.reused`, and `permission.grants_cleared` explain this at INFO.
-Model, thinking, and limit changes retain approvals. Direct host consumers call `resetPermissions`
-after committing an explicit permission reset or changed tool scope; dispatch does not infer
-authorization changes from a general policy revision.
+Closing the host, or applying a configuration whose permission mode or allowed tools changed, clears
+remembered grants; restore does not resurrect them. `permission.granted`, `permission.reused`, and
+`permission.grants_cleared` explain this at INFO. Model, thinking, and limit changes retain
+approvals, and re-selecting the permission mode already in force changes nothing. Direct host
+consumers call `resetPermissions` after applying a changed permission mode or tool scope; dispatch
+does not infer authorization changes from a general policy revision.
 An existing committed grant survives cancellation of a later turn; cancellation stops work rather
-than changing the user's authorization. Select Ask in ACP Tool approvals to revoke remembered grants.
+than changing the user's authorization. To revoke remembered grants in ACP, switch Tool approvals to
+another mode and back; each applied change clears them.
 
 `toolUpdate` and `streamUpdate` are best-effort display subscribers. Their exceptions or pending
 promises cannot block execution. Use their operation IDs to update existing cards/chunks. Tool updates include the known tool name

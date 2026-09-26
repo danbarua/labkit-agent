@@ -137,10 +137,32 @@ A storage append can temporarily queue submissions in memory; that queue is lost
 A `queue-user` policy instead saves user input for a later turn. Do not label both as “accepted”:
 only the receipt establishes durable admission.
 
-System/policy changes return `busy` while a turn or durable queued input is outstanding, including
-staged active work. This check happens before ordinary transient queueing. Wait for the existing
-work to drain, commit the change, then submit the next input. Active work retains its captured
-configuration; configuration changes do not change the journal format.
+System instruction changes return `busy` while a turn or durable queued input is outstanding,
+including staged active work. This check happens before ordinary transient queueing. Wait for the
+existing work to drain, commit the change, then submit the next input.
+
+Configuration changes are never `busy`. Selecting stores the new settings in the persistence
+port's configuration store at once; the session actor keeps the pending selection in its
+non-durable state and, at the next boundary between turns, stages it as a "configuration applied"
+`policy` record before dequeuing queued input or admitting new input. A turn already running keeps
+the settings it started with. A selection equal to the policy in force records nothing. Restore
+applies a selection stored before the process stopped, after recovery and registry adoption.
+Configuration changes do not change the journal format.
+
+```mermaid
+sequenceDiagram
+  participant C as Caller
+  participant S as Session
+  participant K as Configuration store
+  participant J as Journal
+  C->>S: updatePolicy(patch) during a turn
+  S->>K: putConfig(selection)
+  S-->>C: selected
+  Note over S: running turn keeps its settings
+  S->>J: terminal (turn ends)
+  S->>J: policy (configuration applied)
+  S->>J: dequeued or next user input
+```
 
 ## Restore inspects history and closes interrupted work
 
@@ -174,18 +196,20 @@ journal integrity only: record decoding, batch continuity, the revision sequence
 IDs, session identity, the creation record first, and each turn's terminal record in the same batch
 as the record that ended the turn. A record must also name a turn, operation, tool batch, call or
 queued input that exists in the folded state, because the fold cannot apply it otherwise. Load never
-re-runs commit-time rules (prompt projection, policy patches, permissions, admission) and never asks
-whether a provider, model, profile setting or permission port named in a record is bound today.
-Where a stored record and a value derived by today's code disagree, the stored record wins. New
-work is still staged under every commit-time rule, and new policy patches are validated against live
-bindings before they are admitted.
+re-runs commit-time rules (prompt projection, configuration validation, permissions, admission) and
+never asks whether a provider, model, profile setting or permission port named in a record is bound
+today. Where a stored record and a value derived by today's code disagree, the stored record wins.
+New work is still staged under every commit-time rule, and new configuration selections are
+validated against live bindings before they are admitted.
 
 If the live agents or tool schemas differ from the journal's registry, or the current policy does
 not validate against the live bindings, restore still succeeds and reports
 `registry: { kind: "pending_adoption", differences }`; `session.policy` is the policy the next turn
 will use. Tool differences name the schema delta, e.g. `changed tools.read_file.parameters: added
-properties line, limit`. Opening writes nothing beyond a recovery batch. The first input, system or
-policy change, fork or compaction first appends a `configuration` record with stable ID
+properties line, limit`. Opening writes nothing beyond a recovery batch, unless a configuration
+selection stored before the process stopped differs from the journaled policy: restore then applies
+it, which is new work. The first input, system or configuration change, fork or compaction (or that
+restored selection) first appends a `configuration` record with stable ID
 `configuration/<sessionId>/<revision>`, then the work queues behind it:
 
 ```mermaid

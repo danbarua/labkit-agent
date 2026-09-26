@@ -74,10 +74,11 @@ export class JournalIntegrityError extends Error {
 
 /**
  * Loads a journal: folds committed batches into state, checking only journal integrity
- * ({@link JournalIntegrityRule}). Each stored record is taken as written. Commit-time rules (prompt
- * projection, policy patches, permissions, admission, bindings) are not re-run, so a journal the
- * runtime committed keeps loading after code, configuration or bindings change. A turn that process
- * exit interrupted stays open in the result; closing it is a separately staged `recovery` record.
+ * ({@link JournalIntegrityRule}). Each stored record is taken as written. Commit-time rules
+ * (prompt projection, configuration validation, permissions, admission, bindings) are not re-run,
+ * so a journal the runtime committed keeps loading after code, configuration or bindings change. A
+ * turn that process exit interrupted stays open in the result; closing it is a separately staged
+ * `recovery` record.
  *
  * @throws {@link JournalIntegrityError} naming the first violated rule and the offending record.
  */

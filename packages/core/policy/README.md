@@ -4,10 +4,16 @@ Policy is the saved answer to “what is this session allowed to do?” Bindings
 implementations and credentials. Keeping those separate makes a model/permission change auditable
 without putting functions or secrets into the journal.
 
-Use `session.updatePolicy(patch)` and check its receipt. Changes require idle state with no accepted
-queued inputs. This rule prevents an accepted input from silently acquiring a different model,
-permission scope, or limit while waiting. Commit the change before submitting the next input;
-mutating an options object does nothing to an open session.
+Use `session.updatePolicy(patch)` and check its receipt. Changing configuration is two transitions.
+Selecting validates the patch against the live registry and stores the result in the session's
+configuration store at once, at any time, including while a turn runs; it is never `busy`. Applying
+records a "configuration applied" `policy` record at the next boundary between turns, before any
+queued input starts, so a running turn keeps the settings it started with. The receipt is `accepted`
+when the conversation was idle and the record committed, `selected` when a turn is running and the
+change waits for it to end, `ignored` when the selection matches the policy in force, and `failed`
+when the patch is rejected or cannot be stored. `session.selectedPolicy` is what the next turn runs
+under; `session.policy` is what is in force now. Mutating an options object does nothing to an open
+session.
 
 ## Choose how new input interacts with work
 
@@ -85,8 +91,9 @@ request is dispatched after the receipt, and that work already in flight keeps i
 LOGTAPE_TEST_MODE=always LOGTAPE_TEST_LOWEST_LEVEL=debug bun test packages/core/session/policy-runtime.test.ts packages/core/session/consumer-contract.test.ts
 ```
 
-Look for `policy.committed` in the environment diagnostics. A selected UI value or a submitted patch
-is not evidence that reconfiguration committed.
+Look for `configuration.selected` and `configuration.applied` in the environment diagnostics; they
+share a `selectionId`, and `configuration.applied` names the append, revision, version and changed
+fields. A selected UI value is not evidence that the configuration applied.
 
 A continued tool failure projects both the readable `error` and structured `failure` into the model
 result, including operation identity and the original cause. This lets the model distinguish a

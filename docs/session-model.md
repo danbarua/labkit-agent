@@ -170,16 +170,15 @@ The correction work tracks these divergences:
 
 - Every step journals its full prepared prompt, and staging refuses unless it equals a fresh
   projection (`session/journal/domain-event.ts`). Handoff packets are journaled the same way.
-- Turn messages, tool batch results, the policy patch result, the permission-required flag and the
-  step allowance are stored as copies next to the facts they derive from, checked on write, and the
-  stored copy wins on load.
+- Turn messages, tool batch results, the permission-required flag and the step allowance are
+  stored as copies next to the facts they derive from, checked on write, and the stored copy wins on
+  load.
 - Token usage is stored inside the model output fact on `model_settled` instead of as a typed effect
   record.
 - Projection does not know the target model; media support is checked over the whole history after
   projection and again when input arrives. Capability is per provider profile and yes/no only.
 - Tool results are text only, so binary MCP results are refused.
 - A refused permission fails the turn.
-- Configuration changes during a turn are refused as `busy`; there is no configuration store.
 - Effects are logged with `diagnostic()` at scattered sites; provider capture exists but no launcher
   binds it.
 - Consumers derive history separately. `journalMarkdown` and `journalJSONL`
