@@ -281,7 +281,6 @@ const scenarios: Scenario[] = [
     classification: "timeout",
     card: "exceeded its 20 ms deadline",
     detail: "exceeded its 20 ms deadline",
-    failsTurn: true,
   },
   {
     name: "a client error on session/request_permission",

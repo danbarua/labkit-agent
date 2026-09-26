@@ -110,9 +110,11 @@ journal to decide whether a user refused permission.
 
 `completionTimeoutMs` and `toolTimeoutMs` are optional policy limits in positive integer milliseconds
 (maximum 2,147,483,647); null or omission disables them. Permission waiting is untimed. Deadlines
-are captured when an operation starts. Timeout does not become a tolerant tool-error message and
-never causes an automatic retry. Cancellation rejects late results locally; it cannot undo a write
-or force an uncooperative tool to stop. Tool implementations should honor their AbortSignal.
+are captured when an operation starts. Under `return-error-and-continue`, an expired tool deadline
+becomes an error tool result (classification `timeout`) that the model reads on its next step, so
+the turn continues; under `fail-turn` it fails the turn. A completion deadline always fails the
+turn. Neither causes an automatic retry. Cancellation rejects late results locally; it cannot undo
+a write or force an uncooperative tool to stop. Tool implementations should honor their AbortSignal.
 
 ## Inspect response accounting
 

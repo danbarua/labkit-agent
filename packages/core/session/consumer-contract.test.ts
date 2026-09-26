@@ -192,13 +192,14 @@ test("consumer model aliases, extraction tools and explicit repeat preserve conf
 });
 
 for (const kind of ["completion", "tool"] as const) {
-  test(`consumer ${kind} deadline settles once, aborts signal, and restore performs no work`, async () => {
+  test(`consumer ${kind} deadline aborts its signal, settles once, and restore performs no work`, async () => {
     const capture = await createProviderCapture(".session-artifacts/deadlines");
     await withFixtureDiagnostics(capture.directory, { runId: capture.runId }, async () => {
       let completions = 0;
       let tools = 0;
       const late = deferred<unknown>();
       let signal: AbortSignal | undefined;
+      const requests: unknown[] = [];
       const opts: SessionOptions = {
         persistence: createMemoryPersistence(),
         configuration: {
@@ -212,13 +213,17 @@ for (const kind of ["completion", "tool"] as const) {
           },
         },
         bindings: {
-          complete: (_request, abort) => {
+          complete: (request, abort) => {
+            requests.push(request);
             completions++;
             if (kind === "completion") {
               signal = abort;
               return late.promise;
             }
-            return { kind: "tools", text: "", calls: [{ id: "hang-1", name: "hang", args: {} }] };
+            if (completions === 1) {
+              return { kind: "tools", text: "", calls: [{ id: "hang-1", name: "hang", args: {} }] };
+            }
+            return { kind: "answer", text: "done" };
           },
           tools: new Map([
             [
@@ -237,26 +242,48 @@ for (const kind of ["completion", "tool"] as const) {
       };
       const session = await createSession(opts);
       try {
-        expect(await session.input("Go").settled).toMatchObject({
-          record: {
-            outcome: {
-              kind: "failed",
-              error: { classification: "timeout", timeoutMs: 20, operation: { kind } },
+        if (kind === "completion") {
+          expect(await session.input("Go").settled).toMatchObject({
+            record: {
+              outcome: {
+                kind: "failed",
+                error: { classification: "timeout", timeoutMs: 20, operation: { kind } },
+              },
             },
-          },
-        });
+          });
+        } else {
+          expect(await session.input("Go").settled).toMatchObject({
+            record: {
+              outcome: {
+                kind: "completed",
+              },
+            },
+          });
+          expect(JSON.stringify(requests[1])).toContain('\\"classification\\":\\"timeout\\"');
+          expect(JSON.stringify(requests[1])).toContain("exceeded its 20 ms deadline");
+        }
         expect(signal?.aborted).toBe(true);
         const revision = session.snapshot.durable.revision;
         late.resolve(kind === "completion" ? { kind: "answer", text: "late" } : "late");
         await Bun.sleep(0);
         expect(session.snapshot.durable.revision).toBe(revision);
-        expect(completions).toBe(1);
-        expect(tools).toBe(kind === "tool" ? 1 : 0);
+        if (kind === "completion") {
+          expect(completions).toBe(1);
+          expect(tools).toBe(0);
+        } else {
+          expect(completions).toBe(2);
+          expect(tools).toBe(1);
+        }
         const restored = await restoreSession(
           opts,
           session.snapshot.durable.conversation.sessionId,
         );
-        expect(completions).toBe(1);
+        if (kind === "completion") {
+          expect(completions).toBe(1);
+        } else {
+          expect(completions).toBe(2);
+          expect(tools).toBe(1);
+        }
         await restored.close();
       } finally {
         await session.close();

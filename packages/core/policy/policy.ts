@@ -334,14 +334,12 @@ export function projectPolicy(
   );
   return freeze(messages);
 }
-/** Deterministic domain conversion. The raw failed result remains in the journal. */
+/** Deterministic domain conversion. The raw failed result remains in the journal. A tool deadline (classification `timeout`) is converted like any other tool failure. */
 export function effectiveToolResult(
   result: Result<string>,
   policy?: Pick<Policy, "toolFailure">,
 ): Result<string> {
-  return result.kind === "failed" &&
-    result.error.classification !== "timeout" &&
-    policy?.toolFailure === "return-error-and-continue"
+  return result.kind === "failed" && policy?.toolFailure === "return-error-and-continue"
     ? {
         kind: "succeeded",
         value: JSON.stringify({ error: result.error.message, failure: result.error }),

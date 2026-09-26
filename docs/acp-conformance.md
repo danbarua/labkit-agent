@@ -98,12 +98,10 @@ The agent calls a client method only when the client advertised it.
 | Tool failure is a tool result (rule 3) | `tool-failure.test.ts`: 23 non-MCP failure scenarios under both policies. Under return-error-and-continue each failure becomes a failed tool card plus a tool result, and the turn ends with `end_turn`. Under fail-turn the result is -32000 with classification, tool name and callId, and the connection and session keep serving prompts. No unhandled rejections. MCP equivalents are in `mcp-capabilities.test.ts`. | Implemented     |
 | Usage, cost and context size (rule 4)  | `prompt-capabilities.test.ts`: the workspace launcher sends no `usage_update` and no usage field. Usage is published only when a host binds `AcpOptions` usage.                                                                                                                                                                                                                                                           | No usage source |
 
-Core policy still fails the turn in two cases, even under return-error-and-continue:
-
-- a tool deadline (`toolTimeoutMs`), because `effectiveToolResult` excludes the `timeout` classification;
-- a client error or malformed answer to `session/request_permission`.
-
-Both return a structured -32000, keep the connection open, and let the next prompt proceed.
+A tool deadline (`toolTimeoutMs`) is a tool result under return-error-and-continue: the model reads
+the `timeout` failure on its next step and the turn continues. Core policy still fails the turn on a
+client error or malformed answer to `session/request_permission`. That returns a structured -32000,
+keeps the connection open, and lets the next prompt proceed.
 Binary MCP tool results (image, audio, blob resources) are refused as a failed tool result the model
 reads. They are not forwarded.
 

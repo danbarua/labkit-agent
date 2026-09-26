@@ -11,13 +11,13 @@ mutating an options object does nothing to an open session.
 
 ## Choose how new input interacts with work
 
-| Choice                               | When it fits                                              | Consequence to handle                                                                                                                |
-| ------------------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `default@1`                          | Interactive replacement of a model request.               | Input can replace preparation/completion/handoff in the same turn; input during tools/permission waiting is rejected.                |
-| `strict@1`                           | Each active turn must finish unchanged.                   | New input cannot barge in.                                                                                                           |
-| `queued@1`                           | Every accepted input needs its own turn.                  | Inputs persist in order; aborting the current turn does not discard its queued successors.                                           |
-| `abort-tools-on-user` input behavior | A new instruction should stop tool work first.            | The successor is saved before cancellation and starts only after the aborted turn commits. Already-started effects cannot be undone. |
-| `tolerant@1`                         | The model can use a tool error to choose its next action. | Tool input and execution failures become error results; permission refusal, cancellation, and timeout still stop work.               |
+| Choice                               | When it fits                                              | Consequence to handle                                                                                                                             |
+| ------------------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `default@1`                          | Interactive replacement of a model request.               | Input can replace preparation/completion/handoff in the same turn; input during tools/permission waiting is rejected.                             |
+| `strict@1`                           | Each active turn must finish unchanged.                   | New input cannot barge in.                                                                                                                        |
+| `queued@1`                           | Every accepted input needs its own turn.                  | Inputs persist in order; aborting the current turn does not discard its queued successors.                                                        |
+| `abort-tools-on-user` input behavior | A new instruction should stop tool work first.            | The successor is saved before cancellation and starts only after the aborted turn commits. Already-started effects cannot be undone.              |
+| `tolerant@1`                         | The model can use a tool error to choose its next action. | Tool input and execution failures, including an expired tool deadline, become error results; permission refusal and cancellation still stop work. |
 
 Selecting a pack resets its behavior fields; fields explicitly supplied in the same patch override
 that pack. Inspect the resulting committed policy rather than maintaining a second mutable copy.
