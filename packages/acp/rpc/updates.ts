@@ -1,7 +1,7 @@
 import type { AgentContext, SessionUpdate } from "@agentclientprotocol/sdk";
 import type {
   JournalState,
-  SessionOptions,
+  SessionBindings,
   SessionRuntime,
   SessionState,
 } from "@labkit-agent/core";
@@ -17,10 +17,7 @@ import type { AdapterCore } from "./core.ts";
 import type { Session } from "./session.ts";
 
 /** Runtime display callbacks that ACP projects to the client. */
-export type DisplayBindings = Pick<
-  SessionOptions["bindings"],
-  "observe" | "toolUpdate" | "streamUpdate"
->;
+export type DisplayBindings = Pick<SessionBindings, "observe" | "toolUpdate" | "streamUpdate">;
 
 /** Projects runtime state and display events to `session/update` notifications. */
 export type SessionUpdates = Readonly<{
