@@ -165,12 +165,6 @@ test("D4: a tool result carrying an image blob part reaches Anthropic as tool_re
   });
 });
 
-// D4 note for the integrator: the non-capable-target path (OpenAI/Google/xAI target reading an
-// MCP-returned image) is not covered here. Today it fails the whole turn at the whole-history
-// media gate (session/blobs.ts), owned by core/projection, before any encoder runs. Add an ACP
-// handler test (MCP image result, OpenAI target, request carries a blob:// pointer once the gate
-// renders unsupported parts as pointers instead of refusing) after that branch merges.
-
 test("message text must agree with text parts, including on tool results", () => {
   expect(() =>
     MessageSchema.parse({
