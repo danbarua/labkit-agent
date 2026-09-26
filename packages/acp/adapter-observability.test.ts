@@ -95,3 +95,51 @@ test("ACP diagnostics correlate permission waits, turn outcomes and failed sessi
     emitted.mockRestore();
   }
 });
+
+test("session metadata and host subscriber failures log the connection they happened on", async () => {
+  const emitted = spyOn(getLogger(["labkit", "acp"]), "emit");
+  const { options } = setup({
+    observe: () => {
+      throw new Error("host observer failed");
+    },
+  });
+  const h = harness({
+    ...options,
+    sessionInfo: async () => {
+      throw new Error("metadata store unavailable");
+    },
+  });
+  try {
+    await h.initialize();
+    const sessionId = await h.newSession();
+    expect((await h.request("session/prompt", prompt(sessionId))).result.stopReason).toBe(
+      "end_turn",
+    );
+    const records = () => emitted.mock.calls.map((call) => call[0].properties);
+    await until(() => records().some((record) => record.event === "acp.session.metadata.failed"));
+    const connectionId = records().find(
+      (record) => record.event === "acp.connection.opened",
+    )!.connectionId;
+    expect(connectionId).toEqual(expect.any(String));
+    expect(records()).toContainEqual(
+      expect.objectContaining({
+        event: "acp.session.metadata.failed",
+        connectionId,
+        sessionId,
+        error: expect.objectContaining({ message: "metadata store unavailable" }),
+      }),
+    );
+    expect(records()).toContainEqual(
+      expect.objectContaining({
+        event: "acp.subscriber.failed",
+        connectionId,
+        sessionId,
+        operation: "observe",
+        error: expect.objectContaining({ message: "host observer failed" }),
+      }),
+    );
+  } finally {
+    await h.close();
+    emitted.mockRestore();
+  }
+});

@@ -2,10 +2,12 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createSession, defineTool } from "@labkit-agent/core";
+import { createSession, defineTool, type SessionPersistence } from "@labkit-agent/core";
 import { openaiChat } from "@labkit-agent/core/providers";
 import { createMemoryPersistence } from "@labkit-agent/core/testing";
-import { expect, test } from "@logtape/testing-bun/autoload";
+import { SessionIdSchema } from "@labkit-agent/core/types";
+import { getLogger } from "@logtape/logtape";
+import { expect, spyOn, test } from "@logtape/testing-bun/autoload";
 import { z } from "zod";
 
 import { deferred, until } from "../core/agent/test-support.ts";
@@ -40,6 +42,30 @@ function booleanConfiguration() {
   };
   return { ...base, options };
 }
+
+/** Holds each policy journal append until the test calls its release, in arrival order. */
+function heldPolicyAppends() {
+  const base = configurable();
+  const held: (() => void)[] = [];
+  const persistence: SessionPersistence = {
+    ...base.persistence,
+    append: async (request, signal) => {
+      if (request.records.some((raw) => JSON.parse(raw).body.kind === "policy"))
+        await new Promise<void>((release) => held.push(release));
+      return base.persistence.append(request, signal);
+    },
+  };
+  const options: AcpOptions = {
+    ...base.options,
+    forkSession: true,
+    sessionOptions: async (context) => ({
+      ...(await base.options.sessionOptions(context)),
+      persistence,
+    }),
+  };
+  return { ...base, options, held };
+}
+
 test("config updates wait for the journal receipt, notify complete state, and restore with modes", async () => {
   const models: string[] = [];
   const base = configurable((model) => {
@@ -231,6 +257,96 @@ test("cancelling a queued configuration request never applies it after the turn"
   } finally {
     pending.resolve(answer);
     await h.close();
+  }
+});
+
+test("cancelling a prompt that waits on a configuration change rejects it before the change commits", async () => {
+  const emitted = spyOn(getLogger(["labkit", "acp"]), "emit");
+  const { options, held, requests } = heldPolicyAppends();
+  const h = harness(options);
+  try {
+    await h.initialize();
+    const id = await h.newSession();
+    const setting = await h.start("session/set_config_option", {
+      sessionId: id,
+      configId: "model",
+      value: "m2",
+    });
+    await until(() => held.length === 1);
+    const turn = await h.start("session/prompt", prompt(id));
+    // Cancel only once the prompt handler is waiting on the configuration boundary.
+    await until(() =>
+      emitted.mock.calls.some(
+        ([record]) =>
+          record.properties.event === "acp.prompt.received" &&
+          record.properties.rpcRequestId === String(turn),
+      ),
+    );
+    await h.send({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: turn } });
+    expect(await h.response(turn)).toMatchObject({ error: { code: -32800 } });
+    held[0]!();
+    expect((await h.response(setting)).result.configOptions[0].currentValue).toBe("m2");
+    expect((await h.request("session/prompt", prompt(id))).result.stopReason).toBe("end_turn");
+    expect(requests.map((request) => request.model)).toEqual(["m2"]);
+  } finally {
+    for (const release of held) release();
+    await h.close();
+    emitted.mockRestore();
+  }
+});
+
+test("cancelled configuration and fork requests queued behind a pending change reject without waiting for it", async () => {
+  const emitted = spyOn(getLogger(["labkit", "acp"]), "emit");
+  const { options, held, persistence } = heldPolicyAppends();
+  const h = harness(options);
+  try {
+    await h.initialize();
+    const id = await h.newSession();
+    const model = await h.start("session/set_config_option", {
+      sessionId: id,
+      configId: "model",
+      value: "m2",
+    });
+    await until(() => held.length === 1);
+    const fork = await h.start("session/fork", { sessionId: id, cwd: "/tmp" });
+    const mode = await h.start("session/set_config_option", {
+      sessionId: id,
+      configId: "mode",
+      value: "chat",
+    });
+    const records = () => emitted.mock.calls.map(([record]) => record.properties);
+    // Cancel only once both handlers are queued; fork was dispatched before the mode change.
+    await until(() =>
+      records().some(
+        (record) => record.event === "acp.config.queued" && record.rpcRequestId === String(mode),
+      ),
+    );
+    for (const requestId of [fork, mode])
+      await h.send({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId } });
+    expect(await h.response(fork)).toMatchObject({ error: { code: -32800 } });
+    expect(await h.response(mode)).toMatchObject({ error: { code: -32800 } });
+    expect(records()).toContainEqual(
+      expect.objectContaining({
+        event: "acp.config.cancelled",
+        rpcRequestId: String(mode),
+        outcome: "cancelled",
+      }),
+    );
+    expect(held).toHaveLength(1);
+    held[0]!();
+    const settled: { currentValue: unknown }[] = (await h.response(model)).result.configOptions;
+    expect(settled.map((option) => option.currentValue)).toEqual(["m2", "tools"]);
+    const loaded = await persistence.load(SessionIdSchema.parse(id), new AbortController().signal);
+    expect(
+      loaded.kind === "loaded" &&
+        loaded.batches
+          .flatMap((batch) => batch.records)
+          .filter((raw) => JSON.parse(raw).body.kind === "policy").length,
+    ).toBe(1);
+  } finally {
+    for (const release of held) release();
+    await h.close();
+    emitted.mockRestore();
   }
 });
 
