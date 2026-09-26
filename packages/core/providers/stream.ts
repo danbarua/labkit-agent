@@ -1,5 +1,6 @@
+import { boundEmitter, noopEffects, type EffectEmitter } from "../effects/index.ts";
 import { notify } from "../host/notifications.ts";
-import { diagnostic, diagnosticError } from "../logging/index.ts";
+import { diagnosticError } from "../logging/index.ts";
 import type { ProviderDiagnosticContext } from "./transport.ts";
 import type { StreamAssembler, StreamDeltaSink, StreamEvent } from "./types.ts";
 
@@ -11,6 +12,7 @@ export async function assembleStream(
   sink?: StreamDeltaSink,
   context: ProviderDiagnosticContext = {},
   secrets: readonly string[] = [],
+  effects: EffectEmitter = noopEffects,
   captureChunk?: (text: string) => void | Promise<void>,
 ): Promise<unknown> {
   if (
@@ -27,7 +29,8 @@ export async function assembleStream(
   const usage: Record<string, number> = {};
   let lastEvent: string | undefined;
   const terminalEvidence: Record<string, unknown> = {};
-  diagnostic("provider", "debug", "provider.stream.started", context);
+  const emit = boundEmitter(effects);
+  emit("provider", "debug", "provider.stream.started", context);
   const reader = response.body.getReader();
   const cancel = () => {
     void reader.cancel().catch(() => {});
@@ -121,7 +124,7 @@ export async function assembleStream(
     if (buffer || data.length) throw new Error("Incomplete completion SSE frame");
     signal.throwIfAborted();
     const body = assembler.finish();
-    diagnostic("provider", "debug", "provider.stream.completed", {
+    emit("provider", "debug", "provider.stream.completed", {
       ...context,
       bytes,
       frames,
@@ -133,7 +136,7 @@ export async function assembleStream(
     });
     return body;
   } catch (error) {
-    diagnostic(
+    emit(
       "provider",
       signal.aborted ? "info" : "warning",
       signal.aborted ? "provider.stream.cancelled" : "provider.stream.failed",

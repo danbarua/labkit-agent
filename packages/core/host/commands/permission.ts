@@ -4,7 +4,7 @@ import type { TurnCommand } from "../../agent/agent-fsm.ts";
 import { PermissionDecisionsSchema, type PermissionDecisions } from "../../agent/permissions.ts";
 import { failure, ref, type ActorId, type Failure } from "../../agent/types.ts";
 import { freeze } from "../../fsm/fsm.ts";
-import { diagnostic, diagnosticError } from "../../logging/index.ts";
+import { diagnosticError } from "../../logging/index.ts";
 import type { HostContext } from "../context.ts";
 import type { ExecutionContext, HostToolNotification } from "../host.ts";
 import { PermissionResponseSchema, ToolLocationSchema, type ToolLocation } from "../ports.ts";
@@ -79,7 +79,7 @@ export function requestPermission(
                   .array(ToolLocationSchema)
                   .parse(tool.locations(structuredClone(input)));
               } catch (error) {
-                diagnostic("host", "warning", "tool.locations_failed", {
+                host.emit("host", "warning", "tool.locations_failed", {
                   ...identity,
                   toolName: call.name,
                   error: diagnosticError(error),
@@ -107,14 +107,14 @@ export function requestPermission(
                 grantId: rememberedGrant,
               };
               decisions.push({ callId: call.id, decision: "allow_once", approval });
-              diagnostic("host", "info", "permission.reused", {
+              host.emit("host", "info", "permission.reused", {
                 ...permissionContext,
                 ...approval,
                 reason: "User previously approved this tool for all arguments in this live session",
               });
               continue;
             }
-            diagnostic("host", "info", "permission.waiting", {
+            host.emit("host", "info", "permission.waiting", {
               ...permissionContext,
               reason: "Tool execution requires user approval; batch execution is blocked",
             });
@@ -155,13 +155,13 @@ export function requestPermission(
                     response.outcome.optionId === "allow-session"
                   ? "allow_once"
                   : "reject_once";
-            diagnostic("host", "info", "permission.decided", {
+            host.emit("host", "info", "permission.decided", {
               ...permissionContext,
               decision,
               durationMs: Math.round(performance.now() - permissionStartedAt),
             });
             if (decision === "reject_once") {
-              diagnostic("host", "warning", "permission.refused", {
+              host.emit("host", "warning", "permission.refused", {
                 ...permissionContext,
                 operation: "tool_execution",
                 outcome: "blocked",
@@ -204,7 +204,7 @@ export function requestPermission(
             if (!invalidInput || context.toolFailure !== "return-error-and-continue") throw detail;
             grant.invalidInputs.set(call.id, detail);
             decisions.push({ callId: call.id, decision: "invalid_input", error: detail });
-            diagnostic("host", "warning", "tool.input_rejected", {
+            host.emit("host", "warning", "tool.input_rejected", {
               sessionId: host.sessionId,
               turnId,
               toolCallId: detail.operation?.id,

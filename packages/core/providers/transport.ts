@@ -3,8 +3,14 @@ import { z } from "zod";
 import type { PreparedModel } from "../agent/agent.ts";
 import { blobRefs, type BlobResolver } from "../agent/content.ts";
 import { CompletionSchema } from "../agent/types.ts";
+import {
+  boundEmitter,
+  diagnosticsSubscriber,
+  fanoutEffects,
+  type EffectEmitter,
+} from "../effects/index.ts";
 import { freeze } from "../fsm/fsm.ts";
-import { diagnostic, diagnosticError, redactDiagnostics } from "../logging/index.ts";
+import { diagnosticError, redactDiagnostics } from "../logging/index.ts";
 import { HANDOFF_TOOL } from "./shared.ts";
 import { assembleStream } from "./stream.ts";
 import {
@@ -69,6 +75,8 @@ export type TransportBinding = Readonly<{
   capture?: ProviderCapture;
   /** Supply unique IDs for retained HTTP evidence; defaults to crypto.randomUUID. */
   requestId?: () => string;
+  /** Subscriber for this provider's HTTP/stream effect events; always logged, additionally routed here. */
+  effects?: EffectEmitter;
 }>;
 
 export function httpTransport(binding: TransportBinding, legacyChatErrors = false) {
@@ -82,6 +90,8 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
   const headers = { ...binding.headers };
   const fetcher = binding.fetch ?? fetch;
   const captureSink = binding.capture;
+  const rawEmit = fanoutEffects(diagnosticsSubscriber(), binding.effects);
+  const emit = boundEmitter(rawEmit);
   const requestId = binding.requestId ?? (() => crypto.randomUUID());
   // Remove actual configured credentials even when a provider echoes them in prose.
   const secrets = Object.entries(headers)
@@ -136,7 +146,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
       });
       signal.throwIfAborted();
       phase = "fetch";
-      diagnostic("provider", "debug", "provider.http.started", trace);
+      emit("provider", "debug", "provider.http.started", trace);
       const response = await fetcher(base + request.path + query, {
         method: request.method,
         ...(legacyChatErrors ? {} : { redirect: "error" as const }),
@@ -155,13 +165,13 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
         durationMs: Math.round(performance.now() - started),
       };
       responseMetadata = evidence;
-      diagnostic("provider", "debug", "provider.http.received", evidence);
+      emit("provider", "debug", "provider.http.received", evidence);
       signal.throwIfAborted();
       if (!response.ok) {
         phase = "http_error";
         const errorBody = redact(await response.text());
         responseBody = errorBody;
-        diagnostic("provider", "warning", "provider.http.rejected", { ...evidence, errorBody });
+        emit("provider", "warning", "provider.http.rejected", { ...evidence, errorBody });
         throw Object.assign(
           new Error(
             `${legacyChatErrors ? "OpenAI-compatible API request failed" : "Completion HTTP failure"} (${response.status})${providerRequestId ? ` [request ${providerRequestId}]` : ""}: ${errorBody}`,
@@ -178,6 +188,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
           streaming.sink,
           evidence,
           secrets,
+          rawEmit,
           async (chunk) => {
             responseBody += chunk;
             await capture("http_response", {
@@ -195,7 +206,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
           ...responseEvidence(body),
           outcome: "received",
         });
-        diagnostic("provider", "debug", "provider.http.completed", {
+        emit("provider", "debug", "provider.http.completed", {
           ...evidence,
           durationMs: Math.round(performance.now() - started),
         });
@@ -216,7 +227,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
         ...responseEvidence(body),
       });
       signal.throwIfAborted();
-      diagnostic("provider", "debug", "provider.http.completed", {
+      emit("provider", "debug", "provider.http.completed", {
         ...evidence,
         durationMs: Math.round(performance.now() - started),
       });
@@ -229,7 +240,7 @@ export function httpTransport(binding: TransportBinding, legacyChatErrors = fals
         phase,
         error: safeError,
       });
-      diagnostic(
+      emit(
         "provider",
         signal.aborted ? "info" : "warning",
         signal.aborted ? "provider.http.cancelled" : "provider.http.failed",
@@ -334,6 +345,7 @@ export function bindProviders(bindings: ProviderBindings) {
           http: httpTransport(binding.transport),
           requestId: binding.transport.requestId ?? (() => crypto.randomUUID()),
           capture,
+          emit: boundEmitter(fanoutEffects(diagnosticsSubscriber(), binding.transport.effects)),
           secrets,
           models: binding.models
             ? new Map(
@@ -436,7 +448,8 @@ export function bindProviders(bindings: ProviderBindings) {
       };
       let phase = "validate";
       let terminalEvidence: Record<string, unknown> = {};
-      diagnostic("provider", "debug", "provider.completion.started", trace);
+      const emit = bound.get(request.provider ?? "")?.emit ?? boundEmitter(diagnosticsSubscriber());
+      emit("provider", "debug", "provider.completion.started", trace);
       try {
         if (!request.provider) throw new Error("Prepared request has no provider");
         ProviderSettingsSchema.parse({
@@ -512,7 +525,7 @@ export function bindProviders(bindings: ProviderBindings) {
                 ),
               );
         if (usage?.status === "invalid")
-          diagnostic("provider", "warning", "provider.usage.invalid", {
+          emit("provider", "warning", "provider.usage.invalid", {
             ...trace,
             ...terminalEvidence,
             error: usage.error,
@@ -537,7 +550,7 @@ export function bindProviders(bindings: ProviderBindings) {
           phase,
           outcome: "completed",
         });
-        diagnostic("provider", "info", "provider.completion.completed", {
+        emit("provider", "info", "provider.completion.completed", {
           ...trace,
           durationMs: Math.round(performance.now() - started),
           ...terminalEvidence,
@@ -555,7 +568,7 @@ export function bindProviders(bindings: ProviderBindings) {
           outcome: signal.aborted ? "cancelled" : "failed",
           error: safeError,
         });
-        diagnostic(
+        emit(
           "provider",
           signal.aborted ? "info" : "warning",
           signal.aborted ? "provider.completion.cancelled" : "provider.completion.failed",

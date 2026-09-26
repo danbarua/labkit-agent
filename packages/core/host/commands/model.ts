@@ -4,7 +4,6 @@ import { admittedCompletionSchema } from "../../agent/agent-fsm.ts";
 import type { TurnCommand } from "../../agent/agent-fsm.ts";
 import { PreparedModelSchema } from "../../agent/agent.ts";
 import type { ActorId } from "../../agent/types.ts";
-import { diagnostic } from "../../logging/index.ts";
 import {
   ContinuationSchema,
   matchingContinuations,
@@ -134,7 +133,7 @@ export function completeModel(
       run: async (request, signal) => {
         const blobs = await context.loadBlobs?.(request, signal, true);
         signal.throwIfAborted();
-        diagnostic("provider", "info", "completion.system_prompt", {
+        host.emit("provider", "debug", "completion.system_prompt", {
           sessionId: host.sessionId,
           turnId,
           childId: command.child.id,
@@ -185,7 +184,7 @@ export function completeModel(
               );
         signal.throwIfAborted();
         if (output.usage)
-          diagnostic("provider", "info", "completion.usage.received", {
+          host.emit("provider", "info", "completion.usage.received", {
             sessionId: host.sessionId,
             turnId,
             childId: command.child.id,

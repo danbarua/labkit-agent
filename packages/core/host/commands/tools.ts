@@ -9,7 +9,7 @@ import {
 } from "../../agent/tool-batch.ts";
 import { failure, type ActorId } from "../../agent/types.ts";
 import { Actor } from "../../fsm/fsm.ts";
-import { diagnostic, diagnosticError } from "../../logging/index.ts";
+import { diagnosticError } from "../../logging/index.ts";
 import type { HostContext } from "../context.ts";
 import type { ExecutionContext, HostToolOutcome } from "../host.ts";
 import { ToolLocationSchema } from "../ports.ts";
@@ -39,7 +39,7 @@ export function runTools(
     throw new Error("Missing tool permission grant");
   for (const [toolName, grantId] of grant?.remembered ?? []) {
     host.remembered.set(toolName, grantId);
-    diagnostic("host", "info", "permission.granted", {
+    host.emit("host", "info", "permission.granted", {
       sessionId: host.sessionId,
       turnId,
       childId: command.child.id,
@@ -65,7 +65,7 @@ export function runTools(
           toolCallId: batchCommand.child.id,
           name: batchCommand.call.name,
         };
-        diagnostic("host", "debug", "tool.admitted", {
+        host.emit("host", "debug", "tool.admitted", {
           ...identity,
           toolName: batchCommand.call.name,
           kind: tool.kind ?? "other",
@@ -115,7 +115,7 @@ export function runTools(
                   const locations = z
                     .array(ToolLocationSchema)
                     .parse(tool.locations(structuredClone(input)));
-                  diagnostic("host", "debug", "tool.locations_resolved", {
+                  host.emit("host", "debug", "tool.locations_resolved", {
                     ...identity,
                     toolName: batchCommand.call.name,
                     locations,
@@ -126,7 +126,7 @@ export function runTools(
                     locations,
                   });
                 } catch (error) {
-                  diagnostic("host", "warning", "tool.locations_failed", {
+                  host.emit("host", "warning", "tool.locations_failed", {
                     sessionId: host.sessionId,
                     childId: batchCommand.child.id,
                     toolName: batchCommand.call.name,
@@ -158,7 +158,7 @@ export function runTools(
               batch,
               toolFailure: context.toolFailure,
             });
-            diagnostic("host", "debug", "tool.awaiting_release", {
+            host.emit("host", "debug", "tool.awaiting_release", {
               ...identity,
               toolName: batchCommand.call.name,
               outcome: result.kind,
@@ -177,7 +177,7 @@ export function runTools(
                     ? "in_progress"
                     : "pending";
             if (next === status) return;
-            diagnostic(
+            host.emit(
               "host",
               state.status === "failed" ? "warning" : "debug",
               "tool.status_changed",

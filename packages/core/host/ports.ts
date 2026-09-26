@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { createChatCompletion, type PreparedModel } from "../agent/agent.ts";
 import type { BlobResolver } from "../agent/content.ts";
+import type { EffectEmitter } from "../effects/index.ts";
 import { AgentIdSchema, ToolNameSchema, type CompletionSchema } from "../agent/types.ts";
 import { freeze } from "../fsm/fsm.ts";
 import type { StreamDeltaSink } from "../providers/types.ts";
@@ -270,6 +271,12 @@ export type ExecutionBindings = Readonly<{
   complete: CompletionPort;
   /** Required when permissions are `ask`; without it every permission request fails. */
   requestPermission?: PermissionPort;
+  /**
+   * Subscriber for this host's effect events (child lifecycle, command dispatch, tool admission,
+   * permission decisions). Always combined with the default diagnostics subscriber, never
+   * replacing it; omit to run with logging only.
+   */
+  effects?: EffectEmitter;
 }>;
 /**
  * A {@link CompletionPort} that posts OpenAI chat-completions requests to `baseUrl`.
