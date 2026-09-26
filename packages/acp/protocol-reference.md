@@ -314,6 +314,10 @@ protocol metadata and must not contain credentials.
 With an auth binding, unauthenticated requests to create/load/resume/fork/list/delete sessions,
 prompt, or change configuration receive ACP `auth_required` before invoking the relevant operation.
 Successful `authenticate` requires both callback completion and `isAuthenticated() === true`.
+An unknown or terminal method ID returns invalid params naming it and the advertised agent method
+IDs (`data: { methodId, advertised }`). A failed callback or unavailable credentials return -32000
+`Authentication with <methodId> failed: <cause>`, with the redacted cause in `data.cause`;
+cancellation still returns request-cancelled. Every failure logs `acp.auth.failed`.
 Logout succeeds only after its callback clears credential availability. Login changes and logout
 first cancel opening sessions and close this connection's live runtimes and MCP resources. Journaled
 sessions remain saved and can be loaded after authentication. Already committed writes and external

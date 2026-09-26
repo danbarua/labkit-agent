@@ -87,11 +87,13 @@ export function bindAuth(binding?: AcpAuth) {
     ) {
       if (!binding || !authenticate) throw RequestError.methodNotFound("authenticate");
       const method = methods.find((method) => method.id === methodId);
-      if (!method || "type" in method)
+      if (!method || "type" in method) {
+        const advertised = methods.filter((method) => !("type" in method)).map(({ id }) => id);
         throw RequestError.invalidParams(
-          undefined,
-          "Select an advertised agent authentication method",
+          { methodId, advertised },
+          `${JSON.stringify(methodId)} is not ${method ? "an agent authentication method (terminal login runs from the client)" : "an advertised agent authentication method"}; advertised agent authentication method IDs: ${advertised.map((id) => JSON.stringify(id)).join(", ") || "none"}`,
         );
+      }
       return transition(
         async () => {
           await before();

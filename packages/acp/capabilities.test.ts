@@ -322,6 +322,74 @@ test("workspace launcher: list, close, load, resume, fork and delete work end to
   );
 });
 
+test("authenticate names advertised method IDs and reports callback failures self-contained", async () => {
+  const secret = "sk-ant-authsecret123456";
+  let mode: "throw" | "hold" = "throw";
+  const auth: AcpAuth = {
+    methods: [
+      { id: "login", name: "Log in" },
+      { id: "setup", name: "Terminal setup", type: "terminal" },
+    ],
+    isAuthenticated: () => false,
+    authenticate: (_methodId, signal) => {
+      if (mode === "throw") throw new Error(`needs form before using ${secret}`);
+      return new Promise<void>((_resolve, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+      );
+    },
+  };
+  const logs = await captured(async () => {
+    const h = harness({ ...setup().options, auth });
+    try {
+      await h.initialize();
+      for (const [methodId, kind] of [
+        ["nope", "an advertised agent authentication method"],
+        ["setup", "an agent authentication method (terminal login runs from the client)"],
+      ] as const) {
+        const error = failed(await h.request("authenticate", { methodId }));
+        expect(error.code).toBe(-32602);
+        expect(error.message).toContain(`"${methodId}" is not ${kind}`);
+        expect(error.message).toContain('advertised agent authentication method IDs: "login"');
+        expect(error.data).toEqual({ methodId, advertised: ["login"] });
+      }
+
+      const error = failed(await h.request("authenticate", { methodId: "login" }));
+      expect(error.code).toBe(-32000);
+      expect(error.message).toBe(
+        "Authentication with login failed: needs form before using [REDACTED API key]",
+      );
+      expect(error.data).toMatchObject({
+        methodId: "login",
+        cause: { name: "Error", message: "needs form before using [REDACTED API key]" },
+      });
+      expect(JSON.stringify(error)).not.toContain(secret);
+
+      // Cancellation keeps the SDK's request-cancelled result.
+      mode = "hold";
+      const pending = await h.start("authenticate", { methodId: "login" });
+      await h.send({ jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: pending } });
+      expect(failed(await h.response(pending)).code).toBe(-32800);
+    } finally {
+      await h.close();
+    }
+  });
+  const failures = logs.filter((log) => log.event === "acp.auth.failed");
+  expect(failures.map(({ level, authMethodId }) => ({ level, authMethodId }))).toEqual(
+    ["nope", "setup", "login", "login"].map((authMethodId) => ({
+      level: "warning",
+      authMethodId,
+    })),
+  );
+  for (const failure of failures)
+    expect(failure).toMatchObject({
+      connectionId: expect.any(String),
+      rpcRequestId: expect.any(String),
+      method: "authenticate",
+      error: expect.any(Object),
+    });
+  expect(JSON.stringify(logs)).not.toContain(secret);
+});
+
 test("advertised logout clears access, closes live sessions and keeps them loadable", async () => {
   let authenticated = true;
   const auth: AcpAuth = {

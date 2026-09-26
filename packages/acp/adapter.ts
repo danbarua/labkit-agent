@@ -1189,12 +1189,20 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
         });
         return {};
       } catch (error) {
+        const cause = diagnosticError(error);
         diagnostic("acp", "warning", "acp.auth.failed", {
           ...trace,
           durationMs: performance.now() - started,
-          error: diagnosticError(error),
+          error: cause,
         });
-        throw error;
+        // Cancellation, unknown method IDs and a missing binding keep their own codes.
+        if (cancellation.aborted || (error instanceof RequestError && error.code !== -32000))
+          throw error;
+        throw new RequestError(
+          -32000,
+          `Authentication with ${params.methodId} failed: ${String(cause.message)}`,
+          { methodId: params.methodId, cause },
+        );
       } finally {
         interaction.close();
       }
