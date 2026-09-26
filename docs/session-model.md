@@ -53,8 +53,9 @@ of the model output fact, because the next prompt to that provider needs it.
 There is one journal, and each record is typed as a fact or an effect. The conversation fold reads
 facts only. Effect records are checked for integrity and nothing else; they never gate load or new
 work. The environment chooses which effects to record. The default records, for each step, token
-usage including cache reads and writes, cost, the stop reason and the provider request ID. Heavy
-traces such as request and response bodies go to capture storage and are referenced, not copied.
+usage including cache reads and writes, cost, the stop reason and the provider request ID. Request and
+response bodies are side-car logging: an optional event subscriber writes them to a separate, dense
+log file for debugging. They are not a core concern, and the journal does not reference them.
 
 Any view of recorded effects is a projection, and what to show the user is a UI decision. For
 example, usage after a restore is shown from the recorded usage effects. A decision can read them
