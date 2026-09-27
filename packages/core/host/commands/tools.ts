@@ -16,6 +16,9 @@ import type { HostContext } from "../context.ts";
 import type { ExecutionContext, HostToolOutcome } from "../host.ts";
 import { ToolLocationSchema, ToolOutputSchema } from "../ports.ts";
 
+/** Largest text-media tool part inlined as text (the same 256 KiB as MCP and read_file results). */
+const MAX_INLINE_TEXT = 256 * 1024;
+
 /**
  * Runs a completion's tool calls as a tool batch actor. Installs the remembered grants of the
  * approving permission request, then spawns each call as the batch asks; each raw outcome goes to
@@ -195,12 +198,17 @@ export function runTools(
                 const parts: ContentPart[] = await Promise.all(
                   rich.data.parts.map(async (part) => {
                     if (part.type === "text") return part;
-                    // Text media is text: every encoder sends tool text, so it is never a blob.
-                    if (part.media.startsWith("text/"))
+                    // Text media is inlined as text on its own line: every encoder sends tool text.
+                    if (part.media.startsWith("text/")) {
+                      if (part.bytes.byteLength > MAX_INLINE_TEXT)
+                        throw new Error(
+                          `${batchCommand.call.name} returned ${part.bytes.byteLength} bytes of ${part.media}, over the 256 KiB tool result limit; narrow the request`,
+                        );
                       return {
                         type: "text" as const,
-                        text: new TextDecoder("utf-8", { fatal: true }).decode(part.bytes),
+                        text: `\n${new TextDecoder("utf-8", { fatal: true }).decode(part.bytes)}`,
                       };
+                    }
                     if (!storeBlob)
                       throw new Error("Tool returned blob parts but no blob store is configured");
                     return {

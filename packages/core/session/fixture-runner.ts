@@ -4,6 +4,7 @@ import { relative, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { configure, getConfig } from "@logtape/logtape";
+import { format, resolveConfig } from "prettier";
 import { z } from "zod";
 
 import { withFixtureDiagnostics } from "../logging/fixture-capture.ts";
@@ -330,8 +331,17 @@ export async function runFixtures(
       const selectedResults = results.filter(
         (_result, index) => selected[index]?.version === group,
       );
-      if (selectedResults.length)
-        await Bun.write(path, json(selectedResults.map((result) => result.output)));
+      if (selectedResults.length) {
+        // Approved baselines are review artifacts; write them in repository style so a diff shows
+        // only behaviour changes and `format:check` passes.
+        const file = Bun.fileURLToPath(path);
+        const config = await resolveConfig(file);
+        const text = await format(json(selectedResults.map((result) => result.output)), {
+          ...config,
+          filepath: file,
+        });
+        await Bun.write(path, text);
+      }
     }
   }
 

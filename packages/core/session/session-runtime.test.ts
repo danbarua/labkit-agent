@@ -339,30 +339,24 @@ test("interrupted recovery keeps a committed tool result's parts, not just its t
   });
 });
 
-test("a tool's text-media part reaches the next request as text, not as a blob", async () => {
-  const requests: { messages: readonly { role: string; content?: unknown; parts?: unknown }[] }[] =
-    [];
+function textPartTool(text: string) {
+  return defineTool({
+    input: z.object({ text: z.string() }),
+    run: () => ({
+      text: "see attachment",
+      parts: [
+        { type: "text", text: "see attachment" },
+        { type: "blob", bytes: new TextEncoder().encode(text), media: "text/plain" },
+      ],
+    }),
+  });
+}
+
+test("a tool's text-media part reaches the next request as its own line of text", async () => {
+  const requests: { messages: readonly { role: string; content?: unknown }[] }[] = [];
   const session = await createSession(
     testOptions({
-      tools: new Map([
-        [
-          "echo",
-          defineTool({
-            input: z.object({ text: z.string() }),
-            run: () => ({
-              text: "see attachment",
-              parts: [
-                { type: "text", text: "see attachment" },
-                {
-                  type: "blob",
-                  bytes: new TextEncoder().encode("SECRET-TOOL-TEXT"),
-                  media: "text/plain",
-                },
-              ],
-            }),
-          }),
-        ],
-      ]),
+      tools: new Map([["echo", textPartTool("SECRET-TOOL-TEXT")]]),
       complete: (request) => {
         requests.push(request);
         return requests.length === 1
@@ -374,8 +368,37 @@ test("a tool's text-media part reaches the next request as text, not as a blob",
   session.input("Go");
   await until(() => session.snapshot.durable.conversation.log.length === 1);
   const tool = requests[1]?.messages.find((message) => message.role === "tool");
-  expect(tool?.content).toBe("see attachmentSECRET-TOOL-TEXT");
-  expect(JSON.stringify(tool?.parts ?? [])).not.toContain('"blob"');
+  expect(tool?.content).toBe("see attachment\nSECRET-TOOL-TEXT");
+  expect(JSON.stringify(requests[1]?.messages)).not.toContain('"blob"');
+  await session.close();
+});
+
+test("a tool's text-media part over 256 KiB fails the call with a narrow-the-request error", async () => {
+  const session = await createSession(
+    testOptions({
+      tools: new Map([["echo", textPartTool("L".repeat(256 * 1024 + 1))]]),
+      complete: () => ({
+        kind: "tools",
+        text: "",
+        calls: [{ id: "c1", name: "echo", args: { text: "x" } }],
+      }),
+    }),
+  );
+  session.input("Go");
+  await until(() => session.snapshot.durable.conversation.log.length === 1);
+  const record = session.snapshot.durable.records.find((entry) => entry.body.kind === "tool");
+  expect(record?.body).toMatchObject({
+    kind: "tool",
+    callId: "c1",
+    result: {
+      kind: "failed",
+      error: {
+        message: expect.stringContaining(
+          "echo returned 262145 bytes of text/plain, over the 256 KiB tool result limit; narrow the request",
+        ),
+      },
+    },
+  });
   await session.close();
 });
 
