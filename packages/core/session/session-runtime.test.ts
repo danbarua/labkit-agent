@@ -373,35 +373,6 @@ test("a tool's text-media part reaches the next request as its own line of text"
   await session.close();
 });
 
-test("a tool's text-media part over 256 KiB fails the call with a narrow-the-request error", async () => {
-  const session = await createSession(
-    testOptions({
-      tools: new Map([["echo", textPartTool("L".repeat(256 * 1024 + 1))]]),
-      complete: () => ({
-        kind: "tools",
-        text: "",
-        calls: [{ id: "c1", name: "echo", args: { text: "x" } }],
-      }),
-    }),
-  );
-  session.input("Go");
-  await until(() => session.snapshot.durable.conversation.log.length === 1);
-  const record = session.snapshot.durable.records.find((entry) => entry.body.kind === "tool");
-  expect(record?.body).toMatchObject({
-    kind: "tool",
-    callId: "c1",
-    result: {
-      kind: "failed",
-      error: {
-        message: expect.stringContaining(
-          "echo returned 262145 bytes of text/plain, over the 256 KiB tool result limit; narrow the request",
-        ),
-      },
-    },
-  });
-  await session.close();
-});
-
 test("abort overtaking a tool outcome does not accept a result into a settled batch", async () => {
   const port = createMemoryPersistence();
   const releaseAbort = deferred<void>();

@@ -420,3 +420,66 @@ test("a session-level effects subscriber receives completion usage and a tool ev
     await session.close();
   }
 });
+
+test("a tool's text over 256 KiB fails the call with a warning naming the tool, size and fix", async () => {
+  const capture = observeLogs();
+  const session = await createSession(
+    testOptions({
+      tools: new Map([
+        [
+          "echo",
+          defineTool({
+            input: z.object({ text: z.string() }),
+            run: () => ({
+              text: "see attachment",
+              parts: [
+                { type: "text", text: "see attachment" },
+                {
+                  type: "blob",
+                  bytes: new TextEncoder().encode("L".repeat(256 * 1024 + 1)),
+                  media: "text/plain",
+                },
+              ],
+            }),
+          }),
+        ],
+      ]),
+      complete: () => ({
+        kind: "tools",
+        text: "",
+        calls: [{ id: "c1", name: "echo", args: { text: "x" } }],
+      }),
+    }),
+  );
+  const sessionId = session.snapshot.durable.conversation.sessionId;
+  const message =
+    "echo returned 262145 bytes of text/plain, over the 256 KiB tool result limit; narrow the request";
+  try {
+    session.input("Go");
+    await until(() => session.snapshot.durable.conversation.log.length === 1);
+    const record = session.snapshot.durable.records.find((entry) => entry.body.kind === "tool");
+    expect(record?.body).toMatchObject({
+      kind: "tool",
+      callId: "c1",
+      result: { kind: "failed", error: { message: expect.stringContaining(message) } },
+    });
+    const failed = capture.records.filter(
+      (r) => r.event === "child.failed" && r.fields.phase === "validate_output",
+    );
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toMatchObject({
+      level: "warning",
+      fields: {
+        sessionId,
+        childId: expect.stringContaining("/c1"),
+        phase: "validate_output",
+        error: expect.objectContaining({ message: expect.stringContaining(message) }),
+      },
+    });
+    // The warning is diagnosable on its own: no payload bytes are logged.
+    expect(JSON.stringify(failed[0])).not.toContain("LLLL");
+  } finally {
+    await session.close();
+    capture.close();
+  }
+});
