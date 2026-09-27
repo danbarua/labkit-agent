@@ -34,12 +34,17 @@ append to the journal; the second append fails with a revision conflict and its 
 host keeps a process-wide session lease. Every lifecycle method that opens or removes a runtime
 claims the lease first: `session/new`, `load` and `resume`; `session/fork`, including when it
 opens a parent privately because the parent is not open on this connection; and
-`session/delete`. Every path that removes a session from a connection releases it.
+`session/delete`. (`session/new` claims its ID as soon as core assigns it, before the session is
+published; no other connection can hold a new ID.) Every path that removes a session from a
+connection releases it.
 
 **The newest claim wins.** When a connection claims a session another connection holds, the host
 closes the holder's session exactly as `session/close` would. A running prompt on the old
-connection ends with stop reason `cancelled`. A later request for that session on the old
-connection fails with an error naming the connection that took it over. Then the claim proceeds:
+connection ends with stop reason `cancelled`. If the holder is still opening, forking or deleting
+the session, that operation is aborted and the claim waits for it to let go. Claims on one session
+run one at a time, in arrival order; a claim cancelled while it waits takes nothing over. A later
+request for that session on the old connection fails with an error naming the connection that took
+it over (and, after a `delete`, saying it was deleted). Then the claim proceeds:
 
 - `load`, `resume` and `new` open the session on the claiming connection.
 - `fork` opens the parent privately, forks it, and releases the parent's lease. The old holder
@@ -71,6 +76,7 @@ The agent runs commands and writes files, so the endpoint is closed by default:
   `LABKIT_ACP_HTTP_TOKEN`, must be at least 32 characters, and is compared in constant time. The
   host refuses to start without it. A rejected request gets `401` and logs `acp.http.rejected`
   at WARNING with the method, path and reason (`missing_token` or `bad_token`), never the token.
+  The host serves only `/acp`; other paths get `404`.
 - The host sends no CORS headers. A browser reaches it through its own server, which adds the
   token (for labkit, the web app's dev server proxies `/acp`). The token never reaches page
   script.

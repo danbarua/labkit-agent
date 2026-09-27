@@ -401,9 +401,14 @@ never changes process.cwd(). Bind relative tool paths to the supplied absolute s
 
 For local sibling projects, register this package once with `bun link` from `packages/acp`, then
 run `bun link --save @labkit-agent/acp` in the consumer. The checkout needs `bun install` at its root.
-You can also call `await serveAcpStdio(options)` in your own launcher. `connectAcp(stream, options)`
-accepts an SDK Stream for embedding/testing and returns `{ connection, closed, close }`; `closed`
-resolves after owned sessions have closed. Stores and credential lifetimes remain caller-owned.
+You can also call `await serveAcpStdio(options)` in your own launcher, or serve Streamable HTTP with
+`serveAcpHttp(options, { port, token })` or `acpHttpHandler(options, { token })` (see
+[Serve ACP over Streamable HTTP](README.md#serve-acp-over-streamable-http)).
+`connectAcp(stream, options, host?)` accepts an SDK Stream for embedding/testing and returns
+`{ connectionId, connection, closed, close }`; `closed` resolves after owned sessions have closed.
+`host.connect` is passed to the SDK app's `connect`, and `host.sessions` shares a session lease
+between connections (by default each connection has its own). Stores and credential lifetimes
+remain caller-owned.
 
 ## Supported protocol surface
 
@@ -415,7 +420,11 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
   `acp.method.not_advertised`. Unknown and unstable methods such as `session/set_model` also
   return -32601 and log `acp.method.unknown`. Any other request sent before `initialize` has
   answered returns -32600 with `data.reason: "not_initialized"`.
-- `session/new`: creates a journaled session. Each connection owns its loaded runtimes.
+- `session/new`: creates a journaled session. Each connection owns its loaded runtimes. Connections
+  that share a session lease (all HTTP connections of one host) hold at most one live runtime per
+  session: `session/new`, `load`, `resume`, `fork` and `delete` claim it, and a claim for a session
+  another connection holds closes it there first, exactly as `session/close` would, and logs
+  `acp.session.taken_over` (WARNING when that cancelled a running prompt).
 - `session/prompt`: admits one active prompt per session and waits for durable terminal settlement.
   Separate sessions run independently; overlapping prompts in one session return an RPC error.
 - `session/cancel`: remains responsive during completions, tools, and permission requests. It routes
@@ -423,11 +432,14 @@ resolves after owned sessions have closed. Stores and credential lifetimes remai
 - `session/close`: closes the runtime and cancels owned work; it does not delete persisted data.
   Later requests for that session ID return invalid params saying the session is not open on this
   connection and to reopen it with `session/load` or `session/resume` (`acp.session.not_open`).
+  After a takeover the message names the connection that took the session and how (with
+  `session/delete`, that it was deleted), and `acp.session.not_open` carries `takenOverBy`.
 - `session/load`: opt-in via `loadSession: true`. The factory receives sessionId and must resolve the
   saved store and validate that cwd belongs to that session. No durable session-to-workspace
-  directory is invented by this adapter. Duplicate live loads are rejected. Tool or agent registry
-  changes do not prevent loading ([registry changes](#registry-changes-on-reopen)). An ID with no
-  saved journal (never saved, or deleted) returns -32002 (resource not found) with `data.sessionId`.
+  directory is invented by this adapter. Duplicate live loads on one connection are rejected. Tool
+  or agent registry changes do not prevent loading ([registry changes](#registry-changes-on-reopen)).
+  An ID with no saved journal (never saved, or deleted) returns -32002 (resource not found) with
+  `data.sessionId`.
 - `session/resume`: available with `loadSession`; restores and recovers like load but emits no
   conversation replay. Duplicate live sessions remain rejected.
 - `session/fork`: experimental, opt-in via `forkSession: true` (requires `loadSession`). Forks a

@@ -45,7 +45,8 @@ export type OpenDeps = Readonly<{
 
 /**
  * Creates or restores a runtime and binds it to this connection. `replay` sends saved history;
- * `visible` publishes the session to the client (a privately borrowed fork parent is not).
+ * `visible` publishes the session to the client (a privately borrowed fork parent is not). A visible
+ * open claims the session lease itself; the fork already holds it for a private parent.
  */
 export type OpenSession = (
   params: NewSessionRequest & { sessionId?: string },
@@ -117,7 +118,17 @@ export function opener(deps: OpenDeps): OpenSession {
       throw RequestError.invalidParams(undefined, "Session is already loaded");
     const id = params.sessionId;
     if (id) opening.add(id);
-    signal = AbortSignal.any([signal, core.signal(), deps.registry.state.authLifetime.signal]);
+    // A later claim from another connection aborts this open (see SessionLease).
+    const takeover = new AbortController();
+    signal = AbortSignal.any([
+      signal,
+      core.signal(),
+      deps.registry.state.authLifetime.signal,
+      takeover.signal,
+    ]);
+    const claim = { method: trace.method, rpcRequestId: trace.rpcRequestId, signal };
+    let claimed: string | undefined;
+    let settled: (() => void) | undefined;
     let dispose: (() => Promise<void>) | undefined;
     let published = false;
     let initializedId: string | undefined;
@@ -140,6 +151,13 @@ export function opener(deps: OpenDeps): OpenSession {
     // session/new learns its ID only after MCP opens; call diagnostics read it from here later.
     const mcpContext: { sessionId?: string } = { sessionId: id };
     try {
+      if (id && visible) {
+        settled = deps.registry.hold(id, takeover);
+        claimed = id;
+        // Another connection holding this session closes it before it is restored here.
+        await deps.registry.claim(id, claim);
+        signal.throwIfAborted();
+      }
       let mcp: ReturnType<typeof mcpConnections>;
       try {
         mcp = mcpConnections(
@@ -334,6 +352,11 @@ export function opener(deps: OpenDeps): OpenSession {
       opening.add(sessionId);
       let configuration: ReturnType<typeof configState>;
       try {
+        if (!id) {
+          settled = deps.registry.hold(sessionId, takeover);
+          claimed = sessionId;
+          await deps.registry.claim(sessionId, claim);
+        }
         configuration = configState(entry.config, runtime.selectedPolicy);
         if (visible && original.onReady)
           await waitForBoundary(Promise.resolve(original.onReady(sessionId, signal)), signal);
@@ -430,9 +453,11 @@ export function opener(deps: OpenDeps): OpenSession {
       if (!published) {
         elicitation.close();
         await dispose?.();
+        if (claimed) deps.registry.release(claimed);
       }
       if (id) opening.delete(id);
       if (initializedId) opening.delete(initializedId);
+      settled?.();
     }
   }
   return open;

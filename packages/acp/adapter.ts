@@ -22,6 +22,7 @@ import type { AcpPromptCapabilities } from "./prompt-input.ts";
 import { configProjection, registerConfiguration } from "./rpc/config.ts";
 import { connectionGate, registerConnection, registerUnadvertised } from "./rpc/connection.ts";
 import { adapterCore } from "./rpc/core.ts";
+import { sessionLease, type SessionLease } from "./rpc/lease.ts";
 import { registerMcpBridge } from "./rpc/mcp.ts";
 import { registerPrompt } from "./rpc/prompt.ts";
 import { registerSessionLifecycle, sessionRegistry } from "./rpc/sessions.ts";
@@ -89,8 +90,30 @@ export type AcpOptions = Readonly<{
     AcpPromptCapabilities | (() => AcpPromptCapabilities | Promise<AcpPromptCapabilities>);
 }>;
 
+/** SDK transport connect options; HTTP defers `onConnect` handlers until initialize answers. */
+export type AgentConnectOptions = Readonly<{ deferConnectHandlers?: boolean }>;
+
+/** What a multi-connection host shares with each connection. */
+export type AcpHost = Readonly<{
+  /** Passed to the SDK app's `connect`. */
+  connect?: AgentConnectOptions;
+  /** Process-wide session lease; without one, the connection keeps a private lease. */
+  sessions?: SessionLease;
+}>;
+
+/** The SDK connection. A transport that deferred `onConnect` handlers starts them itself. */
+export type AcpAppConnection = AgentConnection & { startConnectHandlers?(): void };
+
+/**
+ * The SDK's `AgentApp.connect(stream, options)` (dist/acp.js:768) accepts connect options and
+ * returns a handle with `startConnectHandlers`; its 1.5.0 typings declare only `connect(stream)`.
+ */
+type ConnectableApp = Readonly<{
+  connect(stream: Stream, options?: AgentConnectOptions): AcpAppConnection;
+}>;
+
 /** One connection owns its runtimes; persistence and credentials remain caller-owned. */
-export function connectAcp(stream: Stream, options: AcpOptions) {
+export function connectAcp(stream: Stream, options: AcpOptions, host: AcpHost = {}) {
   const connectionId = crypto.randomUUID();
   let closing = false;
   const gate = connectionGate(options.auth, () => closing);
@@ -98,7 +121,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
   const forkSession = options.forkSession === true;
   if (forkSession && !loadSession) throw new Error("ACP forking requires loadSession");
   const agentInfo = { ...(options.agentInfo ?? { name: "labkit-agent", version: "0.1.0" }) };
-  let connection: AgentConnection;
+  let connection: AcpAppConnection;
   const core = adapterCore({
     connectionId,
     signal: () => connection.signal,
@@ -106,7 +129,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     close: (e) => connection.close(e),
   });
   const mcpBridge = acpMcpBridge(core.signal);
-  const registry = sessionRegistry(core, gate);
+  const registry = sessionRegistry(core, gate, host.sessions ?? sessionLease());
   const config = configProjection(core);
   const updates = sessionUpdates(core, registry.current, options.sessionInfo, config.project);
   const app = agent();
@@ -145,7 +168,10 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     // The SDK handles request cancellation itself.
     methods.protocol.cancelRequest,
   ]);
-  connection = app.connect(watchUnknownMethods(stream, known, connectionId));
+  connection = (app as unknown as ConnectableApp).connect(
+    watchUnknownMethods(stream, known, connectionId),
+    host.connect,
+  );
   diagnostic("acp", "info", "acp.connection.opened", { connectionId });
   const closed = connection.closed.then(async () => {
     diagnostic("acp", "info", "acp.connection.closing", { connectionId, count: registry.size() });
@@ -153,6 +179,7 @@ export function connectAcp(stream: Stream, options: AcpOptions) {
     await registry.shutdown();
   });
   return {
+    connectionId,
     connection,
     closed,
     async close() {

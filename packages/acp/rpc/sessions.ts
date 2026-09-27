@@ -7,6 +7,7 @@ import type { AcpOptions } from "../adapter.ts";
 import { waitForBoundary } from "../session-config.ts";
 import type { ConnectionGate } from "./connection.ts";
 import type { AdapterCore } from "./core.ts";
+import type { Eviction, LeaseClaim, LeaseHolder, SessionLease } from "./lease.ts";
 import { opener, requireRootsAdvertised, type OpenDeps } from "./open.ts";
 import { afterPrompt, type Session } from "./session.ts";
 
@@ -29,6 +30,23 @@ export type SessionRegistry = Readonly<{
   lookup(id: string, cleanup?: boolean): Session;
   current(id: string): Session | undefined;
   isCurrent(id: string, entry: Session): boolean;
+  /**
+   * Register this connection's open, fork or delete of `id`, so that another connection claiming
+   * `id` aborts `controller` and waits. Call the returned function once the operation settled.
+   */
+  hold(id: string, controller: AbortController): () => void;
+  /**
+   * Claim `id` in the session lease before a runtime opens or is removed. Another connection
+   * holding it closes it first (see `SessionLease`).
+   */
+  claim(id: string, claim: LeaseClaim): Promise<Eviction | undefined>;
+  /** Give up the lease on `id` after its runtime closed or its open failed. */
+  release(id: string): void;
+  /**
+   * Close an open session as `session/close` does. Idempotent. The lease stays with this
+   * connection until `release`, so a delete can close and remove the journal under one claim.
+   */
+  close(id: string, entry: Session): Promise<void>;
   /** Close every session because credentials changed. */
   revokeAll(): Promise<void>;
   /** Close every session because the connection closed. */
@@ -36,10 +54,21 @@ export type SessionRegistry = Readonly<{
   size(): number;
 }>;
 
-/** Creates the empty session registry for one connection. */
+/** A request for a session another connection took over names that connection and the way back. */
+function takenOverError(id: string, by: Readonly<{ connectionId: string; method: string }>) {
+  return RequestError.invalidParams(
+    { sessionId: id, takenOverBy: by.connectionId, method: by.method },
+    by.method === "session/delete"
+      ? `Session ${id} is no longer open on this connection: connection ${by.connectionId} deleted it with session/delete`
+      : `Session ${id} is no longer open on this connection: connection ${by.connectionId} took it over with ${by.method}; send session/load to continue it on this connection`,
+  );
+}
+
+/** Creates the empty session registry for one connection, holding sessions in `lease`. */
 export function sessionRegistry(
   core: Pick<AdapterCore, "connectionId">,
   gate: Pick<ConnectionGate, "requireInitialized" | "requireAccess">,
+  lease: SessionLease,
 ): SessionRegistry {
   const { connectionId } = core;
   const state: RegistryState = {
@@ -51,6 +80,58 @@ export function sessionRegistry(
     authLifetime: new AbortController(),
   };
   const { sessions, deleting, borrowedParents, resources } = state;
+  /** In-flight open, fork or delete per session; `claimed` once its lease claim has landed. */
+  const operations = new Map<
+    string,
+    { controller: AbortController; settled: Promise<void>; claimed: boolean }
+  >();
+  const takenOver = new Map<string, { connectionId: string; method: string }>();
+  const closing = new WeakMap<Session, Promise<void>>();
+  let stopping: Promise<void> | undefined;
+  const holder: LeaseHolder = {
+    connectionId,
+    claimed(id) {
+      takenOver.delete(id);
+      const operation = operations.get(id);
+      if (operation) operation.claimed = true;
+    },
+    async evict(id, claimant, claim) {
+      const by = { connectionId: claimant, method: claim.method };
+      takenOver.set(id, by);
+      // A closing connection closes its sessions itself; an open it aborted still has to let go.
+      if (stopping) await stopping;
+      // An operation still queued for its own claim is newer than this one and will evict it.
+      const operation = operations.get(id);
+      if (operation?.claimed) {
+        operation.controller.abort(takenOverError(id, by));
+        await operation.settled;
+      }
+      const entry = sessions.get(id);
+      if (!entry) return { promptCancelled: false };
+      const promptCancelled = entry.busy;
+      await close(id, entry);
+      return { promptCancelled, cwd: entry.cwd };
+    },
+  };
+
+  function close(id: string, entry: Session) {
+    let closed = closing.get(entry);
+    if (closed) return closed;
+    entry.usage?.close();
+    entry.acceptingUpdates = false;
+    entry.promptController?.abort();
+    closed = (async () => {
+      try {
+        await entry.runtime.close();
+      } finally {
+        await entry.dispose();
+        if (sessions.get(id) === entry) sessions.delete(id);
+      }
+    })();
+    closing.set(entry, closed);
+    return closed;
+  }
+
   return {
     state,
     lookup(id, cleanup = false) {
@@ -61,7 +142,13 @@ export function sessionRegistry(
         throw RequestError.invalidParams(undefined, "Session is being forked privately");
       const session = sessions.get(id);
       if (!session) {
-        diagnostic("acp", "warning", "acp.session.not_open", { connectionId, sessionId: id });
+        const by = takenOver.get(id);
+        diagnostic("acp", "warning", "acp.session.not_open", {
+          connectionId,
+          sessionId: id,
+          ...(by ? { takenOverBy: by.connectionId, takeoverMethod: by.method } : {}),
+        });
+        if (by) throw takenOverError(id, by);
         throw RequestError.invalidParams(
           { sessionId: id },
           `Session ${id} is not open on this connection (never opened, closed or deleted); open it with session/load or session/resume before using it`,
@@ -71,34 +158,43 @@ export function sessionRegistry(
     },
     current: (id) => sessions.get(id),
     isCurrent: (id, entry) => sessions.get(id) === entry,
+    hold(id, controller) {
+      const { promise: settled, resolve: settle } = Promise.withResolvers<void>();
+      const operation = { controller, settled, claimed: false };
+      operations.set(id, operation);
+      return () => {
+        if (operations.get(id) === operation) operations.delete(id);
+        settle();
+      };
+    },
+    claim: (id, claim) => lease.claim(id, holder, claim),
+    release: (id) => lease.release(id, holder),
+    close,
     async revokeAll() {
       state.authLifetime.abort();
       state.authLifetime = new AbortController();
-      const active = [...sessions.entries()];
-      for (const [, entry] of active) {
-        entry.usage?.close();
-        entry.acceptingUpdates = false;
-        entry.promptController?.abort();
-      }
       await Promise.allSettled(
-        active.map(async ([id, entry]) => {
+        [...sessions.entries()].map(async ([id, entry]) => {
           try {
-            await entry.runtime.close();
+            await close(id, entry);
           } finally {
-            await entry.dispose();
-            if (sessions.get(id) === entry) sessions.delete(id);
+            lease.release(id, holder);
           }
         }),
       );
     },
-    async shutdown() {
-      for (const entry of sessions.values()) {
-        entry.usage?.close();
-        entry.acceptingUpdates = false;
-      }
-      await Promise.allSettled([...sessions.values()].map((entry) => entry.runtime.close()));
-      await Promise.allSettled([...resources].map((dispose) => dispose()));
-      sessions.clear();
+    shutdown() {
+      stopping ??= (async () => {
+        for (const entry of sessions.values()) {
+          entry.usage?.close();
+          entry.acceptingUpdates = false;
+        }
+        await Promise.allSettled([...sessions.values()].map((entry) => entry.runtime.close()));
+        await Promise.allSettled([...resources].map((dispose) => dispose()));
+        for (const id of sessions.keys()) lease.release(id, holder);
+        sessions.clear();
+      })();
+      return stopping;
     },
     size: () => sessions.size,
   };
@@ -154,12 +250,24 @@ export function registerSessionLifecycle(
           undefined,
           "Additional directories must be absolute (at most 32)",
         );
-      const cancellation = AbortSignal.any([signal, core.signal()]);
+      const takeover = new AbortController();
+      const cancellation = AbortSignal.any([signal, core.signal(), takeover.signal]);
       const borrowed = !sessions.has(params.sessionId);
       let entry: Session | undefined;
-      if (borrowed) borrowedParents.add(params.sessionId);
+      let settled: (() => void) | undefined;
+      if (borrowed) {
+        borrowedParents.add(params.sessionId);
+        settled = registry.hold(params.sessionId, takeover);
+      }
       try {
-        if (borrowed)
+        if (borrowed) {
+          // Another connection holding the parent closes it before this one restores it.
+          await registry.claim(params.sessionId, {
+            method: "session/fork",
+            rpcRequestId: String(client.requestId),
+            signal: cancellation,
+          });
+          cancellation.throwIfAborted();
           await waitForBoundary(
             open(
               { ...params, mcpServers: params.mcpServers ?? [] },
@@ -170,6 +278,7 @@ export function registerSessionLifecycle(
             ),
             cancellation,
           );
+        }
         entry = sessions.get(params.sessionId);
         if (!entry) throw RequestError.invalidParams(undefined, "Unknown parent session");
         const parent = entry;
@@ -227,18 +336,13 @@ export function registerSessionLifecycle(
       } finally {
         if (borrowed) {
           try {
-            if (entry) {
-              entry.usage?.close();
-              entry.acceptingUpdates = false;
-              try {
-                await entry.runtime.close();
-              } finally {
-                await entry.dispose();
-              }
-              if (sessions.get(params.sessionId) === entry) sessions.delete(params.sessionId);
-            }
+            // A cancelled private open may have published just before cancellation won the race.
+            const parent = entry ?? sessions.get(params.sessionId);
+            if (parent) await registry.close(params.sessionId, parent);
           } finally {
             borrowedParents.delete(params.sessionId);
+            registry.release(params.sessionId);
+            settled?.();
           }
         }
       }
@@ -262,28 +366,24 @@ export function registerSessionLifecycle(
           undefined,
           "Session lifecycle operation is already pending",
         );
-      const cancellation = AbortSignal.any([signal, core.signal()]);
+      const takeover = new AbortController();
+      const cancellation = AbortSignal.any([signal, core.signal(), takeover.signal]);
       cancellation.throwIfAborted();
-      const entry = sessions.get(params.sessionId);
       deleting.add(params.sessionId);
+      const settled = registry.hold(params.sessionId, takeover);
       const remove = deps.deleteSession!; // Unadvertised delete never reaches this handler.
       const operation = (async () => {
-        if (entry) {
-          entry.usage?.close();
-          entry.acceptingUpdates = false;
-          entry.promptController?.abort();
-          try {
-            await entry.runtime.close();
-          } finally {
-            await entry.dispose();
-            sessions.delete(params.sessionId);
-          }
-        }
+        // Another connection holding the session closes it first: never delete under a runtime.
+        const evicted = await registry.claim(params.sessionId, {
+          method: "session/delete",
+          rpcRequestId: trace.rpcRequestId,
+          signal: cancellation,
+        });
+        const entry = sessions.get(params.sessionId);
+        if (entry) await registry.close(params.sessionId, entry);
         cancellation.throwIfAborted();
-        await remove(
-          { sessionId: params.sessionId, ...(entry ? { cwd: entry.cwd } : {}) },
-          cancellation,
-        );
+        const cwd = entry?.cwd ?? evicted?.cwd;
+        await remove({ sessionId: params.sessionId, ...(cwd ? { cwd } : {}) }, cancellation);
         return {};
       })()
         .then(
@@ -303,7 +403,11 @@ export function registerSessionLifecycle(
             throw error;
           },
         )
-        .finally(() => deleting.delete(params.sessionId));
+        .finally(() => {
+          deleting.delete(params.sessionId);
+          registry.release(params.sessionId);
+          settled();
+        });
       return waitForBoundary(operation, cancellation);
     })
     .onRequest("session/list", async ({ params, signal, client }) => {
@@ -338,15 +442,11 @@ export function registerSessionLifecycle(
     .onRequest("session/close", async ({ params }) => {
       const entry = registry.lookup(params.sessionId, true);
       // Close is terminal for this runtime, even if the client never answers permission requests.
-      entry.usage?.close();
-      entry.acceptingUpdates = false;
-      entry.promptController?.abort();
       try {
-        await entry.runtime.close();
+        await registry.close(params.sessionId, entry);
       } finally {
-        await entry.dispose();
+        registry.release(params.sessionId);
       }
-      sessions.delete(params.sessionId);
       await core.flushed();
       return {};
     });

@@ -1,9 +1,10 @@
 # Connect an editor to a durable session
 
-Use this adapter when an ACP client should drive core sessions over stdio. The adapter translates
-protocol requests into the same session API used by embedded applications. It owns connection/UI
-resources; core owns execution and persistence gates. Your factory supplies workspace-bound tools,
-credentials, and storage. Avoid implementing another tool loop in the client or factory.
+Use this adapter when an ACP client should drive core sessions over stdio or Streamable HTTP. The
+adapter translates protocol requests into the same session API used by embedded applications. It
+owns connection/UI resources; core owns execution and persistence gates. Your factory supplies
+workspace-bound tools, credentials, and storage. Avoid implementing another tool loop in the client
+or factory.
 
 For a runnable agent, use [vscode-workspace.ts](examples/vscode-workspace.ts) and the
 [VS Code launch instructions](../../docs/vscode-acp.md). For exact fields, limits, and supported
@@ -80,6 +81,49 @@ on the first bound provider's default model (anthropic, openai, google, xai, loc
 thinking off and a 32768-token output limit (lower if the model's limit is lower). An unknown
 `LABKIT_ACP_MODEL` logs `acp.catalog.default_model_unresolved` and uses that default.
 `LABKIT_ACP_TERMINAL=1` enables the client terminal tool.
+
+## Serve ACP over Streamable HTTP
+
+A browser client such as the labkit web UI reaches the agent over the SDK's experimental
+Streamable HTTP transport. [acp-http-hosting.md](../../docs/acp-http-hosting.md) records the design.
+Launch it with `--http <port>` next to `--config`:
+
+```sh
+export LABKIT_ACP_HTTP_TOKEN="$(openssl rand -hex 32)"
+bun packages/acp/cli.ts --config /absolute/path/to/acp-config.ts --http 8765
+```
+
+- The endpoint is `http://127.0.0.1:<port>/acp`; `--http 0` picks a free port. Stderr prints the
+  endpoint and the log path; stdout stays empty. There is no option to bind another interface.
+- `LABKIT_ACP_HTTP_TOKEN` is required: at least 32 characters. Every request must carry
+  `Authorization: Bearer <token>`, compared in constant time. Any other request gets `401` with
+  `WWW-Authenticate: Bearer` and logs `acp.http.rejected` (WARNING: method, path, and reason
+  `missing_token` or `bad_token`; never the token). The host sends no CORS headers, so a browser
+  goes through its own server, which adds the token. Paths other than `/acp` get `404`.
+- The config must set `loadSession: true`. Without it, or without a valid token, the CLI exits 1,
+  prints the fix on stderr and logs `launcher.failed`.
+- SIGINT or SIGTERM closes every connection, waits for their sessions to shut down, logs
+  `acp.http.stopped` and `launcher.stopped`, and exits 0.
+
+To embed the host, call `serveAcpHttp(options, { port, token })`, which returns
+`{ url, port, close }`. In tests or behind your own server, `acpHttpHandler(options, { token })`
+returns `{ fetch(request), close() }`; `close()` resolves after every connection's sessions closed.
+
+Each ACP connection (one `initialize` POST) is one `connectAcp` with its own sessions. They close on
+`DELETE /acp` or host shutdown, not when an event stream drops; a client that reconnects initializes
+again and continues with `session/load`. One process runs at most one live runtime per session:
+when a connection runs `session/new`, `load`, `resume`, `fork` or `delete` on a session that another
+connection holds, the holder's runtime closes first, exactly as `session/close` would. A prompt
+running there ends with `cancelled`. The holder's later requests for that session fail with -32602
+naming the connection that took it over; it can take the session back with `session/load`.
+
+Logs go to the launcher's rotated files (`~/.labkit/logs/` unless `LABKIT_ACP_LOG_DIR` is set; see
+[Find an operational failure](#find-an-operational-failure)). `acp.http.listening` records the host
+and port. `acp.http.connection.opened` joins the SDK's `Acp-Connection-Id` (`httpConnectionId`) to
+the adapter's `connectionId`, which every session event carries; `acp.http.connection.closed` marks
+a `DELETE`. `acp.http.request` (DEBUG; ERROR for a 5xx) records method, status and duration, plus
+the SDK's reason for a refusal such as `Invalid JSON`. `acp.session.taken_over` names the session,
+both connection IDs and the claiming method; it is a WARNING when it cancelled a running prompt.
 
 ## Derive UI configuration from the selected policy
 
@@ -253,6 +297,8 @@ children. Remote/client resources have their own cleanup rules; consult the
 
 `connectAcp` in [adapter.ts](adapter.ts) is the composition root. It builds one set of services
 per connection, registers every handler on the SDK `agent()` app, then connects the stream. The
+transports call it: [stdio.ts](stdio.ts) once for the process, and [http.ts](http.ts) once per ACP
+connection through the SDK's `AcpServer`, with all HTTP connections sharing one session lease. The
 handlers live in `rpc/`:
 
 | Module                                           | Responsibility                                                                                         |
@@ -261,6 +307,7 @@ handlers live in `rpc/`:
 | [rpc/session.ts](rpc/session.ts)                 | The per-session record and fork/prompt serialization (`afterPrompt`, `awaitForksQuiet`).               |
 | [rpc/connection.ts](rpc/connection.ts)           | `initialize`, `authenticate`, `logout`, the initialize/auth gate, and -32601 for unadvertised methods. |
 | [rpc/sessions.ts](rpc/sessions.ts)               | The session registry and `session/new`, `load`, `resume`, `fork`, `delete`, `list`, `close`.           |
+| [rpc/lease.ts](rpc/lease.ts)                     | The session lease: one live runtime per session across connections; the newest claim wins.             |
 | [rpc/open.ts](rpc/open.ts)                       | Opening a session: MCP, client resources, runtime creation or restore, replay and publication.         |
 | [rpc/permission.ts](rpc/permission.ts)           | Forwarding runtime permission requests as `session/request_permission` and validating the answer.      |
 | [rpc/updates.ts](rpc/updates.ts)                 | Projecting runtime snapshots, tool and stream events, and saved history to `session/update`.           |

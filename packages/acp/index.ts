@@ -5,6 +5,7 @@ export {
   type SessionOptionsContext,
 } from "./adapter.ts";
 export { serveAcpStdio } from "./stdio.ts";
+export { acpHttpHandler, serveAcpHttp, type AcpHttpHandler, type AcpHttpServer } from "./http.ts";
 
 export {
   selectChoices,

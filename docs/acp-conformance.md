@@ -52,8 +52,8 @@ exposes it, so editor verification is listed as its own gap wherever it is still
 | G19 | Commands             | Command refresh in the editor; audit supported command forms against the schema                                                                                             | Not done  |
 | G20 | Usage and cost       | A real context-measurement or billing source in the workspace launcher, and the editor's usage indicator                                                                    | Not done  |
 | G21 | Extensibility        | Audit `_meta` preservation and extension request and notification handling                                                                                                  | Not done  |
-| G22 | Transport            | ACP Streamable HTTP through the SDK's experimental server, for the labkit web UI: loopback only, bearer token, one live runtime per session ([design](acp-http-hosting.md)) | Not done  |
-| G23 | Transport            | Framing, failures and shutdown verified on each supported transport (stdio; HTTP is G22)                                                                                    | Done      |
+| G22 | Transport            | ACP Streamable HTTP through the SDK's experimental server, for the labkit web UI: loopback only, bearer token, one live runtime per session ([design](acp-http-hosting.md)) | Done      |
+| G23 | Transport            | Framing, failures and shutdown verified on each supported transport (stdio and Streamable HTTP)                                                                             | Done      |
 | G24 | Operational evidence | Logs from real editor launches; a WARNING/ERROR-only scan explains every new failure path                                                                                   | Not done  |
 | G25 | Protocol errors      | A tool deadline (`toolTimeoutMs`) is a tool result under return-error-and-continue                                                                                          | Done      |
 | G26 | Protocol errors      | Requests before `initialize` get -32600 with `data.reason: "not_initialized"`                                                                                               | Done      |
@@ -87,10 +87,29 @@ Evidence for the Done rows:
   bytes, the prompt ends `end_turn`, and one `prompt.media.pointer` (debug, provider `openai`,
   support `unsupported`) records the rewrite. "D4: a media-capable Anthropic request carries an
   MCP-returned image in tool_result content" also checks the `tool_call_update` `resource_link`.
+- G22: `http.test.ts` drives the SDK client app over the SDK's `createHttpStream` into
+  `acpHttpHandler(...).fetch` (and a real port for `serveAcpHttp` and the CLI). "Streamable HTTP
+  serves initialize, session/new and a prompt, and logs both connection IDs"
+  (`acp.http.connection.opened` joins `httpConnectionId` to `connectionId`; no warnings); "requests
+  without the bearer token or with a wrong one get 401 and a warning that never contains a token";
+  "the HTTP host refuses to start without loadSession or with a short token"; "DELETE closes the
+  connection's sessions and a new connection's session/load replays them". The session lease:
+  "session/load from a second connection takes the session over and the first connection's next
+  prompt names it" (INFO `acp.session.taken_over`), "a takeover during a running prompt ends that
+  prompt cancelled and logs a warning", "a claim while another connection is still restoring the
+  session aborts that restore", "concurrent loads from two connections take the session over one
+  after the other", "session/delete from another connection closes the live session before
+  deleting it", "session/fork from another connection closes the live parent before forking it".
+  Hosting: "serveAcpHttp binds 127.0.0.1, answers a real fetch round trip and closes live sessions
+  on stop"; "the CLI serves --http until SIGTERM with stdout empty, and exits 1 without a token".
+  Not verified: the labkit web UI itself against this host.
 - G23: `stdio.test.ts` (a frame split across writes, a malformed line answered with -32700 while
   the connection keeps serving, exit 0 on EOF with stdout reserved for protocol traffic);
   `disconnect-reload.test.ts` (stdin closed or SIGKILL mid-stream or mid-tool, then reload in a new
-  launcher); `launcher-logging.test.ts` (startup failures persisted with keys redacted).
+  launcher); `launcher-logging.test.ts` (startup failures persisted with keys redacted). Streamable
+  HTTP in `http.test.ts`: "a malformed JSON POST gets 400 and the connection keeps serving",
+  unauthenticated requests refused with 401, `DELETE` and host shutdown closing sessions, and the
+  CLI's SIGTERM shutdown and missing-token exit 1.
 - G25: `tool-failure.test.ts` (the `timeout` scenario).
 - G26, G27: `adapter-initialize-framing.test.ts` and the protocol notes below.
 
@@ -100,7 +119,7 @@ Evidence for the Done rows:
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Initialization and capabilities | `rpc/connection.ts` (initialize response and the -32601 gate share one set of flags); `capabilities.test.ts` drives every advertised and unadvertised capability and validates responses against the SDK 1.5.0 schema. See the detailed capability audit below.                                                                                                                                                                               |
 | Authentication and logout       | `auth.ts`, `rpc/connection.ts`; `adapter-auth.test.ts`, `adapter-elicitation.test.ts`.                                                                                                                                                                                                                                                                                                                                                        |
-| Session lifecycle               | `rpc/sessions.ts`, `rpc/open.ts`; new/load/resume/close/list/delete and opt-in fork in `adapter-session-lifecycle.test.ts`; workspace SQLite storage.                                                                                                                                                                                                                                                                                         |
+| Session lifecycle               | `rpc/sessions.ts`, `rpc/open.ts`; new/load/resume/close/list/delete and opt-in fork in `adapter-session-lifecycle.test.ts`; workspace SQLite storage. Cross-connection takeover through the session lease (`rpc/lease.ts`) in `http.test.ts`.                                                                                                                                                                                                 |
 | Prompt lifecycle                | Receipt-gated execution, cancellation, tool-error continuation, typed provider stops, public settlements.                                                                                                                                                                                                                                                                                                                                     |
 | Content                         | `prompt-input.ts`: text, images, resources and resource links; blob admission tests; Google audio input has exact-wire and reload tests.                                                                                                                                                                                                                                                                                                      |
 | Tool calls and permissions      | Pending/progress/final cards, locations, tool names, terminal links; live-session grants; validation failures returned to the model. Named renderers and MCP text/resource display have live/reload wire tests. Client permission tests cover all four choices, queued/late cancellation, SDK request cancellation and real stdio settlement. Tool-card DOM tests cover raw values, names, kinds, locations, partial updates and restoration. |
@@ -112,7 +131,7 @@ Evidence for the Done rows:
 | Usage and cost                  | Response accounting survives journal/restore; ACP usage bindings publish context/cost and reject stale reads. Wire tests use explicit scripted measurements.                                                                                                                                                                                                                                                                                  |
 | MCP                             | `mcp.ts`, `mcp-acp.ts`, `mcp-transport.ts`; `mcp-capabilities.test.ts` covers stdio/HTTP/SSE/ACP end to end, reconnect, open failures and tool failures.                                                                                                                                                                                                                                                                                      |
 | Extensibility                   | SDK dispatch, selected metadata fields and negotiated extensions.                                                                                                                                                                                                                                                                                                                                                                             |
-| Transport                       | SDK streams; real stdio launcher tests for framing, parse errors, EOF shutdown, disconnect and SIGKILL recovery, and startup failures.                                                                                                                                                                                                                                                                                                        |
+| Transport                       | SDK streams; real stdio launcher tests for framing, parse errors, EOF shutdown, disconnect and SIGKILL recovery, and startup failures. Streamable HTTP (`http.ts`, SDK `AcpServer`, session lease in `rpc/lease.ts`) in `http.test.ts`: SDK HTTP client round trips, 401/404/400 refusals, `DELETE` and shutdown closing sessions, cross-connection takeover, a real 127.0.0.1 port and the `--http` CLI.                                     |
 | Operational evidence            | Durable rotated ACP logs; `debug:acp`; retained scripted HTTP and failure fixtures.                                                                                                                                                                                                                                                                                                                                                           |
 
 ## Detailed capability audit
