@@ -121,9 +121,11 @@ Logs go to the launcher's rotated files (`~/.labkit/logs/` unless `LABKIT_ACP_LO
 [Find an operational failure](#find-an-operational-failure)). `acp.http.listening` records the host
 and port. `acp.http.connection.opened` joins the SDK's `Acp-Connection-Id` (`httpConnectionId`) to
 the adapter's `connectionId`, which every session event carries; `acp.http.connection.closed` marks
-a `DELETE`. `acp.http.request` (DEBUG; ERROR for a 5xx) records method, status and duration, plus
-the SDK's reason for a refusal such as `Invalid JSON`. `acp.session.taken_over` names the session,
-both connection IDs and the claiming method; it is a WARNING when it cancelled a running prompt.
+a `DELETE`. `acp.http.request` records method, status and duration at DEBUG. A refused request
+(4xx) is a WARNING and a 5xx an ERROR; both carry the SDK's reason, such as `Invalid JSON` or
+`Unknown Acp-Connection-Id`, and a consequence that tells the client what to do.
+`acp.session.taken_over` names the session, both connection IDs and the claiming method; it is a
+WARNING when it cancelled a running prompt.
 
 ## Derive UI configuration from the selected policy
 

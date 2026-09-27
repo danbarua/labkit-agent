@@ -33,6 +33,16 @@ export type AcpHttpServer = Readonly<{
 /** Equal-length digests let `timingSafeEqual` compare tokens of any length in constant time. */
 const digest = (value: string) => createHash("sha256").update(value).digest();
 
+/** What a refused HTTP request means for the client, so a WARNING-only scan explains it. */
+function refusal(requestPath: string, status: number, reason: string | undefined) {
+  if (requestPath !== path)
+    return `Answered ${status}: this host serves ACP only at ${path}; check the client URL or the proxy path`;
+  if (status === 404 && reason === "Unknown Acp-Connection-Id")
+    return "Answered 404: the Acp-Connection-Id is not open on this host (closed by DELETE, or the host restarted); the client must initialize a new connection and session/load its session";
+  if (status >= 500) return `Answered ${status}: the request failed inside the ACP server`;
+  return `Answered ${status} without delivering the request to the agent: ${reason ?? "no reason given"}`;
+}
+
 /**
  * Streamable HTTP ACP endpoint at `/acp` for embedding and tests. Every request needs
  * `Authorization: Bearer <token>`. Each ACP connection is one `connectAcp`; all share one
@@ -145,14 +155,20 @@ export function acpHttpHandler(
         }
       }
       const failed = response.status >= 400;
-      diagnostic("acp", response.status >= 500 ? "error" : "debug", "acp.http.request", {
-        ...trace,
-        httpConnectionId: requested ?? response.headers.get(connectionHeader) ?? undefined,
-        status: response.status,
-        durationMs: performance.now() - started,
-        // The SDK explains refusals in a short text body, e.g. "Invalid JSON".
-        ...(failed ? { reason: (await response.clone().text()).slice(0, 500) } : {}),
-      });
+      // The SDK explains refusals in a short text body, e.g. "Invalid JSON".
+      const reason = failed ? (await response.clone().text()).slice(0, 500) : undefined;
+      diagnostic(
+        "acp",
+        response.status >= 500 ? "error" : failed ? "warning" : "debug",
+        "acp.http.request",
+        {
+          ...trace,
+          httpConnectionId: requested ?? response.headers.get(connectionHeader) ?? undefined,
+          status: response.status,
+          durationMs: performance.now() - started,
+          ...(failed ? { reason, consequence: refusal(trace.path, response.status, reason) } : {}),
+        },
+      );
       return response;
     },
     close() {

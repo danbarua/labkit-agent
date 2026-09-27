@@ -148,7 +148,15 @@ test("Streamable HTTP serves initialize, session/new and a prompt, and logs both
         durationMs: expect.any(Number),
       }),
     );
-    expect(logs.records().filter((record) => record.level === "warning")).toEqual([]);
+    await a.close();
+    await handler.close();
+    expect(logs.records("acp.http.connection.closed")).toContainEqual(
+      expect.objectContaining({ httpConnectionId: a.httpConnectionIds[0] }),
+    );
+    // A clean close, including requests that race the DELETE, raises nothing to investigate.
+    expect(
+      logs.records().filter((record) => record.level !== "debug" && record.level !== "info"),
+    ).toEqual([]);
   } finally {
     await a.close();
     await handler.close();
@@ -231,6 +239,26 @@ test("DELETE closes the connection's sessions and a new connection's session/loa
     expect(
       await logs.next("acp.http.connection.closed", (record) => record.connectionId === first),
     ).toMatchObject({ level: "info", httpConnectionId: a.httpConnectionIds[0] });
+    // A client still using the closed connection (e.g. after a host restart) is told what to do.
+    const stale = await handler.fetch(
+      new Request(endpoint, {
+        method: "POST",
+        headers: {
+          ...authorization,
+          "Content-Type": "application/json",
+          "Acp-Connection-Id": a.httpConnectionIds[0]!,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "session/list", params: {} }),
+      }),
+    );
+    expect(stale.status).toBe(404);
+    expect(logs.records("acp.http.request").at(-1)).toMatchObject({
+      level: "warning",
+      status: 404,
+      httpConnectionId: a.httpConnectionIds[0],
+      reason: "Unknown Acp-Connection-Id",
+      consequence: expect.stringContaining("must initialize a new connection and session/load"),
+    });
     await b.initialize();
     await b.agent.request("session/load", { sessionId, cwd: "/tmp", mcpServers: [] });
     const replayed = b.updates
@@ -561,10 +589,12 @@ test("a malformed JSON POST gets 400 and the connection keeps serving", async ()
     expect(await response.text()).toBe("Invalid JSON");
     expect(logs.records("acp.http.request")).toContainEqual(
       expect.objectContaining({
+        level: "warning",
         method: "POST",
         httpConnectionId: a.httpConnectionIds[0],
         status: 400,
         reason: "Invalid JSON",
+        consequence: "Answered 400 without delivering the request to the agent: Invalid JSON",
       }),
     );
     expect((await a.prompt(sessionId)).stopReason).toBe("end_turn");
