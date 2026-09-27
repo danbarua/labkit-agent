@@ -605,6 +605,39 @@ test("a malformed JSON POST gets 400 and the connection keeps serving", async ()
   }
 });
 
+test("a request during shutdown gets 503 and an INFO record telling the client to reconnect", async () => {
+  const logs = diagnostics();
+  const handler = acpHttpHandler(setup().options, { token });
+  const a = httpClient(handler.fetch);
+  try {
+    await a.initialize();
+    const closing = handler.close();
+    const response = await handler.fetch(
+      new Request(endpoint, {
+        method: "POST",
+        headers: {
+          ...authorization,
+          "Content-Type": "application/json",
+          "Acp-Connection-Id": a.httpConnectionIds[0]!,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "session/list", params: {} }),
+      }),
+    );
+    await closing;
+    expect(response.status).toBe(503);
+    expect(logs.records("acp.http.request").at(-1)).toMatchObject({
+      level: "info",
+      status: 503,
+      consequence: expect.stringContaining("the host is shutting down"),
+    });
+    // An intended shutdown is not a failure to investigate.
+    expect(logs.records().filter((record) => record.level === "error")).toEqual([]);
+  } finally {
+    await handler.close();
+    logs.restore();
+  }
+});
+
 test("serveAcpHttp binds 127.0.0.1, answers a real fetch round trip and closes live sessions on stop", async () => {
   const logs = diagnostics();
   const server = serveAcpHttp(setup().options, { port: 0, token });

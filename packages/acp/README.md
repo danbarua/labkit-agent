@@ -122,8 +122,9 @@ Logs go to the launcher's rotated files (`~/.labkit/logs/` unless `LABKIT_ACP_LO
 and port. `acp.http.connection.opened` joins the SDK's `Acp-Connection-Id` (`httpConnectionId`) to
 the adapter's `connectionId`, which every session event carries; `acp.http.connection.closed` marks
 a `DELETE`. `acp.http.request` records method, status and duration at DEBUG. A refused request
-(4xx) is a WARNING and a 5xx an ERROR; both carry the SDK's reason, such as `Invalid JSON` or
-`Unknown Acp-Connection-Id`, and a consequence that tells the client what to do.
+(4xx) is a WARNING and a 5xx an ERROR, except the 503 answered while the host shuts down, which is
+INFO. Each carries the SDK's reason, such as `Invalid JSON` or `Unknown Acp-Connection-Id`, and a
+consequence that tells the client what to do.
 `acp.session.taken_over` names the session, both connection IDs and the claiming method; it is a
 WARNING when it cancelled a running prompt.
 

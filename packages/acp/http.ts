@@ -33,12 +33,16 @@ export type AcpHttpServer = Readonly<{
 /** Equal-length digests let `timingSafeEqual` compare tokens of any length in constant time. */
 const digest = (value: string) => createHash("sha256").update(value).digest();
 
+const stoppingReason = "ACP HTTP host is stopping";
+
 /** What a refused HTTP request means for the client, so a WARNING-only scan explains it. */
 function refusal(requestPath: string, status: number, reason: string | undefined) {
   if (requestPath !== path)
     return `Answered ${status}: this host serves ACP only at ${path}; check the client URL or the proxy path`;
   if (status === 404 && reason === "Unknown Acp-Connection-Id")
     return "Answered 404: the Acp-Connection-Id is not open on this host (closed by DELETE, or the host restarted); the client must initialize a new connection and session/load its session";
+  if (reason === stoppingReason)
+    return "Answered 503: the host is shutting down; the client must initialize a new connection and session/load its session once the host is back";
   if (status >= 500) return `Answered ${status}: the request failed inside the ACP server`;
   return `Answered ${status} without delivering the request to the agent: ${reason ?? "no reason given"}`;
 }
@@ -120,7 +124,7 @@ export function acpHttpHandler(
             headers: { "WWW-Authenticate": "Bearer" },
           });
         }
-        if (stopping) response = new Response("ACP HTTP host is stopping", { status: 503 });
+        if (stopping) response = new Response(stoppingReason, { status: 503 });
         else {
           let adapter: Readonly<{ connectionId: string; closed: Promise<void> }> | undefined;
           try {
@@ -159,7 +163,14 @@ export function acpHttpHandler(
       const reason = failed ? (await response.clone().text()).slice(0, 500) : undefined;
       diagnostic(
         "acp",
-        response.status >= 500 ? "error" : failed ? "warning" : "debug",
+        // Refusing requests during an intended shutdown is routine; other 5xx are failures.
+        reason === stoppingReason
+          ? "info"
+          : response.status >= 500
+            ? "error"
+            : failed
+              ? "warning"
+              : "debug",
         "acp.http.request",
         {
           ...trace,
